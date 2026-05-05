@@ -73,8 +73,6 @@ from gui.game_helpers import _GAMES, _vanilla_plugins_for_game
 from gui.dialogs import _PriorityDialog, _ExeConfigDialog, _ExeFilterDialog, confirm_deploy_appdata
 from gui.install_mod import install_mod_from_archive
 from gui.mod_name_utils import _suggest_mod_names as suggest_mod_names
-from gui.downloads_panel import DownloadsPanel
-from gui.download_locations_overlay import DownloadLocationsOverlay
 from gui.loot_groups_overlay import LootGroupsOverlay
 from gui.loot_plugin_rules_overlay import LootPluginRulesOverlay
 from gui.plugin_cycle_overlay import PluginCycleOverlay
@@ -5051,48 +5049,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             self._expand_all(child)
 
     def _build_downloads_tab(self):
-        tab = self._tabs.tab("Downloads")
-
-        def _get_installed_filenames() -> set:
-            try:
-                app = self.winfo_toplevel()
-                topbar = app._topbar
-                game = _GAMES.get(topbar._game_var.get())
-                if game is None or not game.is_configured():
-                    return set()
-                staging = game.get_effective_mod_staging_path()
-                if not staging or not Path(staging).is_dir():
-                    return set()
-                staging_path = Path(staging)
-                names: set[str] = set()
-                for folder in staging_path.iterdir():
-                    meta_path = folder / "meta.ini"
-                    if meta_path.is_file():
-                        m = read_meta(meta_path)
-                        if m.installation_file:
-                            names.add(m.installation_file)
-                return names
-            except Exception:
-                return set()
-
-        self._downloads_panel = DownloadsPanel(
-            tab,
-            log_fn=self._log,
-            install_fn=self._install_from_downloads,
-            on_open_locations=self._on_open_download_locations,
-            get_installed_filenames=_get_installed_filenames,
-        )
+        from gui.downloads_panel import build_downloads_tab
+        build_downloads_tab(self, self._tabs.tab("Downloads"))
 
     def _on_open_download_locations(self):
-        """Show the download locations overlay over the plugin panel."""
-        self._close_download_locations_overlay()
-        panel = DownloadLocationsOverlay(
-            self,
-            on_close=self._close_download_locations_overlay,
-            on_saved=lambda: self._downloads_panel.refresh(),
-        )
-        panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._download_locations_overlay = panel
+        from gui.downloads_panel import _open_download_locations_overlay
+        _open_download_locations_overlay(self)
 
     # ------------------------------------------------------------------
     # Plugin filter side panel — open / close
@@ -5137,49 +5099,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         btn.configure(fg_color=ACCENT if any_active else BTN_INFO)
 
     def _close_download_locations_overlay(self):
-        """Destroy the download locations overlay."""
-        panel = getattr(self, "_download_locations_overlay", None)
-        if panel is not None:
-            try:
-                panel.destroy()
-            except Exception:
-                pass
-            self._download_locations_overlay = None
+        from gui.downloads_panel import _close_download_locations_overlay
+        _close_download_locations_overlay(self)
 
     def _install_from_downloads(self, archive_path: str):
-        """Trigger the standard install-mod flow for an archive from Downloads."""
-        app = self.winfo_toplevel()
-        topbar = app._topbar
-        game = _GAMES.get(topbar._game_var.get())
-        if game is None or not game.is_configured():
-            self._log("No configured game selected — use + to set the game path first.")
-            return
-        self._log(f"Installing: {os.path.basename(archive_path)}")
-        mod_panel = getattr(app, "_mod_panel", None)
-
-        status_bar = getattr(app, "_status", None)
-
-        def _extract_progress(done: int, total: int, phase: str | None = None):
-            if status_bar is not None:
-                app.after(0, lambda d=done, t=total, p=phase: status_bar.set_progress(d, t, p, title="Extracting"))
-
-        def _cleanup():
-            self._downloads_panel.refresh()
-
-        disable_extract = getattr(topbar, "_disable_extract", False)
-
-        def _worker():
-            try:
-                install_mod_from_archive(archive_path, app, self._log, game, mod_panel,
-                                         on_installed=_cleanup,
-                                         disable_extract=disable_extract,
-                                         progress_fn=_extract_progress,
-                                         clear_progress_fn=lambda: app.after(0, status_bar.clear_progress) if status_bar is not None else None)
-            finally:
-                if status_bar is not None:
-                    app.after(0, status_bar.clear_progress)
-
-        threading.Thread(target=_worker, daemon=True).start()
+        from gui.downloads_panel import _install_from_downloads
+        _install_from_downloads(self, archive_path)
 
     def _build_plugins_tab(self):
         tab = self._tabs.tab("Plugins")

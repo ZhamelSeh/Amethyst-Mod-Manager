@@ -625,6 +625,16 @@ class BaseGame(ABC):
         return False
 
     @property
+    def vanilla_plugins(self) -> list[str]:
+        """Hardcoded vanilla plugin filenames for this game."""
+        return []
+
+    @property
+    def vanilla_ccc_filename(self) -> str | None:
+        """Filename of the CC manifest in <game_path>, or None."""
+        return None
+
+    @property
     def supports_esl_flag(self) -> bool:
         """
         Whether this game supports the ESL (light plugin) flag in TES4 plugin headers.

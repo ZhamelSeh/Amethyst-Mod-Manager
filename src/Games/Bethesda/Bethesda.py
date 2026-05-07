@@ -125,6 +125,7 @@ class Fallout_3(BaseGame):
 
     plugins_use_star_prefix = False
     plugins_include_vanilla = True
+    vanilla_plugins = ["Fallout3.esm"]
     synthesis_registry_name = "Fallout3"
 
     def __init__(self):
@@ -771,6 +772,8 @@ class Fallout3_GOTY(Fallout_3):
 
 class Fallout_NV(Fallout_3):
 
+    vanilla_plugins = ["FalloutNV.esm"]
+
     @property
     def wizard_tools(self) -> list[WizardTool]:
         return self._base_wizard_tools() + [
@@ -856,6 +859,13 @@ class Fallout_4(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Fallout4.esm",
+        "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm",
+        "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm",
+        "DLCUltraHighResolution.esm",
+    ]
+    vanilla_ccc_filename = "Fallout4.ccc"
     synthesis_registry_name = "Fallout4"
 
     @property
@@ -951,6 +961,7 @@ class Fallout_4VR(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = ["Fallout4.esm", "Fallout4_VR.esm"]
     synthesis_registry_name = "Fallout 4 VR"
 
     @property
@@ -1035,6 +1046,7 @@ class Fallout_4VR(Fallout_3):
 
 class Oblivion(Fallout_3):
 
+    vanilla_plugins = ["Oblivion.esm", "Update.esm"]
     synthesis_registry_name = "Oblivion"
 
     @property
@@ -1158,6 +1170,7 @@ class Oblivion(Fallout_3):
 
 class Skyrim(Fallout_3):
 
+    vanilla_plugins = ["Skyrim.esm", "Update.esm"]
     synthesis_registry_name = "Skyrim"
 
     @property
@@ -1234,6 +1247,11 @@ class SkyrimVR(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Skyrim.esm", "Update.esm",
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+    ]
+    vanilla_ccc_filename = "Skyrim.ccc"
     synthesis_registry_name = "Skyrim VR"
 
     @property
@@ -1316,6 +1334,12 @@ class Starfield(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Starfield.esm", "Constellation.esm", "ShatteredSpace.esm",
+        "OldMars.esm", "SFBGS003.esm", "SFBGS004.esm", "SFBGS006.esm",
+        "SFBGS007.esm", "SFBGS008.esm", "BlueprintShips-Starfield.esm",
+    ]
+    vanilla_ccc_filename = "Starfield.ccc"
     synthesis_registry_name = "Starfield"
 
     @property
@@ -1441,6 +1465,7 @@ class Starfield(Fallout_3):
 
 class Enderal(Fallout_3):
 
+    vanilla_plugins = ["Skyrim.esm", "Update.esm", "Enderal - Forgotten Stories.esm"]
     synthesis_registry_name = "Enderal"
 
     @property
@@ -1505,6 +1530,11 @@ class EnderalSE(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Skyrim.esm", "Update.esm",
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+        "Enderal - Forgotten Stories.esm",
+    ]
     synthesis_registry_name = "Enderal Special Edition"
 
     @property

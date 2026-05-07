@@ -512,6 +512,20 @@ def read_loot_info(profile_dir: Path) -> dict:
         return {}
 
 
+_PLUGIN_MAGIC = (b"TES3", b"TES4")
+
+
+def _is_valid_plugin_file(path: Path) -> bool:
+    """True if the file looks like a parseable Bethesda plugin (size + magic)."""
+    try:
+        if path.stat().st_size < 24:
+            return False
+        with path.open("rb") as f:
+            return f.read(4) in _PLUGIN_MAGIC
+    except OSError:
+        return False
+
+
 def _find_plugin_paths(
     plugin_names: list[str],
     game_data_dir: Path,
@@ -520,6 +534,9 @@ def _find_plugin_paths(
     """
     Locate plugin files on disk, searching the game's Data directory first,
     then falling back to the mod staging folders, then the overwrite folder.
+
+    Empty or malformed plugin files are skipped — libloot can hang or crash
+    when handed a 0-byte or non-TES file.
 
     Returns:
         (found_paths, missing_names)
@@ -534,7 +551,9 @@ def _find_plugin_paths(
     if game_data_dir.is_dir():
         for name in plugin_names:
             full = game_data_dir / name
-            if full.is_file() and name.lower() not in found_basenames:
+            if (full.is_file()
+                    and name.lower() not in found_basenames
+                    and _is_valid_plugin_file(full)):
                 found[name] = str(full)
                 found_basenames.add(name.lower())
 
@@ -550,7 +569,9 @@ def _find_plugin_paths(
                     if f.is_file() and f.name.lower() in missing_lower:
                         # Map back to the original-cased name
                         orig = names_lower.get(f.name.lower())
-                        if orig and orig not in found and f.name.lower() not in found_basenames:
+                        if (orig and orig not in found
+                                and f.name.lower() not in found_basenames
+                                and _is_valid_plugin_file(f)):
                             found[orig] = str(f)
                             found_basenames.add(f.name.lower())
 
@@ -565,7 +586,9 @@ def _find_plugin_paths(
                 for f in overwrite_dir.rglob("*"):
                     if f.is_file() and f.name.lower() in missing_lower:
                         orig = names_lower.get(f.name.lower())
-                        if orig and orig not in found and f.name.lower() not in found_basenames:
+                        if (orig and orig not in found
+                                and f.name.lower() not in found_basenames
+                                and _is_valid_plugin_file(f)):
                             found[orig] = str(f)
                             found_basenames.add(f.name.lower())
 

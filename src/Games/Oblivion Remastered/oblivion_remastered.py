@@ -39,6 +39,15 @@ _GAME_SUBDIR = "OblivionRemastered"
 
 class OblivionRemastered(UE5Game):
 
+    vanilla_plugins = [
+        "Oblivion.esm",
+        "DLCBattlehornCastle.esp", "DLCFrostcrag.esp", "DLCHorseArmor.esp",
+        "DLCMehrunesRazor.esp", "DLCOrrery.esp", "DLCShiveringIsles.esp",
+        "DLCSpellTomes.esp", "DLCThievesDen.esp", "DLCVileLair.esp",
+        "Knights.esp",
+        "AltarESPMain.esp", "AltarDeluxe.esp", "AltarESPLocal.esp",
+    ]
+
     # -----------------------------------------------------------------------
     # Identity
     # -----------------------------------------------------------------------

@@ -56,6 +56,8 @@ def _detect_openmw_cfg() -> Path | None:
 
 class OpenMW(BaseGame):
 
+    vanilla_plugins = ["Morrowind.esm", "Tribunal.esm", "Bloodmoon.esm"]
+
     def __init__(self):
         self._game_path: Path | None = None
         self._openmw_cfg_path: Path | None = None  # None → auto-detect

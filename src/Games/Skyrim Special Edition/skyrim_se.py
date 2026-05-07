@@ -21,6 +21,11 @@ class SkyrimSE(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Skyrim.esm", "Update.esm",
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+    ]
+    vanilla_ccc_filename = "Skyrim.ccc"
     synthesis_registry_name = "Skyrim Special Edition"
 
     # -----------------------------------------------------------------------

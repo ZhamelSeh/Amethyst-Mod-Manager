@@ -34,6 +34,8 @@ _PROFILES_DIR = get_profiles_dir()
 
 class Morrowind(BaseGame):
 
+    vanilla_plugins = ["Morrowind.esm", "Tribunal.esm", "Bloodmoon.esm"]
+
     def __init__(self):
         self._game_path: Path | None = None
         self._prefix_path: Path | None = None

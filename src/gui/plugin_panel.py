@@ -6019,6 +6019,26 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         loadorder_path = self._plugins_path.parent / "loadorder.txt"
         saved_order = read_loadorder(loadorder_path)
 
+        # Orphan plugins: files sitting in Data/ that the user installed manually
+        # — not in plugins.txt, not in loadorder.txt, not vanilla. Surface them
+        # so they can be toggled from the panel.
+        data_dir = self._game.get_vanilla_plugins_path() if self._game and hasattr(self._game, "get_vanilla_plugins_path") else None
+        if data_dir and data_dir.is_dir() and self._plugin_extensions:
+            exts_lower = {e.lower() for e in self._plugin_extensions}
+            saved_lower = {n.lower() for n in saved_order}
+            try:
+                for entry in data_dir.iterdir():
+                    if not entry.is_file() or entry.suffix.lower() not in exts_lower:
+                        continue
+                    low = entry.name.lower()
+                    if low in mod_map or low in self._vanilla_plugins or low in saved_lower:
+                        continue
+                    orphan = PluginEntry(name=entry.name, enabled=True)
+                    mod_map[low] = orphan
+                    mod_entries.append(orphan)
+            except OSError:
+                pass
+
         # For legacy (non-star) games plugins.txt contains only *enabled*
         # plugins; disabled ones are recovered by subtracting plugins.txt
         # from loadorder.txt. Synthesize disabled entries so the panel can
@@ -6069,29 +6089,33 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                         seen.add(e.name.lower())
                 ordered = vanilla_ordered + mod_ordered
             else:
-                # Standard Bethesda: honour saved_order as-is (LOOT manages positions).
+                # Standard Bethesda: vanilla pinned to the top, mods follow in
+                # saved_order (LOOT manages mod positions).
+                vanilla_ordered: list[PluginEntry] = []
+                mod_ordered: list[PluginEntry] = []
                 for name in saved_order:
                     low = name.lower()
                     if low in seen:
                         continue
                     seen.add(low)
-                    if low in mod_map:
-                        ordered.append(mod_map[low])
-                    elif low in self._vanilla_plugins:
-                        ordered.append(PluginEntry(
+                    if low in self._vanilla_plugins:
+                        vanilla_ordered.append(PluginEntry(
                             name=self._vanilla_plugins[low], enabled=True,
                         ))
-                for e in mod_entries:
-                    if e.name.lower() not in seen:
-                        ordered.append(e)
-                        seen.add(e.name.lower())
+                    elif low in mod_map:
+                        mod_ordered.append(mod_map[low])
                 for low, orig in sorted(
                     self._vanilla_plugins.items(),
                     key=lambda kv: (_ext_order.get(Path(kv[0]).suffix, 9), kv[0]),
                 ):
                     if low not in seen:
-                        ordered.append(PluginEntry(name=orig, enabled=True))
+                        vanilla_ordered.append(PluginEntry(name=orig, enabled=True))
                         seen.add(low)
+                for e in mod_entries:
+                    if e.name.lower() not in seen:
+                        mod_ordered.append(e)
+                        seen.add(e.name.lower())
+                ordered = vanilla_ordered + mod_ordered
 
             self._plugin_entries = ordered
         else:

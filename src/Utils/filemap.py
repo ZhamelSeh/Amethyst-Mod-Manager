@@ -190,8 +190,10 @@ def _scan_dir(
                             # (e.g. Interface/ vs interface/).  Prefer the one whose
                             # folder segments have more uppercase characters.
                             existing = result[key]
-                            ex_folders = "/".join(existing.split("/")[:-1])
-                            new_folders = "/".join(rel_str.split("/")[:-1])
+                            ex_slash = existing.rfind("/")
+                            new_slash = rel_str.rfind("/")
+                            ex_folders = existing[:ex_slash] if ex_slash >= 0 else ""
+                            new_folders = rel_str[:new_slash] if new_slash >= 0 else ""
                             if _upper_count(new_folders) > _upper_count(ex_folders):
                                 result[key] = rel_str
                         else:

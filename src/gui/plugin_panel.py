@@ -125,14 +125,11 @@ def _file_exists_ci(base: Path, rel: Path) -> bool:
     """
     current = base
     for part in rel.parts:
-        part_lower = part.lower()
         try:
-            match = next(
-                (e for e in current.iterdir() if e.name.lower() == part_lower),
-                None,
-            )
+            entries = {e.name.lower(): e for e in current.iterdir()}
         except OSError:
             return False
+        match = entries.get(part.lower())
         if match is None:
             return False
         current = match
@@ -2773,7 +2770,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         stripped = self._mf_stripped_paths
         for iid in list(self._mf_synthetic_iids):
             path = self._mf_iid_to_path.get(iid, "")
-            if path.lower() not in stripped:
+            path_l = path.lower()
+            if path_l not in stripped:
                 try:
                     self._mf_tree.delete(iid)
                 except Exception:
@@ -2782,7 +2780,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                 self._mf_top_level_iids.discard(iid)
                 self._mf_iid_to_path.pop(iid, None)
                 self._mf_iid_to_key.pop(iid, None)
-                self._mf_path_to_iid.pop(path.lower(), None)
+                self._mf_path_to_iid.pop(path_l, None)
         self._mf_insert_stripped_placeholders()
         self._mf_refresh_top_level_column()
 
@@ -2814,20 +2812,22 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         """
         self._mf_refresh_leaf_keys()
         stripped = self._mf_stripped_paths
+        tree_set = self._mf_tree.set
+        TL_SEL = self._MF_TL_SEL
+        TL_UNSEL = self._MF_TL_UNSEL
         for iid, path in self._mf_iid_to_path.items():
             if not path:
-                self._mf_tree.set(iid, "toplevel", "")
+                tree_set(iid, "toplevel", "")
                 continue
+            # Inline _mf_is_top_level: derive parent path from a normalized
+            # lowercased copy, but keep the original-case lower() for the
+            # is_stripped test to match historical semantics.
             path_l = path.lower()
             is_stripped = path_l in stripped
-            is_top = self._mf_is_top_level(path)
-            if is_stripped:
-                glyph = self._MF_TL_UNSEL
-            elif is_top:
-                glyph = self._MF_TL_SEL
-            else:
-                glyph = self._MF_TL_UNSEL
-            self._mf_tree.set(iid, "toplevel", glyph)
+            norm_l = path_l.replace("\\", "/").rstrip("/")
+            slash = norm_l.rfind("/")
+            is_top = slash < 0 or norm_l[:slash] in stripped
+            tree_set(iid, "toplevel", TL_UNSEL if is_stripped or not is_top else TL_SEL)
             self._apply_stripped_tag(iid, is_stripped)
 
     def _apply_stripped_tag(self, iid: str, stripped: bool):

@@ -1852,14 +1852,24 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         c = self._canvas
         cw = self._canvas_w
 
-        # Pre-compute column x/w for each data col (respects reorder)
+        # Pre-compute column x/w for each data col (respects reorder).
+        # Cache _col_pos.get() once per column — was called twice per column per redraw.
         _col_pos = self._col_pos
-        _CAT_X  = self._COL_X[_col_pos.get(2, 2)]; _CAT_W  = self._COL_W[_col_pos.get(2, 2)]
-        _FLAG_X = self._COL_X[_col_pos.get(3, 3)]; _FLAG_W = self._COL_W[_col_pos.get(3, 3)]
-        _CONF_X = self._COL_X[_col_pos.get(4, 4)]; _CONF_W = self._COL_W[_col_pos.get(4, 4)]
-        _INST_X = self._COL_X[_col_pos.get(5, 5)]; _INST_W = self._COL_W[_col_pos.get(5, 5)]
-        _PRIO_X = self._COL_X[_col_pos.get(6, 6)]; _PRIO_W = self._COL_W[_col_pos.get(6, 6)]
-        _VER_X  = self._COL_X[_col_pos.get(7, 7)]; _VER_W  = self._COL_W[_col_pos.get(7, 7)]
+        _COL_X = self._COL_X
+        _COL_W = self._COL_W
+        _cp2 = _col_pos.get(2, 2); _CAT_X  = _COL_X[_cp2]; _CAT_W  = _COL_W[_cp2]
+        _cp3 = _col_pos.get(3, 3); _FLAG_X = _COL_X[_cp3]; _FLAG_W = _COL_W[_cp3]
+        _cp4 = _col_pos.get(4, 4); _CONF_X = _COL_X[_cp4]; _CONF_W = _COL_W[_cp4]
+        _cp5 = _col_pos.get(5, 5); _INST_X = _COL_X[_cp5]; _INST_W = _COL_W[_cp5]
+        _cp6 = _col_pos.get(6, 6); _PRIO_X = _COL_X[_cp6]; _PRIO_W = _COL_W[_cp6]
+        _cp7 = _col_pos.get(7, 7); _VER_X  = _COL_X[_cp7]; _VER_W  = _COL_W[_cp7]
+
+        # Hoist Path.home() and frequently-used scaled() constants out of the per-row loop.
+        _home = Path.home()
+        _SCALED_4 = scaled(4)
+        _SCALED_7 = scaled(7)
+        _SCALED_8 = scaled(8)
+        _SCALED_28 = scaled(28)
 
         # Pre-compute font tuples (avoid re-creating inside the inner loop)
         _FONT_NAME = (_theme.FONT_FAMILY, _theme.FS11)
@@ -1991,35 +2001,38 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     else:
                         label = entry.display_name
 
-                    mid_x     = self._COL_X[1] + self._COL_W[1] // 2
-                    lock_w    = scaled(28) if not is_synthetic else 0
+                    mid_x     = _COL_X[1] + _COL_W[1] // 2
+                    lock_w    = _SCALED_28 if not is_synthetic else 0
                     _badge_info = self._sep_deploy_paths.get(entry.name, {}) if not is_synthetic else {}
-                    has_badge = bool(_badge_info and (
-                        (_badge_info.get("path") if isinstance(_badge_info, dict) else _badge_info)
-                        or (_badge_info.get("raw") if isinstance(_badge_info, dict) else False)
-                    ))
-                    left_edge = scaled(32) if is_root_folder else (scaled(20) if not is_synthetic else scaled(8))
+                    # Determine type once; extract path/raw fields without repeated isinstance checks.
+                    if isinstance(_badge_info, dict):
+                        _deploy_path = _badge_info.get("path", "")
+                        _is_raw_deploy = _badge_info.get("raw", False)
+                    elif _badge_info:
+                        _deploy_path = str(_badge_info)
+                        _is_raw_deploy = False
+                    else:
+                        _deploy_path = ""
+                        _is_raw_deploy = False
+                    has_badge = bool(_deploy_path or _is_raw_deploy)
+                    left_edge = scaled(32) if is_root_folder else (scaled(20) if not is_synthetic else _SCALED_8)
+                    label_len = len(label)
 
                     if has_badge:
                         # Left-aligned layout: label + path badge flowing from left edge
-                        label_x = left_edge + scaled(4)
+                        label_x = left_edge + _SCALED_4
                         c.coords(self._pool_name[s], label_x, y_mid)
                         c.itemconfigure(self._pool_name[s], text=label, anchor="w",
                                         fill=txt_col, font=_FONT_SEP_BOLD, state="normal")
                         # Approximate bold label width at FS10 (~7px per char)
-                        badge_x = label_x + len(label) * scaled(7) + scaled(8)
-                        _deploy_path = _badge_info.get("path", "") if isinstance(_badge_info, dict) else str(_badge_info)
-                        _is_raw_deploy = _badge_info.get("raw", False) if isinstance(_badge_info, dict) else False
-                        try:
-                            _home = Path.home()
-                            _dp = Path(_deploy_path)
-                            badge_path = "~/" + str(_dp.relative_to(_home)) if _dp.is_relative_to(_home) else _deploy_path
-                        except Exception:
-                            badge_path = _deploy_path
-                        if _deploy_path and _is_raw_deploy:
-                            badge_text = f"⇒ {badge_path}  [raw]"
-                        elif _deploy_path:
-                            badge_text = f"⇒ {badge_path}"
+                        badge_x = label_x + label_len * _SCALED_7 + _SCALED_8
+                        if _deploy_path:
+                            try:
+                                _dp = Path(_deploy_path)
+                                badge_path = "~/" + str(_dp.relative_to(_home)) if _dp.is_relative_to(_home) else _deploy_path
+                            except Exception:
+                                badge_path = _deploy_path
+                            badge_text = f"⇒ {badge_path}  [raw]" if _is_raw_deploy else f"⇒ {badge_path}"
                         else:
                             badge_text = "[raw deploy]"
                         c.coords(self._pool_sep_badge[s], badge_x, y_mid)
@@ -2034,8 +2047,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                                         fill=txt_col, font=_FONT_SEP_BOLD, state="normal")
                         c.itemconfigure(self._pool_sep_badge[s], state="hidden")
                         text_pad     = scaled(6)
-                        label_hw     = len(label) * scaled(4) + text_pad
-                        right_edge   = cw - lock_w - scaled(8)
+                        label_hw     = label_len * _SCALED_4 + text_pad
+                        right_edge   = cw - lock_w - _SCALED_8
                         sep_line_col = _theme.hover_tint(base_bg, 35)
                         c.coords(self._pool_sep_line_l[s],
                                  left_edge, y_mid, mid_x - label_hw, y_mid)

@@ -625,6 +625,16 @@ class BaseGame(ABC):
         return False
 
     @property
+    def vanilla_plugins(self) -> list[str]:
+        """Hardcoded vanilla plugin filenames for this game."""
+        return []
+
+    @property
+    def vanilla_ccc_filename(self) -> str | None:
+        """Filename of the CC manifest in <game_path>, or None."""
+        return None
+
+    @property
     def supports_esl_flag(self) -> bool:
         """
         Whether this game supports the ESL (light plugin) flag in TES4 plugin headers.
@@ -1140,7 +1150,7 @@ class BaseGame(ABC):
 
     # Subclass hooks for the shared load_paths/save_paths implementation.
     # Override _save_paths_extra() / _load_paths_extra() to persist additional
-    # JSON keys (e.g. heroic_app_name, symlink_plugins) without rewriting the
+    # JSON keys (e.g. heroic_app_name, script_extender_swap) without rewriting the
     # whole boilerplate.
     def _save_paths_extra(self) -> dict:
         """Extra JSON fields to merge into save_paths() output. Override in

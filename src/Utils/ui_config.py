@@ -19,6 +19,10 @@ _INI_AUTO = "auto"
 _DEFAULT_SCALE = 1.0
 _MIN_SCALE = 0.5
 _MAX_SCALE = 3.0
+# Auto-detection caps out lower than the manual ceiling: HiDPI/portal readings
+# can be over-eager (e.g. 4K TVs reporting 2.0) and the UI is still legible at
+# 1.5x. Users who want larger can still pick it manually.
+_AUTO_MAX_SCALE = 1.5
 
 _DEFAULT_FONT_FAMILY = "Noto Sans"
 _INI_FONT_OPTION = "font_family"
@@ -159,48 +163,120 @@ def _get_compositor_scale() -> float:
     return 1.0
 
 
+def _parse_xrandr_rects(stdout: str) -> list[tuple[int, int, int, int]]:
+    """Parse xrandr output → list of (x, y, w, h) for every connected monitor."""
+    rects: list[tuple[int, int, int, int]] = []
+    for line in stdout.splitlines():
+        if " connected " not in line:
+            continue
+        m = _re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
+        if m:
+            w, h, x, y = (int(g) for g in m.groups())
+            rects.append((x, y, w, h))
+    return rects
+
+
+def _parse_xrandr(stdout: str) -> tuple[int, int]:
+    """Pick (w, h) of the 'primary' monitor from xrandr output, else first connected."""
+    lines = stdout.splitlines()
+    for line in lines:
+        if " connected " in line and "primary" in line:
+            m = _re.search(r"(\d+)x(\d+)\+\d+\+\d+", line)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+    for line in lines:
+        if " connected " in line:
+            m = _re.search(r"(\d+)x(\d+)\+\d+\+\d+", line)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+    return 0, 0
+
+
+def _parse_wlr_randr_rects(stdout: str) -> list[tuple[int, int, int, int]]:
+    """Parse wlr-randr output → list of (x, y, w, h) for every monitor with a 'current' mode."""
+    rects: list[tuple[int, int, int, int]] = []
+    # wlr-randr blocks each monitor; pair "Position: x,y" with the first "current" mode size.
+    for block in _re.split(r"\n(?=\S)", stdout):
+        size_match = _re.search(r"(\d+)x(\d+) px.*\bcurrent\b", block)
+        pos_match = _re.search(r"Position:\s*(\d+),(\d+)", block)
+        if size_match and pos_match:
+            w, h = int(size_match.group(1)), int(size_match.group(2))
+            x, y = int(pos_match.group(1)), int(pos_match.group(2))
+            rects.append((x, y, w, h))
+    return rects
+
+
+def _parse_wlr_randr(stdout: str) -> tuple[int, int]:
+    """Pick (w, h) of the first 'current' mode line from wlr-randr output."""
+    for line in stdout.splitlines():
+        m = _re.search(r"(\d+)x(\d+) px.*\bcurrent\b", line)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return 0, 0
+
+
+def _run_capture(argv: list[str], timeout: int = 3) -> str:
+    """Run argv, return stdout on success, '' on any failure."""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0:
+            return r.stdout
+    except Exception:
+        pass
+    return ""
+
+
+def get_monitor_rects() -> list[tuple[int, int, int, int]]:
+    """Return list of (x, y, w, h) for every connected monitor, in xrandr/wlr-randr order.
+
+    Returns [] if no display query tool succeeds. Inside Flatpak the sandbox
+    has no xrandr binary, so falls through to ``flatpak-spawn --host`` with
+    ``--directory=/`` (the sandbox cwd /app/... doesn't exist on the host).
+    """
+    out = _run_capture(["xrandr", "--current"])
+    if not out:
+        out = _run_capture(["flatpak-spawn", "--host", "--directory=/", "xrandr", "--current"])
+    if out:
+        rects = _parse_xrandr_rects(out)
+        if rects:
+            return rects
+    out = _run_capture(["wlr-randr"])
+    if not out:
+        out = _run_capture(["flatpak-spawn", "--host", "--directory=/", "wlr-randr"])
+    if out:
+        rects = _parse_wlr_randr_rects(out)
+        if rects:
+            return rects
+    return []
+
+
 def _get_primary_monitor_size() -> tuple[int, int]:
     """Return (width, height) of the primary monitor.
 
     On multi-monitor setups winfo_screenwidth/height returns the combined
-    virtual desktop size, which inflates the auto-detected UI scale.  This
-    tries xrandr first (X11), then wlr-randr (Wayland on wlroots compositors
-    like sway/Hyprland/labwc).  Returns (0, 0) if both are unavailable or
-    parsing fails.
+    virtual desktop size, which inflates the auto-detected UI scale.  Tries
+    xrandr (X11), then wlr-randr (wlroots Wayland).  Inside a Flatpak sandbox
+    neither binary is in the runtime, so each call is also retried via
+    ``flatpak-spawn --host`` so the host's binaries can answer instead.
     """
-    try:
-        result = subprocess.run(
-            ["xrandr", "--current"],
-            capture_output=True, text=True, timeout=3,
-        )
-        lines = result.stdout.splitlines()
-        # Prefer the monitor explicitly marked "primary"
-        for line in lines:
-            if " connected " in line and "primary" in line:
-                m = _re.search(r"(\d+)x(\d+)\+\d+\+\d+", line)
-                if m:
-                    return int(m.group(1)), int(m.group(2))
-        # Fall back to the first connected monitor with a geometry
-        for line in lines:
-            if " connected " in line:
-                m = _re.search(r"(\d+)x(\d+)\+\d+\+\d+", line)
-                if m:
-                    return int(m.group(1)), int(m.group(2))
-    except Exception:
-        pass
+    # xrandr — sandbox first, then host (--directory=/ because the sandbox
+    # cwd /app/... doesn't exist on the host, and the portal Spawn inherits cwd).
+    out = _run_capture(["xrandr", "--current"])
+    if not out:
+        out = _run_capture(["flatpak-spawn", "--host", "--directory=/", "xrandr", "--current"])
+    if out:
+        wh = _parse_xrandr(out)
+        if wh != (0, 0):
+            return wh
 
-    # wlr-randr output: per-monitor blocks with "  1920x1080 px, 60.000000 Hz (preferred, current)"
-    try:
-        result = subprocess.run(
-            ["wlr-randr"],
-            capture_output=True, text=True, timeout=3,
-        )
-        for line in result.stdout.splitlines():
-            m = _re.search(r"(\d+)x(\d+) px.*\bcurrent\b", line)
-            if m:
-                return int(m.group(1)), int(m.group(2))
-    except Exception:
-        pass
+    # wlr-randr — sandbox first, then host
+    out = _run_capture(["wlr-randr"])
+    if not out:
+        out = _run_capture(["flatpak-spawn", "--host", "--directory=/", "wlr-randr"])
+    if out:
+        wh = _parse_wlr_randr(out)
+        if wh != (0, 0):
+            return wh
 
     return 0, 0
 
@@ -233,7 +309,7 @@ def get_screen_info() -> tuple[int, int, float]:
     # that path exists only for compositors that don't tell us their scale.
     portal = _get_portal_scale()
     if portal > 1.0:
-        scale = round(min(_MAX_SCALE, portal) * 20) / 20
+        scale = round(min(_AUTO_MAX_SCALE, portal) * 20) / 20
         return w, h, scale
 
     # Xft.dpi may already have been overridden to 96 (by a previous launch),
@@ -258,7 +334,7 @@ def get_screen_info() -> tuple[int, int, float]:
     # Flatpak / multi-monitor that a sub-1.0 result is almost always wrong —
     # users with a genuinely tiny screen can still pick one manually.
     if physical_h >= 1080:
-        scale = min(2.0, physical_h / 1080)
+        scale = min(_AUTO_MAX_SCALE, physical_h / 1080)
     else:
         scale = 1.0
     scale = round(scale * 20) / 20  # Snap to nearest 0.05
@@ -269,7 +345,8 @@ def detect_hidpi_scale() -> float:
     """Detect suggested UI scale from primary screen height.
 
     UI designed for Steam Deck (1280x800). Heights 800–1080 → 1.0.
-    Below 800 scales down; above 1080 scales up to 1.5.
+    Above 1080 scales up, capped at _AUTO_MAX_SCALE (1.5x) so 4K displays
+    don't get an over-eager auto-scale; manual selection can still go higher.
     """
     _, _, scale = get_screen_info()
     return scale

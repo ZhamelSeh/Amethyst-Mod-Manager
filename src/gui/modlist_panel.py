@@ -179,6 +179,8 @@ def _scan_meta_flags_impl(entries: list, mods_dir: Path) -> dict:
     mod_versions: dict[str, str] = {}
     fomod_mods: set[str] = set()
     root_folder_mods: set[str] = set()
+    collection_bundled_mods: set[str] = set()
+    collection_patched_mods: set[str] = set()
     today = datetime.now().date()
     for entry in entries:
         if entry.is_separator:
@@ -219,6 +221,10 @@ def _scan_meta_flags_impl(entries: list, mods_dir: Path) -> dict:
                 fomod_mods.add(entry.name)
             if meta.root_folder:
                 root_folder_mods.add(entry.name)
+            if meta.from_collection_bundled:
+                collection_bundled_mods.add(entry.name)
+            if meta.from_collection_patched:
+                collection_patched_mods.add(entry.name)
         except Exception:
             pass
     return {
@@ -232,6 +238,8 @@ def _scan_meta_flags_impl(entries: list, mods_dir: Path) -> dict:
         "mod_versions": mod_versions,
         "fomod_mods": fomod_mods,
         "root_folder_mods": root_folder_mods,
+        "collection_bundled_mods": collection_bundled_mods,
+        "collection_patched_mods": collection_patched_mods,
     }
 
 
@@ -416,6 +424,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._fomod_mods: set[str] = set()
         # Set of mod names flagged for root-level (engine) deployment
         self._root_folder_mods: set[str] = set()
+        # Sets of mod names tagged by collection install — populated from
+        # meta.ini's fromCollectionBundled / fromCollectionPatched flags.
+        self._collection_bundled_mods: set[str] = set()
+        self._collection_patched_mods: set[str] = set()
         # Map mod name → install datetime for sorting (parallel to _install_dates)
         self._install_datetimes: dict[str, datetime] = {}
 
@@ -463,6 +475,13 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._drag_after_id: str | None = None  # after() id for drag-start timer
         self._drag_scroll_after: str | None = None  # after() id for auto-scroll repeat
         self._drag_last_event_y: int = 0  # last widget-space Y from mouse drag
+
+        # Locked-separator drag confinement: when a mod inside a locked block is
+        # dragged, _drag_lock_sep_name names that separator so each drag tick can
+        # re-resolve the block range in the (possibly mutated) _entries list.
+        # _drag_lock_bypass=True (Shift held at press) disables the confinement.
+        self._drag_lock_sep_name: str | None = None
+        self._drag_lock_bypass: bool = False
 
         # Separator lock state: sep_name → bool (True = locked, block drag disabled)
         self._sep_locks: dict[str, bool] = {}
@@ -1373,6 +1392,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._mod_versions = results.get("mod_versions", {})
         self._fomod_mods = results.get("fomod_mods", set())
         self._root_folder_mods = results.get("root_folder_mods", set())
+        self._collection_bundled_mods = results.get("collection_bundled_mods", set())
+        self._collection_patched_mods = results.get("collection_patched_mods", set())
         if self._filter_panel_open:
             self._refresh_filter_category_list()
         self._vis_dirty = True
@@ -1852,14 +1873,24 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         c = self._canvas
         cw = self._canvas_w
 
-        # Pre-compute column x/w for each data col (respects reorder)
+        # Pre-compute column x/w for each data col (respects reorder).
+        # Cache _col_pos.get() once per column — was called twice per column per redraw.
         _col_pos = self._col_pos
-        _CAT_X  = self._COL_X[_col_pos.get(2, 2)]; _CAT_W  = self._COL_W[_col_pos.get(2, 2)]
-        _FLAG_X = self._COL_X[_col_pos.get(3, 3)]; _FLAG_W = self._COL_W[_col_pos.get(3, 3)]
-        _CONF_X = self._COL_X[_col_pos.get(4, 4)]; _CONF_W = self._COL_W[_col_pos.get(4, 4)]
-        _INST_X = self._COL_X[_col_pos.get(5, 5)]; _INST_W = self._COL_W[_col_pos.get(5, 5)]
-        _PRIO_X = self._COL_X[_col_pos.get(6, 6)]; _PRIO_W = self._COL_W[_col_pos.get(6, 6)]
-        _VER_X  = self._COL_X[_col_pos.get(7, 7)]; _VER_W  = self._COL_W[_col_pos.get(7, 7)]
+        _COL_X = self._COL_X
+        _COL_W = self._COL_W
+        _cp2 = _col_pos.get(2, 2); _CAT_X  = _COL_X[_cp2]; _CAT_W  = _COL_W[_cp2]
+        _cp3 = _col_pos.get(3, 3); _FLAG_X = _COL_X[_cp3]; _FLAG_W = _COL_W[_cp3]
+        _cp4 = _col_pos.get(4, 4); _CONF_X = _COL_X[_cp4]; _CONF_W = _COL_W[_cp4]
+        _cp5 = _col_pos.get(5, 5); _INST_X = _COL_X[_cp5]; _INST_W = _COL_W[_cp5]
+        _cp6 = _col_pos.get(6, 6); _PRIO_X = _COL_X[_cp6]; _PRIO_W = _COL_W[_cp6]
+        _cp7 = _col_pos.get(7, 7); _VER_X  = _COL_X[_cp7]; _VER_W  = _COL_W[_cp7]
+
+        # Hoist Path.home() and frequently-used scaled() constants out of the per-row loop.
+        _home = Path.home()
+        _SCALED_4 = scaled(4)
+        _SCALED_7 = scaled(7)
+        _SCALED_8 = scaled(8)
+        _SCALED_28 = scaled(28)
 
         # Pre-compute font tuples (avoid re-creating inside the inner loop)
         _FONT_NAME = (_theme.FONT_FAMILY, _theme.FS11)
@@ -1870,10 +1901,11 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         _FONT_RADIO = (_theme.FONT_FAMILY, int(_theme.FS13 * 1.25), "bold")
         _FONT_STAR = (_theme.FONT_FAMILY, _theme.FS11)
 
-        # Indices currently being dragged — suppress _sel_set highlight for these
-        # so the blue box only shows at the current drag position, not the origin.
-        _dragging = (set(self._drag_sel_indices) if self._drag_sel_indices
-                     else ({self._drag_idx} if self._drag_idx >= 0 else set()))
+        # _drag_sel_indices tracks the *current* (post-reorder) positions of
+        # dragged rows, so don't suppress them — that strips the highlight off
+        # every dragged row in a multi-select drag.  The active drag anchor is
+        # still forced highlighted via the (i == self._drag_idx) clause below.
+        _dragging: set[int] = set()
 
         canvas_top = int(c.canvasy(0))
         canvas_h = c.winfo_height()
@@ -1991,35 +2023,38 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     else:
                         label = entry.display_name
 
-                    mid_x     = self._COL_X[1] + self._COL_W[1] // 2
-                    lock_w    = scaled(28) if not is_synthetic else 0
+                    mid_x     = _COL_X[1] + _COL_W[1] // 2
+                    lock_w    = _SCALED_28 if not is_synthetic else 0
                     _badge_info = self._sep_deploy_paths.get(entry.name, {}) if not is_synthetic else {}
-                    has_badge = bool(_badge_info and (
-                        (_badge_info.get("path") if isinstance(_badge_info, dict) else _badge_info)
-                        or (_badge_info.get("raw") if isinstance(_badge_info, dict) else False)
-                    ))
-                    left_edge = scaled(32) if is_root_folder else (scaled(20) if not is_synthetic else scaled(8))
+                    # Determine type once; extract path/raw fields without repeated isinstance checks.
+                    if isinstance(_badge_info, dict):
+                        _deploy_path = _badge_info.get("path", "")
+                        _is_raw_deploy = _badge_info.get("raw", False)
+                    elif _badge_info:
+                        _deploy_path = str(_badge_info)
+                        _is_raw_deploy = False
+                    else:
+                        _deploy_path = ""
+                        _is_raw_deploy = False
+                    has_badge = bool(_deploy_path or _is_raw_deploy)
+                    left_edge = scaled(32) if is_root_folder else (scaled(20) if not is_synthetic else _SCALED_8)
+                    label_len = len(label)
 
                     if has_badge:
                         # Left-aligned layout: label + path badge flowing from left edge
-                        label_x = left_edge + scaled(4)
+                        label_x = left_edge + _SCALED_4
                         c.coords(self._pool_name[s], label_x, y_mid)
                         c.itemconfigure(self._pool_name[s], text=label, anchor="w",
                                         fill=txt_col, font=_FONT_SEP_BOLD, state="normal")
                         # Approximate bold label width at FS10 (~7px per char)
-                        badge_x = label_x + len(label) * scaled(7) + scaled(8)
-                        _deploy_path = _badge_info.get("path", "") if isinstance(_badge_info, dict) else str(_badge_info)
-                        _is_raw_deploy = _badge_info.get("raw", False) if isinstance(_badge_info, dict) else False
-                        try:
-                            _home = Path.home()
-                            _dp = Path(_deploy_path)
-                            badge_path = "~/" + str(_dp.relative_to(_home)) if _dp.is_relative_to(_home) else _deploy_path
-                        except Exception:
-                            badge_path = _deploy_path
-                        if _deploy_path and _is_raw_deploy:
-                            badge_text = f"⇒ {badge_path}  [raw]"
-                        elif _deploy_path:
-                            badge_text = f"⇒ {badge_path}"
+                        badge_x = label_x + label_len * _SCALED_7 + _SCALED_8
+                        if _deploy_path:
+                            try:
+                                _dp = Path(_deploy_path)
+                                badge_path = "~/" + str(_dp.relative_to(_home)) if _dp.is_relative_to(_home) else _deploy_path
+                            except Exception:
+                                badge_path = _deploy_path
+                            badge_text = f"⇒ {badge_path}  [raw]" if _is_raw_deploy else f"⇒ {badge_path}"
                         else:
                             badge_text = "[raw deploy]"
                         c.coords(self._pool_sep_badge[s], badge_x, y_mid)
@@ -2034,8 +2069,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                                         fill=txt_col, font=_FONT_SEP_BOLD, state="normal")
                         c.itemconfigure(self._pool_sep_badge[s], state="hidden")
                         text_pad     = scaled(6)
-                        label_hw     = len(label) * scaled(4) + text_pad
-                        right_edge   = cw - lock_w - scaled(8)
+                        label_hw     = label_len * _SCALED_4 + text_pad
+                        right_edge   = cw - lock_w - _SCALED_8
                         sep_line_col = _theme.hover_tint(base_bg, 35)
                         c.coords(self._pool_sep_line_l[s],
                                  left_edge, y_mid, mid_x - label_hw, y_mid)
@@ -2148,6 +2183,11 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                                 _agg_flags.append(("img", self._icon_endorsed))
                                 _seen_flag.add("endorsed")
                             if _be.name in self._prertx_mods and self._icon_info and "info" not in _seen_flag:
+                                _agg_flags.append(("img", self._icon_info))
+                                _seen_flag.add("info")
+                            elif ((_be.name in self._collection_bundled_mods
+                                   or _be.name in self._collection_patched_mods)
+                                  and self._icon_info and "info" not in _seen_flag):
                                 _agg_flags.append(("img", self._icon_info))
                                 _seen_flag.add("info")
                             if self._mod_is_modified_in_mf(_be.name) and self._icon_disabled_files and "disabled" not in _seen_flag:
@@ -2376,6 +2416,12 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     if entry.name in self._endorsed_mods and self._icon_endorsed:
                         _flags.append(("img", self._icon_endorsed))
                     if entry.name in self._prertx_mods and self._icon_info:
+                        _flags.append(("img", self._icon_info))
+                    elif (entry.name in self._collection_bundled_mods
+                          or entry.name in self._collection_patched_mods) and self._icon_info:
+                        # Reuse the info icon for collection-tagged mods; tooltip
+                        # text below distinguishes the two cases. Only one info
+                        # icon per mod (mutually exclusive with prertx render).
                         _flags.append(("img", self._icon_info))
                     if self._mod_is_modified_in_mf(entry.name) and self._icon_disabled_files:
                         _flags.append(("img", self._icon_disabled_files))
@@ -2941,13 +2987,16 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                 has_disabled = self._mod_is_modified_in_mf(name)
                 has_info     = name in self._prertx_mods
                 has_endorsed = name in self._endorsed_mods
+                has_col_flag = (name in self._collection_bundled_mods
+                                or name in self._collection_patched_mods)
                 score = 0
-                if has_warning:  score |= 64
-                if is_locked:    score |= 32
-                if has_update:   score |= 16
-                if has_root:     score |= 8
-                if has_disabled: score |= 4
-                if has_info:     score |= 2
+                if has_warning:  score |= 128
+                if is_locked:    score |= 64
+                if has_update:   score |= 32
+                if has_root:     score |= 16
+                if has_disabled: score |= 8
+                if has_info:     score |= 4
+                if has_col_flag: score |= 2
                 if has_endorsed: score |= 1
                 return -score  # negate so flagged mods sort first in ascending
             return _flags_key
@@ -3111,6 +3160,13 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         idx = self._canvas_y_to_index(cy)
         shift = bool(event.state & 0x1)
         ctrl  = bool(event.state & 0x4)
+        # Alt mask varies across X11 setups: Mod1=0x8 on most Linux, 0x20000 on
+        # some KDE/SteamOS configs.  Accept either.
+        alt   = bool(event.state & (0x8 | 0x20000))
+        # Alt-at-press bypasses locked-separator drag confinement.
+        # Shift/Ctrl are already taken by selection gestures; Alt has no other
+        # binding here so the drag still starts normally.
+        self._drag_lock_bypass = alt
 
         # Checkbox hit-test: if the click is in the enable/disable column and the
         # entry is toggleable, handle it immediately and return.  This avoids
@@ -3158,6 +3214,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     _items.append("endorsed")
                 if entry.name in self._prertx_mods:
                     _items.append("prertx")
+                elif entry.name in self._collection_bundled_mods:
+                    _items.append("collection_bundled")
+                elif entry.name in self._collection_patched_mods:
+                    _items.append("collection_patched")
                 if self._mod_is_modified_in_mf(entry.name):
                     _items.append("disabled_files")
                 if entry.name in self._root_folder_mods:
@@ -3507,6 +3567,43 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._drag_start_slot = start_slot
         self._drag_slot = start_slot
 
+        # Resolve locked-separator confinement for this drag.  Only applies when
+        # dragging a real mod (or a multi-select of mods) out of a locked block;
+        # full-block drags (is_block with empty sel_indices = whole separator
+        # moving as a unit) are unaffected.
+        self._drag_lock_sep_name = None
+        if not self._drag_lock_bypass:
+            _is_full_block_drag = is_block and not sel_indices
+            if not _is_full_block_drag:
+                # Use the anchor (first dragged) entry to identify the owning block.
+                anchor = sel_indices[0] if sel_indices else idx
+                self._drag_lock_sep_name = self._locked_sep_owning(anchor)
+
+    def _locked_sep_owning(self, mod_idx: int) -> str | None:
+        """Return the name of the locked separator whose block contains mod_idx,
+        or None if mod_idx is not inside a locked block (or is itself a separator).
+        Walks back from mod_idx in the current _entries to the nearest separator."""
+        if mod_idx < 0 or mod_idx >= len(self._entries):
+            return None
+        if self._entries[mod_idx].is_separator:
+            return None
+        i = mod_idx - 1
+        while i >= 0 and not self._entries[i].is_separator:
+            i -= 1
+        if i < 0:
+            return None
+        sep_name = self._entries[i].name
+        return sep_name if self._sep_locks.get(sep_name, False) else None
+
+    def _locked_block_bounds(self, sep_name: str) -> tuple[int, int] | None:
+        """Resolve [lo, hi) entry-index bounds of the locked block named sep_name
+        in the current _entries.  Returns None if the separator isn't present."""
+        for i, e in enumerate(self._entries):
+            if e.is_separator and e.name == sep_name:
+                blk = self._sep_block_range(i)
+                return (blk.start, blk.stop)
+        return None
+
     def _sep_block_range(self, sep_idx: int) -> range:
         """Return the range of indices [sep_idx, end) belonging to this separator block.
         The block is the separator plus every non-separator entry below it
@@ -3735,6 +3832,17 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         # Prevent non-bundle mods from being dropped inside a bundle block.
         _pre_removal_insert = self._clamp_outside_bundle_blocks(_pre_removal_insert)
 
+        # Confine drags inside a locked separator's block (Alt bypasses).
+        # Re-check Alt each tick so the user can press/release Alt mid-drag.
+        _alt_now = bool(event.state & (0x8 | 0x20000))
+        if self._drag_lock_sep_name is not None and not _alt_now:
+            bounds = self._locked_block_bounds(self._drag_lock_sep_name)
+            if bounds is not None:
+                _lo, _hi = bounds
+                # Valid pre-removal insertion range is [_lo+1, _hi]: never above
+                # the separator itself, never past the block's last entry.
+                _pre_removal_insert = max(_lo + 1, min(_pre_removal_insert, _hi))
+
         _drop_insert_at = _pre_removal_insert - sum(1 for d in drag_set if d < _pre_removal_insert)
 
         if self._drag_is_block:
@@ -3858,6 +3966,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._drag_reordered_vars = None
         self._drag_saved_sort_column = None
         self._drag_saved_sort_ascending = None
+        self._drag_lock_sep_name = None
+        self._drag_lock_bypass = False
         if _saved_col is not None:
             self._update_header(self._canvas_w)
         self._redraw()
@@ -3907,6 +4017,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     _items.append("endorsed")
                 if entry.name in self._prertx_mods:
                     _items.append("prertx")
+                elif entry.name in self._collection_bundled_mods:
+                    _items.append("collection_bundled")
+                elif entry.name in self._collection_patched_mods:
+                    _items.append("collection_patched")
                 if self._mod_is_modified_in_mf(entry.name):
                     _items.append("disabled_files")
                 if entry.name in self._root_folder_mods:
@@ -3932,6 +4046,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                             tip = "Endorsed"
                         elif _kind == "prertx":
                             tip = "Pre-RTX mod"
+                        elif _kind == "collection_bundled":
+                            tip = "This mod is a collection bundled mod"
+                        elif _kind == "collection_patched":
+                            tip = "This mod has diff patches applied by the collection install"
                         elif _kind == "disabled_files":
                             tip = "Modified in Mod Files tab"
                         elif _kind == "root":
@@ -4183,8 +4301,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                 except Exception:
                     ctx_meta = None
 
-        # Multi-select Nexus URLs.
+        # Multi-select Nexus URLs + endorse/abstain targets (same scan).
         nexus_urls: list[str] = []
+        endorse_multi: list[tuple[str, str, object]] = []
+        abstain_multi: list[tuple[str, str, object]] = []
         if toggleable and self._staging_root is not None:
             for ti in toggleable:
                 tname = entries[ti].name
@@ -4198,8 +4318,28 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                         nexus_urls.append(
                             f"https://www.nexusmods.com/{tdomain}/mods/{tmeta.mod_id}"
                         )
+                        if tmeta.endorsed:
+                            abstain_multi.append((tname, tdomain, tmeta))
+                        else:
+                            endorse_multi.append((tname, tdomain, tmeta))
                 except Exception:
                     pass
+
+        # Multi-select Root Folder + Note targets.
+        root_folder_enable_multi: list[str] = []
+        root_folder_disable_multi: list[str] = []
+        note_multi_names: list[str] = []
+        note_multi_remove_names: list[str] = []
+        if is_multi:
+            for ti in non_synthetic_real:
+                tname = entries[ti].name
+                if tname in self._root_folder_mods:
+                    root_folder_disable_multi.append(tname)
+                else:
+                    root_folder_enable_multi.append(tname)
+                note_multi_names.append(tname)
+                if tname in self._mod_notes_map:
+                    note_multi_remove_names.append(tname)
 
         return SimpleNamespace(
             idx=idx, mod_name=mod_name,
@@ -4216,6 +4356,11 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             conflict_status=conflict_status, bsa_conflict_status=bsa_conflict_status,
             ctx_meta=ctx_meta, nexus_url=nexus_url, domain=domain,
             archive_path=archive_path, nexus_urls=nexus_urls,
+            endorse_multi=endorse_multi, abstain_multi=abstain_multi,
+            root_folder_enable_multi=root_folder_enable_multi,
+            root_folder_disable_multi=root_folder_disable_multi,
+            note_multi_names=note_multi_names,
+            note_multi_remove_names=note_multi_remove_names,
         )
 
     def _resolve_nexus_domain(self, meta) -> str:
@@ -4260,17 +4405,29 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         mod_name = c.mod_name
         ctx_meta = c.ctx_meta
 
-        # Abstain from Endorsement
+        # Abstain from Endorsement (single)
         if (c.is_real_mod and not c.is_multi
                 and ctx_meta is not None and ctx_meta.mod_id > 0 and ctx_meta.endorsed):
             menu.add_command("Abstain from Endorsement",
                 lambda: self._abstain_nexus_mod(mod_name, c.domain, ctx_meta))
 
-        # Add note / Edit note  (single-select real mods only)
+        # Abstain selected (multi)
+        if c.is_multi and c.abstain_multi:
+            targets = list(c.abstain_multi)
+            menu.add_command(f"Abstain selected ({len(targets)})",
+                lambda t=targets: self._abstain_selected_mods(t))
+
+        # Add note / Edit note  (single)
         if c.is_real_mod and not c.is_multi:
             note_label = "Edit note" if mod_name in self._mod_notes_map else "Add note"
             menu.add_command(note_label,
                 lambda mn=mod_name: self._open_note_editor_by_name(mn))
+
+        # Add / append note (multi)
+        if c.is_multi and c.note_multi_names:
+            names = list(c.note_multi_names)
+            menu.add_command(f"Add note ({len(names)})",
+                lambda mns=names: self._open_note_editor_for_multi(mns))
 
         # Add separator above / below
         if not c.is_multi:
@@ -4333,11 +4490,17 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             menu.add_command(f"Enable selected ({count})",
                 lambda inds=list(c.toggleable): self._enable_selected_mods(inds))
 
-        # Endorse Mod
+        # Endorse Mod (single)
         if (c.is_real_mod and not c.is_multi
                 and ctx_meta is not None and ctx_meta.mod_id > 0 and not ctx_meta.endorsed):
             menu.add_command("Endorse Mod",
                 lambda: self._endorse_nexus_mod(mod_name, c.domain, ctx_meta))
+
+        # Endorse selected (multi)
+        if c.is_multi and c.endorse_multi:
+            targets = list(c.endorse_multi)
+            menu.add_command(f"Endorse selected ({len(targets)})",
+                lambda t=targets: self._endorse_selected_mods(t))
 
         # INI files
         if not c.is_separator and not c.is_locked and c.ini_files and not c.is_multi:
@@ -4407,6 +4570,12 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             else:
                 menu.add_command("Remove mod", lambda: self._remove_mod(idx))
 
+        # Remove note (multi)
+        if c.is_multi and c.note_multi_remove_names:
+            names = list(c.note_multi_remove_names)
+            menu.add_command(f"Remove note ({len(names)})",
+                lambda mns=names: self._remove_notes_multi(mns))
+
         # Remove separator(s)
         if c.is_separator and not c.is_synthetic:
             if len(c.remove_multi_sep) >= 2:
@@ -4424,12 +4593,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         if c.is_separator and not c.is_synthetic and not c.is_bundle_sep:
             menu.add_command("Rename separator", lambda: self._rename_separator(idx))
 
-        # Root Folder install toggle
+        # Root Folder install toggle (single)
         if not c.is_separator and not c.is_locked and not c.is_multi:
             is_rf = mod_name in self._root_folder_mods
             rf_label = "Disable Root Folder install" if is_rf else "Enable Root Folder install"
             menu.add_command(rf_label,
                 lambda mn=mod_name: self._toggle_root_folder_flag(mn))
+
+        # Root Folder install toggle (multi)
+        if c.is_multi and c.root_folder_enable_multi:
+            names = list(c.root_folder_enable_multi)
+            menu.add_command(f"Enable Root Folder install ({len(names)})",
+                lambda mns=names: self._set_root_folder_flag_multi(mns, True))
+        if c.is_multi and c.root_folder_disable_multi:
+            names = list(c.root_folder_disable_multi)
+            menu.add_command(f"Disable Root Folder install ({len(names)})",
+                lambda mns=names: self._set_root_folder_flag_multi(mns, False))
 
         # Separator settings…
         if c.is_separator and not c.is_synthetic and not c.is_bundle_sep:
@@ -4466,7 +4645,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta = read_meta(meta_path) if meta_path.is_file() else None
         if meta is None:
-            from Nexus.nexus_meta import ModMeta as _ModMeta
+            from Nexus.nexus_meta import NexusModMeta as _ModMeta
             meta = _ModMeta()
         new_val = not meta.root_folder
         meta.root_folder = new_val
@@ -4480,6 +4659,39 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             self._log(f"{mod_name}: Root Folder install DISABLED — files will deploy to Data/ as normal.")
         self._vis_dirty = True
         self._redraw()
+
+    def _set_root_folder_flag_multi(self, mod_names: list[str], enable: bool) -> None:
+        """Apply rootFolder=enable to every mod in mod_names. Skips mods already
+        in the desired state so we don't churn meta.ini for no reason."""
+        if not mod_names:
+            return
+        from Nexus.nexus_meta import NexusModMeta as _ModMeta
+        changed: list[str] = []
+        for mod_name in mod_names:
+            already = mod_name in self._root_folder_mods
+            if enable == already:
+                continue
+            meta_path = self._staging_root / mod_name / "meta.ini"
+            try:
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta = read_meta(meta_path) if meta_path.is_file() else _ModMeta()
+                meta.root_folder = enable
+                write_meta(meta_path, meta)
+            except Exception as exc:
+                self._log(f"{mod_name}: Could not update root folder flag — {exc}")
+                continue
+            if enable:
+                self._root_folder_mods.add(mod_name)
+            else:
+                self._root_folder_mods.discard(mod_name)
+            changed.append(mod_name)
+        if changed:
+            verb = "ENABLED" if enable else "DISABLED"
+            tail = ("files will deploy to game root."
+                    if enable else "files will deploy to Data/ as normal.")
+            self._log(f"Root Folder install {verb} on {len(changed)} mod(s) — {tail}")
+            self._vis_dirty = True
+            self._redraw()
         # Rebuild filemap so filemap_root.txt reflects the updated root-folder assignment.
         self._rebuild_filemap()
 
@@ -5036,7 +5248,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         # 2. Transient in-memory flags (no disk representation of their own;
         # rebuilt on reload, so just migrate the current snapshot).
         for s in (self._update_mods, self._missing_reqs, self._ignored_missing_reqs,
-                  self._endorsed_mods, self._prertx_mods, self._fomod_mods):
+                  self._endorsed_mods, self._prertx_mods, self._fomod_mods,
+                  self._collection_bundled_mods, self._collection_patched_mods):
             if old_name in s:
                 s.discard(old_name)
                 s.add(new_name)
@@ -5898,6 +6111,73 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             self._log("Cannot open note editor: plugin panel unavailable.")
             return
         pp.show_notes_editor(mod_name, initial, _save, _remove)
+
+    def _open_note_editor_for_multi(self, mod_names: list[str]) -> None:
+        """Open the mod-note editor with an empty initial buffer; on save the
+        text is applied to every mod in *mod_names*. If a mod already has a
+        note, the new text is appended on a new line (preserving the prior
+        note); otherwise the new text becomes the note."""
+        if self._modlist_path is None or not mod_names:
+            return
+        profile_dir = self._modlist_path.parent
+        names = list(mod_names)
+        title = f"{len(names)} mods"
+
+        def _save(text: str):
+            text = text.strip()
+            if not text:
+                return
+            for mn in names:
+                existing = self._mod_notes_map.get(mn, "").rstrip()
+                if existing:
+                    self._mod_notes_map[mn] = f"{existing}\n{text}"
+                else:
+                    self._mod_notes_map[mn] = text
+            try:
+                write_mod_notes(profile_dir, self._mod_notes_map)
+            except Exception as e:
+                self._log(f"Failed to save notes for {len(names)} mods: {e}")
+            self._log(f"Note applied to {len(names)} mod(s).")
+            self._redraw()
+
+        def _remove():
+            removed = 0
+            for mn in names:
+                if self._mod_notes_map.pop(mn, None) is not None:
+                    removed += 1
+            try:
+                write_mod_notes(profile_dir, self._mod_notes_map)
+            except Exception as e:
+                self._log(f"Failed to remove notes: {e}")
+            if removed:
+                self._log(f"Removed note from {removed} mod(s).")
+            self._redraw()
+
+        app = self.winfo_toplevel()
+        pp = getattr(app, "_plugin_panel", None)
+        if pp is None or not hasattr(pp, "show_notes_editor"):
+            self._log("Cannot open note editor: plugin panel unavailable.")
+            return
+        pp.show_notes_editor(title, "", _save, _remove)
+
+    def _remove_notes_multi(self, mod_names: list[str]) -> None:
+        """Remove the note from every mod in *mod_names* without opening the editor."""
+        if self._modlist_path is None or not mod_names:
+            return
+        profile_dir = self._modlist_path.parent
+        removed = 0
+        for mn in mod_names:
+            if self._mod_notes_map.pop(mn, None) is not None:
+                removed += 1
+        if not removed:
+            return
+        try:
+            write_mod_notes(profile_dir, self._mod_notes_map)
+        except Exception as e:
+            self._log(f"Failed to remove notes: {e}")
+            return
+        self._log(f"Removed note from {removed} mod(s).")
+        self._redraw()
 
     def _show_missing_reqs(self, mod_name: str, dep_names: list[str]) -> None:
         """Show missing requirements as an inline overlay over the plugin panel."""

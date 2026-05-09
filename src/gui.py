@@ -213,49 +213,24 @@ class App(ctk.CTk):
                     return 0, 0
 
             _iw, _ih = _png_size(_logo_path)
-            # Centre on the monitor containing the mouse pointer.
-            # On multi-monitor setups winfo_screenwidth returns the combined virtual
-            # desktop width; we use the pointer position + monitor list to find the
-            # right monitor.  Several query paths are tried in order.
+            # Centre on the monitor containing the mouse pointer.  Falls back to
+            # the side-by-side heuristic when no monitor query tool is reachable.
             def _monitor_rect_for_pointer():
                 """Return (mon_x, mon_y, mon_w, mon_h) for the monitor under the pointer."""
                 try:
-                    import re as _re, subprocess as _sp
+                    from Utils.ui_config import get_monitor_rects
                     _px = self.winfo_pointerx()
                     _py = self.winfo_pointery()
+                    for _mx, _my, _mw, _mh in get_monitor_rects():
+                        if _mx <= _px < _mx + _mw and _my <= _py < _my + _mh:
+                            return _mx, _my, _mw, _mh
 
-                    # --- Try xrandr (XWayland / X11) ---
-                    try:
-                        out = _sp.check_output(["xrandr", "--query"], text=True, timeout=2)
-                        for _m in _re.finditer(r"(\d+)x(\d+)\+(\d+)\+(\d+)", out):
-                            _mw, _mh, _mx, _my = (int(g) for g in _m.groups())
-                            if _mx <= _px < _mx + _mw and _my <= _py < _my + _mh:
-                                return _mx, _my, _mw, _mh
-                    except Exception:
-                        pass
-
-                    # --- Try wlr-randr (wlroots/Sway) ---
-                    try:
-                        out = _sp.check_output(["wlr-randr"], text=True, timeout=2)
-                        # Lines: "  1920x1080 px, ..." preceded by position line "  ...at 1920,0"
-                        _blocks = _re.findall(
-                            r"(\d+)x(\d+) px.*?at (\d+),(\d+)", out, _re.DOTALL)
-                        for _mw, _mh, _mx, _my in (
-                                (int(a), int(b), int(c), int(d)) for a, b, c, d in _blocks):
-                            if _mx <= _px < _mx + _mw and _my <= _py < _my + _mh:
-                                return _mx, _my, _mw, _mh
-                    except Exception:
-                        pass
-
-                    # --- Heuristic: if screen is wider than tall, assume side-by-side monitors ---
                     _sw_total = self.winfo_screenwidth()
                     _sh_total = self.winfo_screenheight()
                     if _sw_total > _sh_total * 1.5:
-                        # Guess monitor width as half the virtual width
                         _mw = _sw_total // 2
                         _mx = (_px // _mw) * _mw
                         return _mx, 0, _mw, _sh_total
-
                 except Exception:
                     pass
                 return 0, 0, self.winfo_screenwidth(), self.winfo_screenheight()
@@ -423,6 +398,17 @@ class App(ctk.CTk):
             self._splash_proc = None
         self.update_idletasks()
         self.deiconify()
+        # The Downloads tab built itself before the active game/profile
+        # was wired up, so its first refresh() ran with an empty staging
+        # path and couldn't classify any archive as installed. Re-run it
+        # now that the game/profile are loaded so the Install/Reinstall
+        # buttons reflect reality without requiring a manual Refresh.
+        try:
+            dl_panel = getattr(self._plugin_panel, "_downloads_panel", None)
+            if dl_panel is not None:
+                dl_panel.refresh()
+        except Exception:
+            pass
 
     # -- Thread-safe callback scheduling ------------------------------------
 
@@ -1458,6 +1444,26 @@ class App(ctk.CTk):
                     and mod_name in self._mod_panel._missing_reqs):
                 dep_names = self._mod_panel._missing_reqs_detail.get(mod_name, [])
                 self._mod_panel._show_missing_reqs(mod_name, dep_names)
+            # Notify Downloads panel: highlight the archive of the anchor
+            # mod, but only when exactly one mod is selected.
+            dl_panel = getattr(self._plugin_panel, "_downloads_panel", None)
+            if dl_panel is not None:
+                archive_name: str | None = None
+                if (mod_name and mod_name != _OVERWRITE_NAME
+                        and len(self._mod_panel._sel_set) <= 1):
+                    try:
+                        game = _GAMES.get(self._topbar._game_var.get())
+                        if game is not None and game.is_configured():
+                            staging = game.get_effective_mod_staging_path()
+                            if staging:
+                                meta_path = Path(staging) / mod_name / "meta.ini"
+                                if meta_path.is_file():
+                                    from Nexus.nexus_meta import read_meta as _read_meta
+                                    m = _read_meta(meta_path)
+                                    archive_name = m.installation_file or None
+                    except Exception:
+                        archive_name = None
+                dl_panel.set_highlighted_archive(archive_name)
         self._mod_panel._on_mod_selected_cb = _on_mod_selected  # mod selected → clear plugin selection + highlight
 
         # Load initial game + profile — set plugin paths BEFORE load_game

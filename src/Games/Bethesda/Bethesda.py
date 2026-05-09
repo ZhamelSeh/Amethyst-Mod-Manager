@@ -125,6 +125,7 @@ class Fallout_3(BaseGame):
 
     plugins_use_star_prefix = False
     plugins_include_vanilla = True
+    vanilla_plugins = ["Fallout3.esm"]
     synthesis_registry_name = "Fallout3"
 
     def __init__(self):
@@ -132,7 +133,7 @@ class Fallout_3(BaseGame):
         self._prefix_path: Path | None = None
         self._deploy_mode: LinkMode = LinkMode.HARDLINK
         self._staging_path: Path | None = None
-        self._symlink_plugins: bool = False
+        self._script_extender_swap: bool = True
         self._profile_ini_files: bool = False
         self.load_paths()
 
@@ -333,13 +334,13 @@ class Fallout_3(BaseGame):
         return _PROFILES_DIR / self.name / "mods"
 
     def _load_paths_extra(self, data: dict) -> None:
-        self._symlink_plugins = data.get("symlink_plugins", False)
+        self._script_extender_swap = data.get("script_extender_swap", True)
         self._profile_ini_files = data.get("profile_ini_files", False)
 
     def _save_paths_extra(self) -> dict:
         return {
-            "symlink_plugins":   self._symlink_plugins,
-            "profile_ini_files": self._profile_ini_files,
+            "script_extender_swap": self._script_extender_swap,
+            "profile_ini_files":    self._profile_ini_files,
         }
 
     def set_staging_path(self, path: "Path | str | None") -> None:
@@ -357,11 +358,11 @@ class Fallout_3(BaseGame):
         self.save_paths()
 
     @property
-    def symlink_plugins(self) -> bool:
-        return self._symlink_plugins
+    def script_extender_swap(self) -> bool:
+        return self._script_extender_swap
 
-    def set_symlink_plugins(self, value: bool) -> None:
-        self._symlink_plugins = value
+    def set_script_extender_swap(self, value: bool) -> None:
+        self._script_extender_swap = value
         self.save_paths()
 
     @property
@@ -557,6 +558,9 @@ class Fallout_3(BaseGame):
         _log = log_fn
         if self._game_path is None:
             return
+        if not self._script_extender_swap:
+            _log("  Script extender / launcher swap disabled — skipping.")
+            return
         se = self._game_path / self._script_extender_exe
         if not se.is_file():
             _log(f"  {self._script_extender_exe} not found — skipping launcher swap.")
@@ -638,7 +642,6 @@ class Fallout_3(BaseGame):
         _sep_deploy = load_separator_deploy_paths(profile_dir)
         _sep_entries = read_modlist(profile_dir / "modlist.txt") if _sep_deploy else []
         per_mod_deploy = expand_separator_deploy_paths(_sep_deploy, _sep_entries) or None
-        _symlink_exts = set(self.plugin_extensions) if self._symlink_plugins else None
         linked_mod, placed = deploy_filemap(filemap, data_dir, staging,
                                             mode=mode,
                                             strip_prefixes=self.mod_folder_strip_prefixes,
@@ -646,7 +649,6 @@ class Fallout_3(BaseGame):
                                             per_mod_deploy_dirs=per_mod_deploy,
                                             log_fn=_log,
                                             progress_fn=progress_fn,
-                                            symlink_exts=_symlink_exts,
                                             exclude=custom_exclude or None,
                                             core_dir=data_dir.parent / (data_dir.name + "_Core"))
         _log(f"  Transferred {linked_mod} mod file(s).")
@@ -770,6 +772,8 @@ class Fallout3_GOTY(Fallout_3):
 
 class Fallout_NV(Fallout_3):
 
+    vanilla_plugins = ["FalloutNV.esm"]
+
     @property
     def wizard_tools(self) -> list[WizardTool]:
         return self._base_wizard_tools() + [
@@ -855,6 +859,13 @@ class Fallout_4(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Fallout4.esm",
+        "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm",
+        "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm",
+        "DLCUltraHighResolution.esm",
+    ]
+    vanilla_ccc_filename = "Fallout4.ccc"
     synthesis_registry_name = "Fallout4"
 
     @property
@@ -950,6 +961,7 @@ class Fallout_4VR(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = ["Fallout4.esm", "Fallout4_VR.esm"]
     synthesis_registry_name = "Fallout 4 VR"
 
     @property
@@ -1034,6 +1046,7 @@ class Fallout_4VR(Fallout_3):
 
 class Oblivion(Fallout_3):
 
+    vanilla_plugins = ["Oblivion.esm", "Update.esm"]
     synthesis_registry_name = "Oblivion"
 
     @property
@@ -1157,6 +1170,7 @@ class Oblivion(Fallout_3):
 
 class Skyrim(Fallout_3):
 
+    vanilla_plugins = ["Skyrim.esm", "Update.esm"]
     synthesis_registry_name = "Skyrim"
 
     @property
@@ -1233,6 +1247,11 @@ class SkyrimVR(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Skyrim.esm", "Update.esm",
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+    ]
+    vanilla_ccc_filename = "Skyrim.ccc"
     synthesis_registry_name = "Skyrim VR"
 
     @property
@@ -1315,6 +1334,12 @@ class Starfield(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Starfield.esm", "Constellation.esm", "ShatteredSpace.esm",
+        "OldMars.esm", "SFBGS003.esm", "SFBGS004.esm", "SFBGS006.esm",
+        "SFBGS007.esm", "SFBGS008.esm", "BlueprintShips-Starfield.esm",
+    ]
+    vanilla_ccc_filename = "Starfield.ccc"
     synthesis_registry_name = "Starfield"
 
     @property
@@ -1440,6 +1465,7 @@ class Starfield(Fallout_3):
 
 class Enderal(Fallout_3):
 
+    vanilla_plugins = ["Skyrim.esm", "Update.esm", "Enderal - Forgotten Stories.esm"]
     synthesis_registry_name = "Enderal"
 
     @property
@@ -1480,6 +1506,14 @@ class Enderal(Fallout_3):
     def _script_extender_exe(self) -> str:
         return "skse_loader.exe"
 
+    def swap_launcher(self, log_fn) -> None:
+        # Enderal Launcher.exe already bootstraps SKSE; swapping breaks it.
+        log_fn("  Enderal Launcher invokes SKSE internally — skipping launcher swap.")
+
+    def _restore_launcher(self, log_fn) -> None:
+        # Migration path: undo any prior swap left over from earlier versions.
+        super()._restore_launcher(log_fn)
+
     @property
     def wizard_tools(self) -> list[WizardTool]:
         return self._base_wizard_tools() + [
@@ -1496,6 +1530,11 @@ class EnderalSE(Fallout_3):
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
     supports_esl_flag = True
+    vanilla_plugins = [
+        "Skyrim.esm", "Update.esm",
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+        "Enderal - Forgotten Stories.esm",
+    ]
     synthesis_registry_name = "Enderal Special Edition"
 
     @property
@@ -1535,6 +1574,14 @@ class EnderalSE(Fallout_3):
     @property
     def _script_extender_exe(self) -> str:
         return "skse64_loader.exe"
+
+    def swap_launcher(self, log_fn) -> None:
+        # Enderal Launcher.exe already bootstraps SKSE64; swapping breaks it.
+        log_fn("  Enderal Launcher invokes SKSE64 internally — skipping launcher swap.")
+
+    def _restore_launcher(self, log_fn) -> None:
+        # Migration path: undo any prior swap left over from earlier versions.
+        super()._restore_launcher(log_fn)
 
     @property
     def wizard_tools(self) -> list[WizardTool]:

@@ -880,8 +880,8 @@ class FomodDialog(ctk.CTkFrame):
                 entries = os.listdir(current)
             except OSError:
                 return None
-            part_lower = part.lower()
-            match = next((e for e in entries if e.lower() == part_lower), None)
+            entries_lower = {e.lower(): e for e in entries}
+            match = entries_lower.get(part.lower())
             if match is None:
                 return None
             current = os.path.join(current, match)

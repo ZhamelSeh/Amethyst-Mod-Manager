@@ -26,7 +26,26 @@ def _vanilla_plugins_for_game(game) -> dict[str, str]:
     result: dict[str, str] = {}
     for name in getattr(game, "vanilla_plugins", []) or []:
         result[name.lower()] = name
+
+    dlc_plugins = getattr(game, "vanilla_dlc_plugins", []) or []
     ccc_name = getattr(game, "vanilla_ccc_filename", None)
+    if not dlc_plugins and not ccc_name:
+        return result
+
+    # DLC and CC entries are only treated as vanilla if their file is present
+    # in the Data folder — users may not own every DLC.
+    data_dir = game.get_vanilla_plugins_path() if hasattr(game, "get_vanilla_plugins_path") else None
+    present: set[str] = set()
+    if data_dir and data_dir.is_dir():
+        try:
+            present = {entry.name.lower() for entry in data_dir.iterdir() if entry.is_file()}
+        except OSError:
+            pass
+
+    for name in dlc_plugins:
+        if name.lower() in present:
+            result.setdefault(name.lower(), name)
+
     if not ccc_name:
         return result
     game_path = game.get_game_path()
@@ -35,15 +54,6 @@ def _vanilla_plugins_for_game(game) -> dict[str, str]:
     ccc = game_path / ccc_name
     if not ccc.is_file():
         return result
-    # .ccc lists every Bethesda CC plugin that exists; only treat entries
-    # as vanilla if the file is actually present in the Data folder.
-    data_dir = game.get_vanilla_plugins_path() if hasattr(game, "get_vanilla_plugins_path") else None
-    present: set[str] = set()
-    if data_dir and data_dir.is_dir():
-        try:
-            present = {entry.name.lower() for entry in data_dir.iterdir() if entry.is_file()}
-        except OSError:
-            pass
     try:
         for line in ccc.read_text(encoding="utf-8", errors="ignore").splitlines():
             n = line.strip()

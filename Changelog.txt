@@ -2,7 +2,7 @@
 - Fixed plugins being disabled on manual collection installs
 - Added a filter by filetype to the modlist filters
 - Fix for collection installed script extenders not installing correctly due to the Data folder being stripped and the contents within it landing in the root folder
-
+- Fixed Bethesda dlc plugins not being detected correctly after previous update.
 
 - v1.3.2
 - Reworked the download Tab

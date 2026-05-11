@@ -126,6 +126,10 @@ class Fallout_3(BaseGame):
     plugins_use_star_prefix = False
     plugins_include_vanilla = True
     vanilla_plugins = ["Fallout3.esm"]
+    vanilla_dlc_plugins = [
+        "Anchorage.esm", "ThePitt.esm", "BrokenSteel.esm",
+        "PointLookout.esm", "Zeta.esm",
+    ]
     synthesis_registry_name = "Fallout3"
 
     def __init__(self):
@@ -773,6 +777,12 @@ class Fallout3_GOTY(Fallout_3):
 class Fallout_NV(Fallout_3):
 
     vanilla_plugins = ["FalloutNV.esm"]
+    vanilla_dlc_plugins = [
+        "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm",
+        "LonesomeRoad.esm", "GunRunnersArsenal.esm",
+        "CaravanPack.esm", "ClassicPack.esm",
+        "MercenaryPack.esm", "TribalPack.esm",
+    ]
 
     @property
     def wizard_tools(self) -> list[WizardTool]:
@@ -865,6 +875,7 @@ class Fallout_4(Fallout_3):
         "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm",
         "DLCUltraHighResolution.esm",
     ]
+    vanilla_dlc_plugins: list[str] = []
     vanilla_ccc_filename = "Fallout4.ccc"
     synthesis_registry_name = "Fallout4"
 
@@ -962,6 +973,7 @@ class Fallout_4VR(Fallout_3):
     plugins_include_vanilla = False
     supports_esl_flag = True
     vanilla_plugins = ["Fallout4.esm", "Fallout4_VR.esm"]
+    vanilla_dlc_plugins: list[str] = []
     synthesis_registry_name = "Fallout 4 VR"
 
     @property
@@ -1047,6 +1059,13 @@ class Fallout_4VR(Fallout_3):
 class Oblivion(Fallout_3):
 
     vanilla_plugins = ["Oblivion.esm", "Update.esm"]
+    vanilla_dlc_plugins = [
+        "DLCShiveringIsles.esp", "Knights.esp",
+        "DLCBattlehornCastle.esp", "DLCFrostcrag.esp",
+        "DLCSpellTomes.esp", "DLCMehrunesRazor.esp",
+        "DLCOrrery.esp", "DLCThievesDen.esp",
+        "DLCVileLair.esp", "DLCHorseArmor.esp",
+    ]
     synthesis_registry_name = "Oblivion"
 
     @property
@@ -1171,6 +1190,11 @@ class Oblivion(Fallout_3):
 class Skyrim(Fallout_3):
 
     vanilla_plugins = ["Skyrim.esm", "Update.esm"]
+    vanilla_dlc_plugins = [
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+        "HighResTexturePack01.esp", "HighResTexturePack02.esp",
+        "HighResTexturePack03.esp",
+    ]
     synthesis_registry_name = "Skyrim"
 
     @property
@@ -1251,6 +1275,7 @@ class SkyrimVR(Fallout_3):
         "Skyrim.esm", "Update.esm",
         "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
     ]
+    vanilla_dlc_plugins: list[str] = []
     vanilla_ccc_filename = "Skyrim.ccc"
     synthesis_registry_name = "Skyrim VR"
 
@@ -1339,6 +1364,7 @@ class Starfield(Fallout_3):
         "OldMars.esm", "SFBGS003.esm", "SFBGS004.esm", "SFBGS006.esm",
         "SFBGS007.esm", "SFBGS008.esm", "BlueprintShips-Starfield.esm",
     ]
+    vanilla_dlc_plugins: list[str] = []
     vanilla_ccc_filename = "Starfield.ccc"
     synthesis_registry_name = "Starfield"
 
@@ -1466,6 +1492,11 @@ class Starfield(Fallout_3):
 class Enderal(Fallout_3):
 
     vanilla_plugins = ["Skyrim.esm", "Update.esm", "Enderal - Forgotten Stories.esm"]
+    vanilla_dlc_plugins = [
+        "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
+        "HighResTexturePack01.esp", "HighResTexturePack02.esp",
+        "HighResTexturePack03.esp",
+    ]
     synthesis_registry_name = "Enderal"
 
     @property
@@ -1535,6 +1566,7 @@ class EnderalSE(Fallout_3):
         "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
         "Enderal - Forgotten Stories.esm",
     ]
+    vanilla_dlc_plugins: list[str] = []
     synthesis_registry_name = "Enderal Special Edition"
 
     @property

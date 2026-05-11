@@ -25,6 +25,7 @@ class SkyrimSE(Fallout_3):
         "Skyrim.esm", "Update.esm",
         "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm",
     ]
+    vanilla_dlc_plugins: list[str] = []
     vanilla_ccc_filename = "Skyrim.ccc"
     synthesis_registry_name = "Skyrim Special Edition"
 

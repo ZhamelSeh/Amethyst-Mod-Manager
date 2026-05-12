@@ -277,16 +277,7 @@ class Fallout_3(BaseGame):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["fose_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_0.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_1.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_4.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_4b.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_5.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_6.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_7.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_1_7ng.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_editor_1_1.dll"], flatten=True),
-            CustomRule(dest="", filenames=["fose_editor_1_5.dll"], flatten=True),
+            CustomRule(dest="", filenames=["fose*.dll"], flatten=True),
                 ]
 
     @property
@@ -839,14 +830,8 @@ class Fallout_NV(Fallout_3):
     def custom_routing_rules(self) -> list:
         from Utils.deploy import CustomRule
         return [
-            CustomRule(dest="", filenames=["nvse_1_4.dll"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_1_4.pdb"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_editor_1_4.dll"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_editor_1_4.pdb"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_loader.pdb"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_steam_loader.dll"], flatten=True),
-            CustomRule(dest="", filenames=["nvse_steam_loader.pdb"], flatten=True),
+            CustomRule(dest="", filenames=["nvse*.dll"], flatten=True),
+            CustomRule(dest="", filenames=["nvse*.pdb"], flatten=True),
                 ]
 
     @property
@@ -947,7 +932,7 @@ class Fallout_4(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["f4se_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["f4se_1_11_191.dll"], flatten=True),
+            CustomRule(dest="", filenames=["f4se*.dll"], flatten=True),
             CustomRule(dest="", filenames=["CustomControlMap.txt"], flatten=True),
                 ]
 
@@ -1031,7 +1016,7 @@ class Fallout_4VR(Fallout_3):
         return [
             CustomRule(dest="", filenames=["f4sevr_steam_loader.dll"], flatten=True),
             CustomRule(dest="", filenames=["f4sevr_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["f4sevr_1_2_72.dll"], flatten=True),
+            CustomRule(dest="", filenames=["f4sevr*.dll"], flatten=True),
                 ]
 
     @property
@@ -1126,9 +1111,7 @@ class Oblivion(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["obse_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["obse_1_2_416.dll"], flatten=True),
-            CustomRule(dest="", filenames=["obse_editor_1_2.dll"], flatten=True),
-            CustomRule(dest="", filenames=["obse_steam_loader.dll"], flatten=True),
+            CustomRule(dest="", filenames=["obse*.dll"], flatten=True),
         ]
 
     _APPDATA_SUBPATH = Path("drive_c/users/steamuser/AppData/Local/Oblivion")
@@ -1251,8 +1234,7 @@ class Skyrim(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["skse_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["skse_1_9_32.dll"], flatten=True),
-            CustomRule(dest="", filenames=["skse_steam_loader.dll"], flatten=True),
+            CustomRule(dest="", filenames=["skse*l"], flatten=True),
         ]
 
     _APPDATA_SUBPATH = Path("drive_c/users/steamuser/AppData/Local/Skyrim")
@@ -1341,8 +1323,7 @@ class SkyrimVR(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["sksevr_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["sksevr_1_4_15.dll"], flatten=True),
-            CustomRule(dest="", filenames=["sksevr_steam_loader.dll"], flatten=True),
+            CustomRule(dest="", filenames=["sksevr*.dll"], flatten=True),
         ]
 
     _APPDATA_SUBPATH = Path("drive_c/users/steamuser/AppData/Local/Skyrim VR")
@@ -1441,7 +1422,7 @@ class Starfield(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["sfse_loader.exe"], flatten=True),
-            CustomRule(dest="", filenames=["sfse_1_15_222.dll"], flatten=True),
+            CustomRule(dest="", filenames=["sfse*.dll"], flatten=True),
         ]
 
     # plugins.txt lives at AppData/Local/Starfield/plugins.txt — same pattern as other Bethesda titles.

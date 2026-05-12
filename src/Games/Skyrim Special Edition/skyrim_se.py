@@ -120,9 +120,7 @@ class SkyrimSE(Fallout_3):
         from Utils.deploy import CustomRule
         return [
             CustomRule(dest="", filenames=["d3dx9_42.dll"], flatten=True),
-            CustomRule(dest="", filenames=["skse64_1_6_1170.dll"], flatten=True),
-            CustomRule(dest="", filenames=["skse64_1_6_1179.dll"], flatten=True),
-            CustomRule(dest="", filenames=["skse64_1_5_97.dll"], flatten=True),
+            CustomRule(dest="", filenames=["skse64_1*.dll"], flatten=True),
             CustomRule(dest="", filenames=["skse64_loader.exe"], flatten=True),
             CustomRule(dest="", filenames=["d3dcompiler_47.dll"], flatten=True),
             CustomRule(dest="Data/SKSE/Plugins/CharGen/Presets", extensions=[".jslot"], flatten=True),

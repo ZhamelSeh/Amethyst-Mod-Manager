@@ -37,6 +37,69 @@ def skip_if_mousewheel(fn: Callable) -> Callable:
     return _wrapped
 
 
+def bind_scrollable_wheel(scrollable) -> None:
+    """Make Linux X11 wheel notches (Button-4/5) scroll a CTkScrollableFrame.
+
+    On Tk 8.6 the bundled CTkScrollableFrame only listens for <MouseWheel>,
+    which X11 never fires; users have to drag the scrollbar. This helper
+    binds Button-4/5 on the frame itself, its inner canvas, and every
+    descendant — and re-binds whenever new children appear, so dynamically
+    rebuilt step pages keep working.
+
+    No-op on Tk >= 8.7 where TIP 474 already delivers <MouseWheel>.
+    """
+    if LEGACY_WHEEL_REDUNDANT:
+        return
+
+    try:
+        canvas = scrollable._parent_canvas
+    except Exception:
+        return
+
+    def _up(_e):
+        try:
+            canvas.yview_scroll(-3, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _down(_e):
+        try:
+            canvas.yview_scroll(3, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _bind_tree(widget):
+        try:
+            widget.bind("<Button-4>", _up, add="+")
+            widget.bind("<Button-5>", _down, add="+")
+        except Exception:
+            return
+        for child in widget.winfo_children():
+            _bind_tree(child)
+
+    _bind_tree(scrollable)
+    try:
+        _bind_tree(canvas)
+    except Exception:
+        pass
+
+    # Re-walk descendants when the pointer enters the scroller — cheap, and
+    # covers rows added after the initial bind (multi-step wizard pages).
+    def _on_enter(_e=None):
+        _bind_tree(scrollable)
+        try:
+            _bind_tree(canvas)
+        except Exception:
+            pass
+
+    try:
+        scrollable.bind("<Enter>", _on_enter, add="+")
+    except Exception:
+        pass
+
+
 def patch_ctk_scrollable_frame() -> None:
     """Patch CTkScrollableFrame's Linux wheel handler to scale event.delta.
 

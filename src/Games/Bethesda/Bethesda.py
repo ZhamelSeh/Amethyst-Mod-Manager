@@ -1210,6 +1210,7 @@ class Skyrim(Fallout_3):
                 label="SkyGen — Patch Generator",
                 description="Scan your load order for BOS / SkyPatcher patch coverage and generate new patches.",
                 dialog_class_path="wizards.skygen.SkyGenWizard",
+                extra={"_full_width_overlay": True},
             ),
             WizardTool(
                 id="run_plugin_audit_skyrim",
@@ -1219,6 +1220,7 @@ class Skyrim(Fallout_3):
                     "SkyGen BOS/SkyPatcher INIs for plugins that must stay enabled."
                 ),
                 dialog_class_path="wizards.plugin_audit.PluginAuditWizard",
+                extra={"_full_width_overlay": True},
             ),
         ]
 
@@ -1315,6 +1317,7 @@ class SkyrimVR(Fallout_3):
                 label="SkyGen — Patch Generator",
                 description="Scan your load order for BOS / SkyPatcher patch coverage and generate new patches.",
                 dialog_class_path="wizards.skygen.SkyGenWizard",
+                extra={"_full_width_overlay": True},
             ),
             WizardTool(
                 id="run_plugin_audit_skyrimvr",
@@ -1324,6 +1327,7 @@ class SkyrimVR(Fallout_3):
                     "SkyGen BOS/SkyPatcher INIs for plugins that must stay enabled."
                 ),
                 dialog_class_path="wizards.plugin_audit.PluginAuditWizard",
+                extra={"_full_width_overlay": True},
             ),
         ]
 

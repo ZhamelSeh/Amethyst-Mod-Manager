@@ -15,7 +15,6 @@ from __future__ import annotations
 import mmap
 import re
 import threading
-import tkinter.messagebox as tkmb
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
@@ -25,6 +24,8 @@ import customtkinter as ctk
 if TYPE_CHECKING:
     from Games.base_game import BaseGame
 
+from gui.dialogs import ask_yes_no
+from gui.wheel_compat import bind_scrollable_wheel
 from gui.theme import (
     ACCENT,
     ACCENT_HOV,
@@ -803,6 +804,7 @@ class PluginAuditWizard(ctk.CTkFrame):
                 self._body, fg_color=BG_PANEL,
             )
             scroll.pack(fill="both", expand=True, pady=(4, 8))
+            bind_scrollable_wheel(scroll)
 
             # Header row
             hdr = ctk.CTkFrame(scroll, fg_color=BG_HEADER)
@@ -966,17 +968,13 @@ class PluginAuditWizard(ctk.CTkFrame):
             return
 
         # Confirmation dialog
-        ok = tkmb.askyesno(
-            title="Disable Selected Plugins",
-            message=(
-                f"Disable {len(selected)} plugin(s)?\n\n"
-                + "\n".join(f"  \u2022 {n}" for n in selected[:5])
-                + ("\n  \u2022 ..." if len(selected) > 5 else "")
-                + "\n\nThe patches for these plugins will still apply at runtime."
-            ),
-            icon="warning",
+        msg = (
+            f"Disable {len(selected)} plugin(s)?\n\n"
+            + "\n".join(f"  \u2022 {n}" for n in selected[:5])
+            + ("\n  \u2022 ..." if len(selected) > 5 else "")
+            + "\n\nThe patches for these plugins will still apply at runtime."
         )
-        if not ok:
+        if not ask_yes_no(self, msg, title="Disable Selected Plugins"):
             return
 
         game    = self._game
@@ -1043,17 +1041,13 @@ class PluginAuditWizard(ctk.CTkFrame):
             return
 
         # Confirmation dialog
-        ok = tkmb.askyesno(
-            title="Clean Orphaned INIs",
-            message=(
-                f"Delete SkyGen-generated INI files for {len(targets)} plugin(s) "
-                "that cannot be disabled?\n\n"
-                "This removes INIs in the SkyGen BOS and SkyGen SkyPatcher "
-                "output mods. INIs that ship with original mods are not affected."
-            ),
-            icon="warning",
+        msg = (
+            f"Delete SkyGen-generated INI files for {len(targets)} plugin(s) "
+            "that cannot be disabled?\n\n"
+            "This removes INIs in the SkyGen BOS and SkyGen SkyPatcher "
+            "output mods. INIs that ship with original mods are not affected."
         )
-        if not ok:
+        if not ask_yes_no(self, msg, title="Clean Orphaned INIs"):
             return
 
         deleted = 0

@@ -628,6 +628,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         self._pool_ul_dot: list[int] = []
         self._pool_esl_badge: list[int] = []
         self._pool_loot_info: list[int | None] = []
+        self._pool_bos_sp_badge: list[int] = []
         # lowercase plugin name -> full info dict persisted to loot.json:
         # {messages, dirty, requirements, incompatibilities, locations}
         self._loot_info: dict[str, dict] = {}
@@ -644,6 +645,10 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         # version-mismatch checks are expensive (~450 ms for 1300 plugins).
         # Keyed by (filemap_mtime, plugins_tuple, data_dir_str).
         self._masters_cache_key: tuple | None = None
+        # BOS / SkyPatcher patch detection
+        # plugin_name.lower() -> "bos", "sp", or "both"
+        self._bos_sp_plugins: dict[str, str] = {}
+        self._bos_sp_cache_key: tuple | None = None  # (staging_mtime, staging_str)
         self._userlist_plugins: set[str] = set()
         # Plugins (lowercased names) that participate in a userlist.yaml cycle.
         # Used to paint the userlist dot red instead of white.
@@ -2207,6 +2212,9 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             ("filter_esl_safe",        "Show only ESL-safe plugins"),
             ("filter_esl_unsafe",      "Show only ESL-unsafe plugins"),
             ("filter_userlist",        "Show only plugins managed by userlist.yaml"),
+            ("filter_bos_sp",          "Show only BOS/SP-patched plugins [B/S badge]"),
+            ("filter_bos_only",        "Show only BOS-patched plugins [B badge]"),
+            ("filter_sp_only",         "Show only SkyPatcher-patched plugins [S badge]"),
         ]
 
         self._pfsp_vars: dict[str, tk.BooleanVar] = {}
@@ -2364,6 +2372,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                                               anchor="center", state="hidden")
             self._pool_loot_info.append(loot_info_id)
 
+            bos_sp_badge = c.create_text(0, -200, text="", anchor="center",
+                                         fill="#c084fc",
+                                         font=(_theme.FONT_FAMILY, _theme.FS11, "bold"),
+                                         state="hidden")
+            self._pool_bos_sp_badge.append(bos_sp_badge)
+
             def _lk_release(e, slot=s):
                 self._on_pool_lock_toggle(slot)
                 return "break"
@@ -2456,6 +2470,17 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                 if fs.get("filter_esl_unsafe") and name_lower not in self._esl_unsafe_plugins:
                     continue
                 if fs.get("filter_userlist") and name_lower not in self._userlist_plugins:
+                    continue
+                if fs.get("filter_bos_sp") and name_lower not in self._bos_sp_plugins:
+                    continue
+                # Both checked = show any patched plugin (union)
+                _bos_kind = self._bos_sp_plugins.get(name_lower, "")
+                if fs.get("filter_bos_only") and fs.get("filter_sp_only"):
+                    if not _bos_kind:
+                        continue
+                elif fs.get("filter_bos_only") and _bos_kind not in ("bos", "both"):
+                    continue
+                elif fs.get("filter_sp_only") and _bos_kind not in ("sp", "both"):
                     continue
 
             result.append(i)
@@ -3124,6 +3149,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                 is_vanilla = name_lower in self._vanilla_plugins
                 is_locked = bool(self._plugin_locks.get(entry.name, False))
                 has_loot = self._has_loot_tooltip_content(entry.name)
+                bos_sp_kind = self._bos_sp_plugins.get(name_lower, "")
+                has_bos_sp = bool(bos_sp_kind)
 
                 state_key = (
                     "v",
@@ -3143,6 +3170,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                     is_vanilla,
                     is_locked,
                     has_loot,
+                    bos_sp_kind,
                 )
                 if _pool_last_state[s] == state_key and self._pool_data_idx[s] == actual_idx:
                     continue
@@ -3178,7 +3206,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
 
                 flags_x0 = self._pcol_x[2]
                 flags_x1 = self._pcol_x[3]
-                active_flags = [f for f in [has_missing, has_late, has_vmm, has_ul, has_esl, has_loot] if f]
+                active_flags = [f for f in [has_missing, has_late, has_vmm, has_ul, has_esl, has_loot, has_bos_sp] if f]
                 n_flags = len(active_flags)
                 # Pack flags tightly with a fixed gap, centered in the column.
                 flag_gap = scaled(20)
@@ -3238,6 +3266,17 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                     else:
                         c.itemconfigure(loot_info_id, state="hidden")
 
+                bos_sp_badge_id = self._pool_bos_sp_badge[s] if s < len(self._pool_bos_sp_badge) else None
+                if bos_sp_badge_id is not None:
+                    bos_sp_kind = self._bos_sp_plugins.get(name_lower, "")
+                    if bos_sp_kind:
+                        _bos_sp_label = {"bos": "B", "sp": "S", "both": "B+S"}.get(bos_sp_kind, "P")
+                        _bos_sp_color = {"bos": "#60a5fa", "sp": "#fbbf24", "both": "#c084fc"}.get(bos_sp_kind, "#c084fc")
+                        c.coords(bos_sp_badge_id, next(_flag_pos), y_mid)
+                        c.itemconfigure(bos_sp_badge_id, text=_bos_sp_label, fill=_bos_sp_color, state="normal")
+                    else:
+                        c.itemconfigure(bos_sp_badge_id, state="hidden")
+
                 self._pool_data_idx[s] = actual_idx
 
                 if not dragging:
@@ -3289,6 +3328,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                     c.itemconfigure(self._pool_esl_badge[s], state="hidden")
                 if s < len(self._pool_loot_info) and self._pool_loot_info[s] is not None:
                     c.itemconfigure(self._pool_loot_info[s], state="hidden")
+                if s < len(self._pool_bos_sp_badge):
+                    c.itemconfigure(self._pool_bos_sp_badge[s], state="hidden")
                 c.itemconfigure(self._pool_check_rects[s], state="hidden")
                 c.itemconfigure(self._pool_check_marks[s], state="hidden")
                 c.itemconfigure(self._pool_lock_rects[s], state="hidden")
@@ -3600,6 +3641,128 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             self._version_mismatch_masters = {}
         self._load_esl_flags(plugin_paths)
         self._masters_cache_key = cache_key
+        # BOS/SP scan: run off main thread to keep UI responsive
+        # trigger a redraw via after().
+        import threading as _threading
+        _threading.Thread(
+            target=self._scan_bos_sp_patches, daemon=True
+        ).start()
+
+
+    # ------------------------------------------------------------------
+    # BOS / SkyPatcher patch detection
+    # ------------------------------------------------------------------
+
+    def _scan_bos_sp_patches(self) -> None:
+        """Scan staging mods for BOS/SkyPatcher patches (background thread)."""
+        try:
+            self._do_scan_bos_sp()
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+
+    def _do_scan_bos_sp(self) -> None:
+        if self._staging_root is None:
+            return
+
+        staging_str = str(self._staging_root)
+        try:
+            total_mtime = sum(
+                d.stat().st_mtime
+                for d in self._staging_root.iterdir()
+                if d.is_dir()
+            )
+        except OSError:
+            total_mtime = 0.0
+        cache_key = (total_mtime, staging_str)
+        if cache_key == self._bos_sp_cache_key:
+            return
+
+        all_plugins: set[str] = set()   # all plugin basenames (lowercase) found in staging
+        bos_stems: set[str] = set()     # plugin stems (lowercase) with a _SWAP.ini
+        sp_plugins: set[str] = set()    # plugin names (lowercase) in filterByFormID entries
+
+        try:
+            for mod_dir in self._staging_root.iterdir():
+                if not mod_dir.is_dir():
+                    continue
+
+                search_roots = [mod_dir]
+                data_sub = mod_dir / "Data"
+                if data_sub.is_dir():
+                    search_roots.append(data_sub)
+
+                # Collect plugin basenames
+                for root in search_roots:
+                    try:
+                        for f in root.iterdir():
+                            if f.is_file() and f.suffix.lower() in {".esp", ".esm", ".esl"}:
+                                all_plugins.add(f.name.lower())
+                    except OSError:
+                        pass
+
+                # BOS: any <stem>_SWAP.ini anywhere under the mod
+                for root in search_roots:
+                    try:
+                        for f in root.rglob("*.ini"):
+                            if f.is_file() and f.name.lower().endswith("_swap.ini"):
+                                bos_stems.add(f.name.lower()[:-len("_swap.ini")])
+                    except OSError:
+                        pass
+
+                # SP: parse filterByFormID lines in SkyPatcher/SkyPatcher2 INIs.
+                # Each entry: filterByFormID = Plugin.esp|FormID
+                # A patch mod targeting another mod's plugin lives here, so scan
+                # all mods — not just the mod that owns the plugin.
+                for sp_dir_name in ("SkyPatcher", "SkyPatcher2"):
+                    sp_dir = mod_dir / "SKSE" / "Plugins" / sp_dir_name
+                    if not sp_dir.is_dir():
+                        continue
+                    try:
+                        for ini in sp_dir.rglob("*.ini"):
+                            if not ini.is_file():
+                                continue
+                            try:
+                                for line in ini.read_text(
+                                    encoding="utf-8", errors="ignore"
+                                ).splitlines():
+                                    s = line.strip()
+                                    if not s or s.startswith(";"):
+                                        continue
+                                    if s.lower().startswith("filterbyformid"):
+                                        eq = s.find("=")
+                                        if eq == -1:
+                                            continue
+                                        val = s[eq + 1:].strip()
+                                        if "|" in val:
+                                            ref = val.split("|")[0].strip().lower()
+                                            if ref.endswith((".esp", ".esm", ".esl")):
+                                                sp_plugins.add(ref)
+                            except (OSError, UnicodeDecodeError):
+                                pass
+                    except OSError:
+                        pass
+
+        except OSError:
+            pass
+
+        result: dict[str, str] = {}
+        for pname in all_plugins:
+            is_bos = Path(pname).stem.lower() in bos_stems
+            is_sp = pname in sp_plugins
+            if is_bos and is_sp:
+                result[pname] = "both"
+            elif is_bos:
+                result[pname] = "bos"
+            elif is_sp:
+                result[pname] = "sp"
+
+        self._bos_sp_plugins = result
+        self._bos_sp_cache_key = cache_key
+        try:
+            self.after(0, self._predraw)
+        except Exception:
+            pass
 
 
     # ------------------------------------------------------------------
@@ -4068,6 +4231,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                            lambda idxs=toggleable: self._disable_selected_plugins(idxs)))
             plugin_name = self._plugin_entries[toggleable[0]].name
             plugin_idx = toggleable[0]
+            # BOS/SP quick-disable
+            _bos_sp_kind = self._bos_sp_plugins.get(plugin_name.lower(), "")
+            if _bos_sp_kind:
+                _bos_sp_desc = {"bos": "BOS", "sp": "SkyPatcher", "both": "BOS+SkyPatcher"}.get(_bos_sp_kind, "BOS/SP")
+                items.append((f"Disable — {_bos_sp_desc} patch replaces it",
+                               lambda idxs=[plugin_idx]: self._disable_selected_plugins(idxs)))
             # ESL flag toggle — only for .esp/.esm; .esl files are always light
             if _game_supports_esl and not plugin_name.lower().endswith(".esl"):
                 is_esl = plugin_name.lower() in self._esl_flagged_plugins
@@ -4116,6 +4285,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             items.append((f"Disable selected ({count})",
                            lambda idxs=toggleable: self._disable_selected_plugins(idxs)))
             names = [self._plugin_entries[i].name for i in toggleable]
+            # BOS/SP quick-disable for multi-select
+            _bos_sp_idxs = [i for i in toggleable
+                            if self._bos_sp_plugins.get(self._plugin_entries[i].name.lower(), "")]
+            if _bos_sp_idxs:
+                items.append((f"Disable {len(_bos_sp_idxs)} BOS/SP-patched (safe to disable)",
+                               lambda idxs=_bos_sp_idxs: self._disable_selected_plugins(idxs)))
             # ESL flag toggle for multiple plugins — skip pure .esl files
             if _game_supports_esl:
                 esl_eligible_idxs = [

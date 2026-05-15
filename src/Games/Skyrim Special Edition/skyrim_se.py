@@ -275,6 +275,7 @@ class SkyrimSE(Fallout_3):
                     "and generate new BOS or SP INI patches."
                 ),
                 dialog_class_path="wizards.skygen.SkyGenWizard",
+                extra={"_full_width_overlay": True},
             ),
             WizardTool(
                 id="run_plugin_audit_skyrimse",
@@ -284,6 +285,7 @@ class SkyrimSE(Fallout_3):
                     "orphaned SkyGen BOS/SkyPatcher INIs for plugins that must stay enabled."
                 ),
                 dialog_class_path="wizards.plugin_audit.PluginAuditWizard",
+                extra={"_full_width_overlay": True},
             ),
         ]
 

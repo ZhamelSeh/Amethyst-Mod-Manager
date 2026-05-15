@@ -20,6 +20,7 @@ import customtkinter as ctk
 if TYPE_CHECKING:
     from Games.base_game import BaseGame
 
+from gui.wheel_compat import bind_scrollable_wheel
 from gui.theme import (
     ACCENT,
     ACCENT_HOV,
@@ -301,11 +302,86 @@ def _scan_memoryview(mv) -> Tuple[Set[str], bool]:
     return signatures, True
 
 
+def _decompress_record(payload: bytes, uncompressed_size: int) -> Optional[bytes]:
+    """Decompress a compressed TES4 record payload.
+
+    Skyrim SE uses LZ4 block compression for most modern records; legacy LE
+    plugins use zlib. Try each in turn. Returns None if all attempts fail —
+    caller then falls back to FormID-only extraction.
+    """
+    if uncompressed_size <= 0 or not payload:
+        return None
+    try:
+        import lz4.block as _lz4_block  # type: ignore
+        try:
+            out = _lz4_block.decompress(payload, uncompressed_size=uncompressed_size)
+            if len(out) == uncompressed_size:
+                return out
+        except Exception:
+            pass
+    except ImportError:
+        pass
+    try:
+        import lz4.frame as _lz4_frame  # type: ignore
+        try:
+            out = _lz4_frame.decompress(payload)
+            if len(out) == uncompressed_size:
+                return out
+        except Exception:
+            pass
+    except ImportError:
+        pass
+    try:
+        import zlib as _zlib
+        out = _zlib.decompress(payload)
+        if len(out) == uncompressed_size:
+            return out
+    except Exception:
+        pass
+    return None
+
+
+def _read_edid_full(data: bytes, start: int, end: int) -> Tuple[str, str]:
+    """Walk subrecords in ``data[start:end]`` and return (EDID, FULL).
+
+    Handles XXXX extended-length subrecord prefix. Used for both compressed
+    (decompressed buffer) and uncompressed records.
+    """
+    edid = ""
+    full_name = ""
+    sub = start
+    while sub < end - 6:
+        sub_tag = data[sub:sub + 4]
+        if sub_tag == b"XXXX":
+            sub_len = int.from_bytes(data[sub + 4:sub + 8], "little")
+            sub += 8
+            if sub + 4 > end:
+                break
+            sub_tag = data[sub:sub + 4]
+            sub += 6
+        else:
+            sub_len = int.from_bytes(data[sub + 4:sub + 6], "little")
+            sub += 6
+        if sub + sub_len > end:
+            break
+        if sub_tag == b"EDID":
+            raw = data[sub:sub + sub_len]
+            edid = raw.split(b"\x00")[0].decode("ascii", errors="ignore").strip()
+        elif sub_tag == b"FULL":
+            raw = data[sub:sub + sub_len]
+            full_name = raw.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+        sub += sub_len
+    return edid, full_name
+
+
 def _extract_records(path: Path, wanted_sigs: Set[str]) -> List[Dict]:
     """Extract FormIDs for records matching *wanted_sigs*.
-    
+
     Returns [{form_id, local_id, signature, editor_id, name}].
     Walks GRUP blocks only (skips TES4 header). Safe from bg thread.
+    Compressed records are decompressed (LZ4 block → LZ4 frame → zlib) so
+    EDID/FULL are still recovered; if decompression fails the record is
+    still emitted with just its FormID.
     """
     records: List[Dict] = []
     try:
@@ -352,34 +428,24 @@ def _extract_records(path: Path, wanted_sigs: Set[str]) -> List[Dict]:
                     is_compressed = bool(rec_flags & 0x00040000)
                     edid = ""
                     full_name = ""
-                    if not is_compressed and rec_size > 0:
-                        # Parse subrecords for EDID and FULL only
-                        sub = rec_start
-                        while sub < rec_end - 6:
-                            sub_tag = data[sub:sub + 4]
-                            # handle XXXX extended-length subrecord
-                            if sub_tag == b"XXXX":
-                                sub_len = int.from_bytes(data[sub + 4:sub + 8], "little")
-                                sub += 8
-                                if sub + 4 > rec_end:
-                                    break
-                                sub_tag = data[sub:sub + 4]
-                                sub += 6
-                            else:
-                                sub_len = int.from_bytes(data[sub + 4:sub + 6], "little")
-                                sub += 6
-                            if sub + sub_len > rec_end:
-                                break
-                            if sub_tag == b"EDID":
-                                raw = data[sub:sub + sub_len]
-                                edid = raw.split(b"\x00")[0].decode("ascii", errors="ignore").strip()
-                            elif sub_tag == b"FULL":
-                                raw = data[sub:sub + sub_len]
-                                full_name = raw.split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
-                                if not full_name:
-                                    # FULL may be a localised string index (4 bytes) — skip
-                                    pass
-                            sub += sub_len
+                    if rec_size > 0:
+                        if is_compressed:
+                            # Compressed records start with a 4-byte
+                            # uncompressed size, then the compressed payload.
+                            if rec_size >= 4:
+                                uncomp_size = int.from_bytes(
+                                    data[rec_start:rec_start + 4], "little"
+                                )
+                                payload = data[rec_start + 4:rec_end]
+                                buf = _decompress_record(payload, uncomp_size)
+                                if buf is not None:
+                                    edid, full_name = _read_edid_full(
+                                        buf, 0, len(buf)
+                                    )
+                        else:
+                            edid, full_name = _read_edid_full(
+                                data, rec_start, rec_end
+                            )
                     if form_id_raw:
                         fid_str = f"{form_id_raw:08X}"
                         local_id = fid_str[-6:]
@@ -884,12 +950,12 @@ class SkyGenWizard(ctk.CTkFrame):
         )
         ctk.CTkLabel(
             self._body, text=info,
-            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=380,
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=760,
         ).pack(pady=(0, 12), fill="x")
 
         self._scan_status = ctk.CTkLabel(
             self._body, text="Ready to scan.",
-            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=380,
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=760,
         )
         self._scan_status.pack(pady=(0, 6))
 
@@ -1120,7 +1186,7 @@ class SkyGenWizard(ctk.CTkFrame):
                 f"\n  \u2022 BOS:  SKSE/Plugins/Data/Base Object Swapper/"
                 f"\n  \u2022 SkyPatcher:  SKSE/Plugins/SkyPatcher/"
             ),
-            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=380,
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=760,
         ).pack(fill="x", pady=(0, 12))
 
         # Select / Deselect buttons
@@ -1150,10 +1216,11 @@ class SkyGenWizard(ctk.CTkFrame):
             self._body, fg_color=BG_PANEL, corner_radius=4,
         )
         self._plugin_scroll.pack(fill="both", expand=True, pady=(0, 12))
+        bind_scrollable_wheel(self._plugin_scroll)
 
         self._gen_status = ctk.CTkLabel(
             self._body, text="",
-            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=380,
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=760,
         )
         self._gen_status.pack(pady=(0, 4))
 
@@ -1489,7 +1556,7 @@ class SkyGenWizard(ctk.CTkFrame):
                 f"\n\nOutput mod:  {out_dir.name}"
                 f"\n{out_dir}"
             ),
-            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=380,
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="left", wraplength=760,
         ).pack(pady=(0, 12))
 
         # Open output folder

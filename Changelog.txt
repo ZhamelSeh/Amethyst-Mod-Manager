@@ -1,3 +1,10 @@
+- v1.3.4
+- Added a Skygen and plugin audit wizard
+- Fixed BepInEx folders not being routed to the correct location
+- Fixed nvse_loader.exe not being routed to the root folder
+- Fixed some errors with vanilla plugin detection
+- Added opt in to pre release option to the flatpak
+
 - v1.3.3
 - Fixed plugins being disabled on manual collection installs
 - Added a filter by filetype to the modlist filters

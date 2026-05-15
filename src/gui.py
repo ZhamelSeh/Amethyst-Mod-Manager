@@ -1793,16 +1793,50 @@ class App(ctk.CTk):
         )
 
     def _show_wizard_tool(self, cls, game, log_fn, extra: dict):
-        """Open an individual wizard tool as a plugin-panel overlay."""
-        self._hide_plugin_overlay("_wizard_tool")
-        panel = cls(
-            self._plugin_panel_container, game, log_fn,
-            on_close=lambda: self._hide_plugin_overlay("_wizard_tool"),
-            **extra,
-        )
-        setattr(self, "_wizard_tool", panel)
-        panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-        panel.lift()
+        """Open an individual wizard tool as an overlay.
+
+        Default host is the plugin-panel column. Tools that need more width
+        can opt into a full-width overlay (spanning modlist + plugin columns)
+        by setting ``extra["_full_width_overlay"] = True`` in their
+        ``WizardTool.extra`` registration."""
+        full_width = bool(extra.pop("_full_width_overlay", False))
+        if full_width:
+            existing = getattr(self, "_wizard_tool", None)
+            if existing is not None:
+                self._wizard_tool = None
+                try:
+                    existing.place_forget()
+                    existing.destroy()
+                except Exception:
+                    pass
+            panel = cls(
+                self._main_frame, game, log_fn,
+                on_close=self._hide_wizard_tool,
+                **extra,
+            )
+            setattr(self, "_wizard_tool", panel)
+            panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+            panel.lift()
+        else:
+            self._hide_plugin_overlay("_wizard_tool")
+            panel = cls(
+                self._plugin_panel_container, game, log_fn,
+                on_close=lambda: self._hide_plugin_overlay("_wizard_tool"),
+                **extra,
+            )
+            setattr(self, "_wizard_tool", panel)
+            panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+            panel.lift()
+
+    def _hide_wizard_tool(self):
+        panel = getattr(self, "_wizard_tool", None)
+        if panel is not None:
+            self._wizard_tool = None
+            try:
+                panel.place_forget()
+                panel.destroy()
+            except Exception:
+                pass
 
     def hide_wizard_panel(self):
         self._hide_plugin_overlay("_wizard_panel")

@@ -395,22 +395,39 @@ class Fallout_3(BaseGame):
 
     _APPDATA_SUBPATH_GOG: Path | None = None
 
-    def _plugins_txt_target(self) -> Path | None:
-        """Return the in-prefix path where the game expects plugins.txt."""
+    _PLUGINS_TXT_FILENAME = "plugins.txt"
+
+    def _plugins_txt_targets(self) -> list[Path]:
+        """Return every in-prefix path where the game might expect plugins.txt.
+
+        Steam and GOG builds use separate AppData folders. If both exist, we
+        write to both so either build picks up the load order.
+        """
         if self._prefix_path is None:
-            return None
+            return []
+        fname = self._PLUGINS_TXT_FILENAME
         steam_dir = self._prefix_path / self._APPDATA_SUBPATH
+        targets: list[Path] = []
+        if steam_dir.is_dir():
+            targets.append(steam_dir / fname)
         if self._APPDATA_SUBPATH_GOG is not None:
             gog_dir = self._prefix_path / self._APPDATA_SUBPATH_GOG
-            if not steam_dir.is_dir() and gog_dir.is_dir():
-                return gog_dir / "plugins.txt"
-        return steam_dir / "plugins.txt"
+            if gog_dir.is_dir():
+                targets.append(gog_dir / fname)
+        if not targets:
+            targets.append(steam_dir / fname)
+        return targets
+
+    def _plugins_txt_target(self) -> Path | None:
+        """Return the primary in-prefix plugins.txt path (back-compat shim)."""
+        targets = self._plugins_txt_targets()
+        return targets[0] if targets else None
 
     def _symlink_plugins_txt(self, profile: str, log_fn) -> None:
         """Symlink the active profile's plugins.txt into the Proton prefix."""
         _log = log_fn
-        target = self._plugins_txt_target()
-        if target is None:
+        targets = self._plugins_txt_targets()
+        if not targets:
             _log("  WARN: Prefix path not set — skipping plugins.txt symlink.")
             return
 
@@ -419,23 +436,20 @@ class Fallout_3(BaseGame):
             _log(f"  WARN: plugins.txt not found at {source} — skipping symlink.")
             return
 
-        # Remove whatever is currently at the target (old symlink, real file, etc.)
-        if target.exists() or target.is_symlink():
-            target.unlink()
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.symlink_to(source)
-        _log(f"  Linked plugins.txt → {target}")
+        for target in targets:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source)
+            _log(f"  Linked plugins.txt → {target}")
 
     def _remove_plugins_txt_symlink(self, log_fn) -> None:
         """Remove the plugins.txt symlink from the Proton prefix on restore."""
         _log = log_fn
-        target = self._plugins_txt_target()
-        if target is None:
-            return
-        if target.is_symlink():
-            target.unlink()
-            _log("  Removed plugins.txt symlink from prefix.")
+        for target in self._plugins_txt_targets():
+            if target.is_symlink():
+                target.unlink()
+                _log(f"  Removed plugins.txt symlink: {target}")
 
     # -----------------------------------------------------------------------
     # Archive invalidation
@@ -452,16 +466,30 @@ class Fallout_3(BaseGame):
             return None
         return mygames / self._ARCHIVE_INI_FILENAME
 
-    def _mygames_path(self) -> "Path | None":
-        """Return the My Games folder for this game inside the Proton prefix."""
+    def _mygames_paths(self) -> list[Path]:
+        """Return every My Games folder for this game inside the prefix.
+
+        Steam and GOG builds use separate folders. If both exist, we manage
+        both so either build sees the active profile's INIs.
+        """
         if self._prefix_path is None:
-            return None
+            return []
         steam_dir = self._prefix_path / self._MYGAMES_DOCS / self._MYGAMES_SUBPATH
+        paths: list[Path] = []
+        if steam_dir.is_dir():
+            paths.append(steam_dir)
         if self._MYGAMES_SUBPATH_GOG is not None:
             gog_dir = self._prefix_path / self._MYGAMES_DOCS / self._MYGAMES_SUBPATH_GOG
-            if not steam_dir.is_dir() and gog_dir.is_dir():
-                return gog_dir
-        return steam_dir
+            if gog_dir.is_dir():
+                paths.append(gog_dir)
+        if not paths:
+            paths.append(steam_dir)
+        return paths
+
+    def _mygames_path(self) -> "Path | None":
+        """Return the primary My Games folder (back-compat shim)."""
+        paths = self._mygames_paths()
+        return paths[0] if paths else None
 
     def _symlink_profile_ini_files(self, profile: str, log_fn) -> None:
         """Symlink *.ini files from the profile folder into the My Games directory.
@@ -473,8 +501,8 @@ class Fallout_3(BaseGame):
         _log = log_fn
         if not self._profile_ini_files:
             return
-        mygames = self._mygames_path()
-        if mygames is None:
+        mygames_dirs = self._mygames_paths()
+        if not mygames_dirs:
             _log("  WARN: Prefix path not set — skipping profile INI symlinks.")
             return
         profile_dir = self.get_profile_root() / "profiles" / profile
@@ -482,36 +510,38 @@ class Fallout_3(BaseGame):
         if not ini_files:
             _log("  No *.ini files found in profile folder — skipping.")
             return
-        mygames.mkdir(parents=True, exist_ok=True)
-        for src in ini_files:
-            target = mygames / src.name
-            if target.is_symlink():
-                target.unlink()
-            elif target.exists():
-                backup = target.with_suffix(".bak")
-                target.rename(backup)
-                _log(f"  Backed up {target.name} → {backup.name}")
-            target.symlink_to(src)
-            _log(f"  Linked {src.name} → {target}")
+        for mygames in mygames_dirs:
+            mygames.mkdir(parents=True, exist_ok=True)
+            for src in ini_files:
+                target = mygames / src.name
+                if target.is_symlink():
+                    target.unlink()
+                elif target.exists():
+                    backup = target.with_suffix(".bak")
+                    target.rename(backup)
+                    _log(f"  Backed up {target.name} → {backup.name}")
+                target.symlink_to(src)
+                _log(f"  Linked {src.name} → {target}")
 
     def _remove_profile_ini_symlinks(self, profile: str, log_fn) -> None:
         """Remove profile INI symlinks from My Games and restore any backups."""
         _log = log_fn
         if not self._profile_ini_files:
             return
-        mygames = self._mygames_path()
-        if mygames is None or not mygames.is_dir():
+        mygames_dirs = [p for p in self._mygames_paths() if p.is_dir()]
+        if not mygames_dirs:
             return
         profile_dir = self.get_profile_root() / "profiles" / profile
-        for src in profile_dir.glob("*.ini"):
-            target = mygames / src.name
-            if target.is_symlink() and Path(target.resolve()).parent == profile_dir:
-                target.unlink()
-                _log(f"  Removed profile INI symlink: {target.name}")
-                backup = target.with_suffix(".bak")
-                if backup.exists():
-                    backup.rename(target)
-                    _log(f"  Restored {target.name} from .bak")
+        for mygames in mygames_dirs:
+            for src in profile_dir.glob("*.ini"):
+                target = mygames / src.name
+                if target.is_symlink() and Path(target.resolve()).parent == profile_dir:
+                    target.unlink()
+                    _log(f"  Removed profile INI symlink: {target.name}")
+                    backup = target.with_suffix(".bak")
+                    if backup.exists():
+                        backup.rename(target)
+                        _log(f"  Restored {target.name} from .bak")
 
     def apply_archive_invalidation(self, log_fn) -> None:
         """Set bInvalidateOlderFiles=1 in the game INI so loose files win."""
@@ -1122,22 +1152,12 @@ class Oblivion(Fallout_3):
 
     _APPDATA_SUBPATH = Path("drive_c/users/steamuser/AppData/Local/Oblivion")
     _APPDATA_SUBPATH_GOG = Path("drive_c/users/steamuser/AppData/Local/Oblivion GOG")
+    _PLUGINS_TXT_FILENAME = "Plugins.txt"
     archive_invalidation_enabled = False
 
     @property
     def _script_extender_exe(self) -> str:
         return "obse_loader.exe"
-
-    def _plugins_txt_target(self) -> Path | None:
-        """Return the in-prefix path where Oblivion expects Plugins.txt (capital P)."""
-        if self._prefix_path is None:
-            return None
-        steam_dir = self._prefix_path / self._APPDATA_SUBPATH
-        if self._APPDATA_SUBPATH_GOG is not None:
-            gog_dir = self._prefix_path / self._APPDATA_SUBPATH_GOG
-            if not steam_dir.is_dir() and gog_dir.is_dir():
-                return gog_dir / "Plugins.txt"
-        return steam_dir / "Plugins.txt"
 
     def apply_archive_invalidation(self, log_fn) -> None:
         """Generate ArchiveInvalidation.txt listing all deployed .dds paths."""

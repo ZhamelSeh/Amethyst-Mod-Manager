@@ -2,6 +2,7 @@
 - Tweaked the separator settings menu/custom deploy locations
 - Tweaked ue5 conflict detection to stop showing false conflicts
 - Fixed a bug where a renamed separator would still behave as if it had it's old name
+- Added Street Fighter 6
 
 - v1.3.4
 - Added a Skygen and plugin audit wizard

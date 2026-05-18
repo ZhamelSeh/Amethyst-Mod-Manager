@@ -94,6 +94,7 @@ class Subnautica(BaseGame):
             CustomRule(dest="BepInEx", folders=["config"], flatten=True),
             CustomRule(dest="BepInEx", folders=["core"], flatten=True),
             CustomRule(dest="BepInEx", folders=["patchers"], flatten=True),
+            CustomRule(dest="BepInEx", folders=["plugins"], flatten=True),
             CustomRule(dest="BepInEx/plugins", folders=["Tobey"], flatten=True),
         ]
     

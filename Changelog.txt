@@ -3,6 +3,8 @@
 - Tweaked ue5 conflict detection to stop showing false conflicts
 - Fixed a bug where a renamed separator would still behave as if it had it's old name
 - Added Street Fighter 6
+- The Data tab filetree no longer auto collapses when enabling, disabling or moving a mod
+- Added a filter option to the ini files tab, The ini files tab also shows more file types
 
 - v1.3.4
 - Added a Skygen and plugin audit wizard

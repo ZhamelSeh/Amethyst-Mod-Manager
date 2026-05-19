@@ -215,11 +215,16 @@ def read_separator_deploy_paths(profile_dir: Path, state: dict | None = None) ->
         if not isinstance(k, str):
             continue
         if isinstance(v, str):
-            result[k] = {"path": v, "raw": False}
+            result[k] = {"path": v, "raw": False, "mode": "", "merge": False}
         elif isinstance(v, dict):
+            _mode = v.get("mode", "")
+            if not isinstance(_mode, str) or _mode.strip().lower() not in ("", "hardlink", "symlink"):
+                _mode = ""
             result[k] = {
                 "path": v.get("path", "") if isinstance(v.get("path"), str) else "",
                 "raw": bool(v.get("raw", False)),
+                "mode": _mode.strip().lower(),
+                "merge": bool(v.get("merge", False)),
             }
     return result
 

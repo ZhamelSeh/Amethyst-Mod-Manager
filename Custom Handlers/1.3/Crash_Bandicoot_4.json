@@ -26,6 +26,22 @@
   },
   "custom_routing_rules": [
     {
+      "dest": "drive_c/users/steamuser/AppData/Local/CrashBandicoot4/Saved/Config/WindowsNoEditor/",
+      "filenames": [
+        "Engine.ini"
+      ],
+      "flatten": true,
+      "to_prefix": true
+    },
+    {
+      "dest": "drive_c/users/steamuser/AppData/Local/CrashBandicoot4/Saved/Config/WindowsNoEditor/",
+      "filenames": [
+        "Scalability.ini"
+      ],
+      "flatten": true,
+      "to_prefix": true
+    },
+    {
       "dest": "Content/Movies",
       "extensions": [
         ".mp4"
@@ -47,6 +63,6 @@
     }
   ],
   "custom_frameworks": {},
-  "version": 3,
+  "version": 4,
   "editable": false
 }

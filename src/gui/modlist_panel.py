@@ -2311,7 +2311,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                             self._lock_cb_rects[sname] = rect2_id
                             self._lock_cb_marks[sname] = mark2_id
                             c.tag_bind(lk_tag2, "<ButtonRelease-1>",
-                                       lambda e, n=sname: self._on_sep_lock_toggle(n))
+                                       lambda e, r=rect2_id: self._on_sep_lock_click(r))
                             c.tag_bind(lk_tag2, "<Enter>",
                                        lambda e: c.config(cursor="hand2"))
                             c.tag_bind(lk_tag2, "<Leave>",
@@ -4780,6 +4780,14 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._save_sep_locks()
         self._redraw()
 
+    def _on_sep_lock_click(self, rect_id: int) -> None:
+        """Resolve the separator name from its lock-checkbox canvas item id.
+        Captured-name lambdas go stale across rename — look up live instead."""
+        for name, rid in self._lock_cb_rects.items():
+            if rid == rect_id:
+                self._on_sep_lock_toggle(name)
+                return
+
     def _set_sep_locks(self, sep_names: list[str], locked: bool) -> None:
         changed = False
         for n in sep_names:
@@ -5415,6 +5423,25 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._update_info()
         return True
 
+    def _unique_separator_name(self, base_name: str, *, ignore_idx: int | None = None) -> str:
+        """Return base_name suffixed with " (N)" before "_separator" so no other
+        separator entry shares the name. Separator name is the primary key for
+        lock/collapse/color/canvas-item dicts, so duplicates would collide."""
+        existing = {
+            e.name for i, e in enumerate(self._entries)
+            if e.is_separator and i != ignore_idx
+        }
+        if base_name not in existing:
+            return base_name
+        suffix = "_separator"
+        stem = base_name[:-len(suffix)] if base_name.endswith(suffix) else base_name
+        n = 2
+        while True:
+            candidate = f"{stem} ({n}){suffix}"
+            if candidate not in existing:
+                return candidate
+            n += 1
+
     def _rename_separator(self, idx: int):
         if not (0 <= idx < len(self._entries)):
             return
@@ -5427,7 +5454,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         new_display = dlg.result
         if not new_display:
             return
-        new_name = new_display + "_separator"
+        new_name = self._unique_separator_name(new_display + "_separator", ignore_idx=idx)
         if new_name == entry.name:
             return
         # Update collapse/lock tracking keys
@@ -5483,18 +5510,24 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         _info = self._sep_deploy_paths.get(sep_name, {})
         current_path = _info.get("path", "") if isinstance(_info, dict) else ""
         current_raw = _info.get("raw", False) if isinstance(_info, dict) else False
+        current_mode = _info.get("mode", "") if isinstance(_info, dict) else ""
+        current_merge = _info.get("merge", False) if isinstance(_info, dict) else False
 
         app = self.winfo_toplevel()
         show_fn = getattr(app, "show_sep_settings_panel", None)
         if show_fn:
-            def _on_save(val: str, raw: bool):
-                if val or raw:
-                    self._sep_deploy_paths[sep_name] = {"path": val, "raw": raw}
+            def _on_save(val: str, raw: bool, mode: str = "", merge: bool = False):
+                if val or raw or mode or merge:
+                    self._sep_deploy_paths[sep_name] = {
+                        "path": val, "raw": raw, "mode": mode, "merge": merge,
+                    }
                 else:
                     self._sep_deploy_paths.pop(sep_name, None)
                 self._save_sep_deploy_paths()
                 self._redraw()
-            show_fn(sep_name, current_path, _on_save, current_raw=current_raw)
+            show_fn(sep_name, current_path, _on_save,
+                    current_raw=current_raw, current_mode=current_mode,
+                    current_merge=current_merge)
             return
 
         # Fallback: plain tk overlay on self (uses portal_filechooser for Browse)
@@ -6605,7 +6638,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self.winfo_toplevel().wait_window(dialog)
         if dialog.result is None:
             return
-        sep_name = dialog.result.strip() + "_separator"
+        sep_name = self._unique_separator_name(dialog.result.strip() + "_separator")
         # Under inverted priority sort, visual above/below is flipped in natural order.
         visually_above = above
         if self._sort_column == "priority" and self._sort_ascending:
@@ -7191,14 +7224,18 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         conflict_ignore_fn  = set(self._conflict_ignore_filenames) if self._conflict_ignore_filenames else None
         exclude_dirs        = set(self._filemap_exclude_dirs) if self._filemap_exclude_dirs else None
         from Games.ue5_game import UE5Game as _UE5Game
+        from Utils.deploy_pipeline import _make_ue5_conflict_key_fn
         _captured_game = getattr(self, "_game", None)
         _conflict_key_fn = None
         if isinstance(_captured_game, _UE5Game):
-            def _conflict_key_fn(rel_key: str, _g=_captured_game) -> str:
-                dest, final = _g._resolve_entry(rel_key)
-                return (dest + "/" + final) if dest else final
+            _conflict_key_fn = _make_ue5_conflict_key_fn(
+                _captured_game, output.parent / "modindex.bin",
+            )
         elif _captured_game is not None:
-            _conflict_key_fn = getattr(_captured_game, "filemap_conflict_key_fn", None)
+            _legacy = getattr(_captured_game, "filemap_conflict_key_fn", None)
+            if _legacy is not None:
+                def _conflict_key_fn(_mod: str, rk: str, _f=_legacy) -> str:
+                    return _f(rk)
         # Pre-RTX detection: gather the source prefixes that indicate old-format mods
         # (e.g. "natives/x64/" for RE2/RE3/RE7).
         _prertx_prefixes: list[str] = []

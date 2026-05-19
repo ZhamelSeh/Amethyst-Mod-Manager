@@ -94,6 +94,7 @@ def deploy_filemap(
     strip_prefixes: set[str] | None = None,
     per_mod_strip_prefixes: dict[str, list[str]] | None = None,
     per_mod_deploy_dirs: dict[str, Path] | None = None,
+    per_mod_link_modes: dict[str, LinkMode] | None = None,
     log_fn=None,
     progress_fn=None,
     symlink_exts: set[str] | None = None,
@@ -125,6 +126,24 @@ def deploy_filemap(
     _strip = {p.lower() for p in strip_prefixes} if strip_prefixes else set()
     _per_mod = per_mod_strip_prefixes or {}
     _per_deploy = per_mod_deploy_dirs or {}
+    _per_mode = per_mod_link_modes
+    _per_merge: set[str] = set()
+    try:
+        from Utils.deploy_shared import (
+            load_separator_deploy_paths as _lsdp,
+            expand_separator_link_modes as _eslm,
+            expand_separator_merge_dirs as _esmd,
+        )
+        from Utils.modlist import read_modlist as _rml
+        _sd = _lsdp(filemap_path.parent)
+        _se = _rml(filemap_path.parent / "modlist.txt")
+        if _per_mode is None:
+            _per_mode = _eslm(_sd, _se)
+        _per_merge = _esmd(_sd, _se)
+    except Exception:
+        if _per_mode is None:
+            _per_mode = {}
+    _per_mode = _per_mode or {}
     overwrite_dir = staging_root.parent / "overwrite"
 
     already_seen: set[str] = set()
@@ -164,6 +183,18 @@ def deploy_filemap(
     _core_base_str = str(core_dir) if core_dir is not None else None
     _dir_listing_cache: dict[str, dict[str, str]] = {}
     _resolved_dir_cache: dict[str, str] = {}
+    # {custom_deploy_dir_str: {top_level_folder_name, ...}} — populated as we
+    # build tasks, consumed by the folder-replace pass below.
+    _custom_top_roots: dict[str, set[str]] = {}
+    # {(custom_deploy_dir_str, top_folder_lower): owner_mod_name or None} —
+    # records which mod owns each top-level folder. None means multiple mods
+    # contribute to it (so we fall back to per-file deploy instead of a
+    # single directory symlink). Folders ending up with exactly one owner are
+    # candidates for the directory-symlink optimization.
+    _top_folder_owner: dict[tuple[str, str], str | None] = {}
+    # {(custom_deploy_dir_str, top_folder_lower): one (src_str, rel_str) pair}
+    # — used to derive the source-side top-level folder path for the symlink.
+    _top_folder_sample: dict[tuple[str, str], tuple[str, str]] = {}
     for line in _tab_lines:
         rel_str, mod_name = line.split("\t", 1)
         # Guard against path traversal in filemap entries.
@@ -210,7 +241,27 @@ def deploy_filemap(
                                          core_base_str=_core_s,
                                          resolved_dir_cache=_resolved_dir_cache)
         use_symlink = symlink_exts is not None and os.path.splitext(src_str)[1].lower() in symlink_exts
-        tasks.append((src_str, dst_str, rel_lower, effective_dir is not deploy_dir, use_symlink))
+        override_mode = _per_mode.get(mod_name)
+        is_custom_task = effective_dir is not deploy_dir
+        tasks.append((src_str, dst_str, rel_lower, is_custom_task, use_symlink, override_mode))
+        # Track top-level folder roots that custom-deploy mods are writing into,
+        # so we can wholesale-replace any same-named folder at the destination
+        # (with backup) before the per-file deploy runs. Files that the mod
+        # ships at the root (no folder component in rel_str) are excluded —
+        # those still get the existing file-by-file backup-and-replace path.
+        # Mods whose separator opted into "merge folders" are skipped here so
+        # their top-level folders are merged with the target instead of
+        # wholesale-replaced; per-file backup-and-replace still applies.
+        if is_custom_task and "/" in rel_str and mod_name not in _per_merge:
+            _top = rel_str.split("/", 1)[0]
+            _custom_top_roots.setdefault(_eff_s, set()).add(_top)
+            _key = (_eff_s, _top.lower())
+            _existing_owner = _top_folder_owner.get(_key, "__unset__")
+            if _existing_owner == "__unset__":
+                _top_folder_owner[_key] = mod_name
+                _top_folder_sample[_key] = (src_str, rel_str)
+            elif _existing_owner != mod_name:
+                _top_folder_owner[_key] = None  # multi-owner → no dir-symlink
 
         if progress_fn is not None and line_idx % 500 == 0:
             progress_fn(line_idx, total_lines)
@@ -230,10 +281,137 @@ def deploy_filemap(
     if _custom_backup_dir.exists():
         shutil.rmtree(_custom_backup_dir)
 
+    import stat as _stat_module
+
+    # Wholesale-replace pass: for every top-level folder that custom-deploy
+    # mods are writing into, move the existing folder at the destination
+    # (if any) into custom_deploy_backup/, mirroring the absolute path so
+    # restore can put it back. This is the "Saves/ should replace, not
+    # merge" rule for custom-deploy separators. Symlinks at that path are
+    # unlinked instead of moved (they're our own from a previous deploy).
+    _folders_replaced = 0
+    for _eff_dir_s, _top_names in _custom_top_roots.items():
+        for _top in _top_names:
+            # Resolve the destination folder using the same case-insensitive
+            # path walker the per-file logic uses, so e.g. mod "Saves" lands
+            # on disk-side "saves" if that's what already exists there.
+            _existing_dir_str = _resolve_root_path_str(
+                _eff_dir_s, _top, _dir_listing_cache,
+                resolved_dir_cache=_resolved_dir_cache,
+            )
+            try:
+                _est = os.lstat(_existing_dir_str)
+            except OSError:
+                continue
+            if _stat_module.S_ISLNK(_est.st_mode):
+                # Stale symlink from a previous deploy — drop it.
+                try:
+                    os.unlink(_existing_dir_str)
+                except OSError as exc:
+                    _log(f"  WARN: could not remove stale symlink {_existing_dir_str}: {exc}")
+                continue
+            if not _stat_module.S_ISDIR(_est.st_mode):
+                continue
+            _existing_p = Path(_existing_dir_str)
+            _bak_dir = _custom_backup_dir / _existing_p.relative_to(_existing_p.anchor)
+            try:
+                _bak_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(_existing_dir_str, str(_bak_dir))
+                _folders_replaced += 1
+                _log(f"  Backed up existing folder {_existing_p.name}/ → custom_deploy_backup/")
+            except OSError as exc:
+                _log(f"  WARN: could not back up folder {_existing_dir_str}: {exc}")
+            # Invalidate the resolved-dir cache so subsequent path resolution
+            # against this destination doesn't reuse the now-moved entry.
+            _resolved_dir_cache.pop(_existing_dir_str.lower(), None)
+            _dir_listing_cache.pop(os.path.dirname(_existing_dir_str), None)
+
+    # Directory-symlink pass: for every single-owner top-level folder we just
+    # replaced above, drop a directory symlink <dest>/<top> → <staging>/<mod>/<src_top>.
+    # New files written by the game land directly in the mod's staging dir
+    # (no manual sync on restore needed). Tasks that fall under one of these
+    # symlinked folders are excluded from the per-file deploy below.
+    _dir_symlink_log: list[str] = []
+    _skipped_task_prefixes: set[str] = set()
+    for (_eff_dir_s, _top_lower), _owner in _top_folder_owner.items():
+        if _owner is None:
+            continue
+        _sample = _top_folder_sample.get((_eff_dir_s, _top_lower))
+        if _sample is None:
+            continue
+        _sample_src, _sample_rel = _sample
+        # Derive the source-side folder path: rel_str is e.g. "Saves/foo.ess"
+        # and src_str ends in "<staging>/<mod>/<resolved>/Saves/foo.ess" (the
+        # resolved part may include strip_prefix folders). Walk parents of
+        # src_str up by the number of "/" components in rel_str minus one to
+        # land on the source-side top-level folder.
+        _rel_depth = _sample_rel.count("/")  # files-deep below the top folder
+        _src_top = _sample_src
+        for _ in range(_rel_depth):
+            _src_top = os.path.dirname(_src_top)
+        if not os.path.isdir(_src_top):
+            # Couldn't resolve a real source directory — fall back to per-file.
+            continue
+        # Destination path uses the same case-resolved form as per-file deploy.
+        _dst_top = _resolve_root_path_str(
+            _eff_dir_s, _sample_rel.split("/", 1)[0], _dir_listing_cache,
+            resolved_dir_cache=_resolved_dir_cache,
+        )
+        # The wholesale-replace pass above moved any vanilla folder away, so
+        # the dest path should not exist; create the parent dir, then symlink.
+        try:
+            os.makedirs(os.path.dirname(_dst_top), exist_ok=True)
+            # Defensive: drop a leftover empty dir or stale symlink at the spot
+            try:
+                _existing_st = os.lstat(_dst_top)
+                if _stat_module.S_ISLNK(_existing_st.st_mode):
+                    os.unlink(_dst_top)
+                elif _stat_module.S_ISDIR(_existing_st.st_mode):
+                    try:
+                        os.rmdir(_dst_top)
+                    except OSError:
+                        # Non-empty — bail; per-file deploy will handle it.
+                        continue
+            except OSError:
+                pass
+            os.symlink(_src_top, _dst_top)
+            _dir_symlink_log.append(_dst_top)
+            _skipped_task_prefixes.add(_dst_top.rstrip("/") + "/")
+            _log(f"  Symlinked folder {os.path.basename(_dst_top)}/ → {_src_top}")
+        except OSError as exc:
+            _log(f"  WARN: could not symlink folder {_dst_top}: {exc}")
+
+    # Filter out tasks whose destination falls under a directory-symlinked
+    # folder — they're already covered by the symlink.
+    if _skipped_task_prefixes:
+        def _under_symlinked(dst: str) -> bool:
+            for _pfx in _skipped_task_prefixes:
+                if dst.startswith(_pfx):
+                    return True
+            return False
+        before_count = len(tasks)
+        tasks = [t for t in tasks if not _under_symlinked(t[1])]
+        # Mark every skipped rel_lower as "placed" so deploy_core() doesn't
+        # try to provide a vanilla fallback for these paths.
+        for _line in _tab_lines:
+            if "\t" not in _line:
+                continue
+            _rs, _mn = _line.rstrip("\n").split("\t", 1)
+            _dst_check = _resolve_root_path_str(
+                str(_per_deploy.get(_mn, deploy_dir)) if _mn in _per_deploy else _deploy_dir_str,
+                _rs, _dir_listing_cache, resolved_dir_cache=_resolved_dir_cache,
+            )
+            if _under_symlinked(_dst_check):
+                placed_lower.add(_rs.lower())
+        print(f"  [TIMER] deploy_filemap — directory-symlink pass: skipped "
+              f"{before_count - len(tasks)} per-file task(s) under "
+              f"{len(_skipped_task_prefixes)} folder symlink(s).")
+    total = len(tasks)
+
     # Pre-create all destination directories up front (single-threaded) to
     # avoid mkdir races inside the thread pool.
     with _timer("deploy_filemap — mkdir"):
-        needed_dirs: set[str] = {os.path.dirname(dst) for _, dst, _, _is_custom, _ in tasks}
+        needed_dirs: set[str] = {os.path.dirname(dst) for _, dst, _, _is_custom, _, _ in tasks}
         _mkdir_leaves(needed_dirs)
 
     # Back up any pre-existing files at custom deploy locations so restore can
@@ -241,18 +419,19 @@ def deploy_filemap(
     # path inside _custom_backup_dir (strip leading slash) so structure is
     # preserved and files with the same name in different dirs never collide.
     # One lstat per task instead of islink+isfile (two stat-equivalent calls).
-    import stat as _stat
+    # Files whose top-level folder was already wholesale-replaced above will
+    # no longer exist here — the lstat just no-ops and the loop moves on.
     _custom_backup_str = str(_custom_backup_dir)
-    for _src_s, dst_s, _rel_lower, is_custom, _use_sym in tasks:
+    for _src_s, dst_s, _rel_lower, is_custom, _use_sym, _ov in tasks:
         if not is_custom:
             continue
         try:
             _st = os.lstat(dst_s)
         except OSError:
             continue
-        if _stat.S_ISLNK(_st.st_mode):
+        if _stat_module.S_ISLNK(_st.st_mode):
             os.unlink(dst_s)
-        elif _stat.S_ISREG(_st.st_mode):
+        elif _stat_module.S_ISREG(_st.st_mode):
             dst_p = Path(dst_s)
             bak = _custom_backup_dir / dst_p.relative_to(dst_p.anchor)
             bak.parent.mkdir(parents=True, exist_ok=True)
@@ -262,9 +441,14 @@ def deploy_filemap(
     linked = 0
     done_count = 0
 
-    def _do_transfer(item: tuple[str, str, str, bool, bool]) -> tuple[str | None, tuple[str, OSError] | None]:
-        src, dst, rel_lower, _is_custom, use_symlink = item
-        effective_mode = LinkMode.SYMLINK if use_symlink else mode
+    def _do_transfer(item: tuple[str, str, str, bool, bool, "LinkMode | None"]) -> tuple[str | None, tuple[str, OSError] | None]:
+        src, dst, rel_lower, _is_custom, use_symlink, override_mode = item
+        if use_symlink:
+            effective_mode = LinkMode.SYMLINK
+        elif override_mode is not None:
+            effective_mode = override_mode
+        else:
+            effective_mode = mode
         err = _do_link(src, dst, effective_mode)
         if err is None:
             return rel_lower, None
@@ -285,12 +469,14 @@ def deploy_filemap(
     print(f"  [TIMER] deploy_filemap — transfer {total} files: {_time.perf_counter() - _t_transfer:.3f}s")
 
     # Write a log of files placed in custom locations so cleanup knows what to
-    # remove.  Each line is the absolute path of a deployed file.
+    # remove.  Each line is the absolute path of a deployed file (or a
+    # directory symlink we created via the dir-symlink pass).
     custom_deployed = [
         dst
-        for _src, dst, rel_lower, is_custom, _use_sym in tasks
+        for _src, dst, rel_lower, is_custom, _use_sym, _ov in tasks
         if is_custom and rel_lower in placed_lower
     ]
+    custom_deployed.extend(_dir_symlink_log)
     try:
         if custom_deployed:
             _custom_log_path.write_text("\n".join(custom_deployed), encoding="utf-8")

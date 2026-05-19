@@ -4797,10 +4797,12 @@ class SepSettingsPanel(ctk.CTkFrame):
     """Inline panel that overlays _plugin_panel_container for per-separator settings."""
 
     def __init__(self, parent, sep_name: str, current_path: str,
-                 current_raw: bool = False, on_save=None, on_done=None):
+                 current_raw: bool = False, current_mode: str = "",
+                 current_merge: bool = False,
+                 on_save=None, on_done=None):
         super().__init__(parent, fg_color=BG_PANEL, corner_radius=0)
         self._sep_name = sep_name
-        self._on_save = on_save or (lambda path, raw: None)
+        self._on_save = on_save or (lambda path, raw, mode, merge: None)
         self._on_done = on_done or (lambda p: None)
 
         # Title bar
@@ -4849,8 +4851,7 @@ class SepSettingsPanel(ctk.CTkFrame):
 
         ctk.CTkLabel(
             content,
-            text="All mods within this separator are deployed to the chosen location\n"
-                 "instead of the game\u2019s default directory. Leave blank to use the default.",
+            text="Deploy this separator's mods here instead of the game directory.",
             font=FONT_SMALL, text_color=TEXT_DIM, anchor="w", justify="left",
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
@@ -4869,10 +4870,59 @@ class SepSettingsPanel(ctk.CTkFrame):
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
         ctk.CTkLabel(
             content,
-            text="Mods in this separator bypass routing rules and are deployed\n"
-                 "as-is to the target location.",
+            text="Skip routing rules; deploy files as-is.",
             font=FONT_SMALL, text_color=TEXT_DIM, anchor="w", justify="left",
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        # Divider
+        ctk.CTkFrame(content, fg_color=BORDER, height=1, corner_radius=0).grid(
+            row=6, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+
+        ctk.CTkLabel(
+            content, text="File Transfer Method",
+            font=FONT_SMALL, text_color=TEXT_SEP, anchor="w",
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 4))
+
+        _mode_norm = (current_mode or "").strip().lower()
+        if _mode_norm not in ("hardlink", "symlink"):
+            _mode_norm = "default"
+        self._mode_var = tk.StringVar(value=_mode_norm)
+        for _r, (_val, _lbl) in enumerate([
+            ("default",  "Default (use global setting)"),
+            ("hardlink", "Hardlink"),
+            ("symlink",  "Symlink"),
+        ]):
+            ctk.CTkRadioButton(
+                content, text=_lbl, variable=self._mode_var, value=_val,
+                font=FONT_SMALL, text_color=TEXT_MAIN,
+                fg_color=ACCENT, hover_color=ACCENT_HOV,
+                border_color=BORDER,
+            ).grid(row=8 + _r, column=0, columnspan=3, sticky="w", pady=(2, 0))
+
+        ctk.CTkLabel(
+            content,
+            text="Override the global deploy mode. Hardlink falls back to symlink if unsupported.",
+            font=FONT_SMALL, text_color=TEXT_DIM, anchor="w", justify="left",
+        ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # Divider
+        ctk.CTkFrame(content, fg_color=BORDER, height=1, corner_radius=0).grid(
+            row=12, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+
+        # Merge folders toggle
+        self._merge_var = tk.BooleanVar(value=bool(current_merge))
+        ctk.CTkCheckBox(
+            content, text="Merge folders with target",
+            variable=self._merge_var,
+            font=FONT_SMALL, text_color=TEXT_MAIN,
+            fg_color=ACCENT, hover_color=ACCENT_HOV,
+            border_color=BORDER, checkmark_color=TEXT_MAIN,
+        ).grid(row=13, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ctk.CTkLabel(
+            content,
+            text="Merge mod folders into existing ones instead of replacing them.",
+            font=FONT_SMALL, text_color=TEXT_DIM, anchor="w", justify="left",
+        ).grid(row=14, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         # Save / Cancel buttons
         btn_row = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0)
@@ -4899,7 +4949,15 @@ class SepSettingsPanel(ctk.CTkFrame):
         pick_folder("Select deployment directory", _cb)
 
     def _on_save_click(self):
-        self._on_save(self._path_var.get().strip(), self._raw_var.get())
+        _mode = self._mode_var.get()
+        if _mode == "default":
+            _mode = ""
+        self._on_save(
+            self._path_var.get().strip(),
+            self._raw_var.get(),
+            _mode,
+            self._merge_var.get(),
+        )
         self._on_done(self)
 
     def _on_cancel(self):

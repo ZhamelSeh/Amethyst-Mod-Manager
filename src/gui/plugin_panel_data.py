@@ -382,6 +382,8 @@ class PluginPanelDataMixin:
             mod_panel._close_filter_side_panel()
         if getattr(self, "_plugin_filter_panel_open", False):
             self._close_plugin_filter_panel()
+        if getattr(self, "_ini_filter_panel_open", False):
+            self._close_ini_filter_panel()
         self._data_filter_panel_open = True
         mod_panel.grid_columnconfigure(0, minsize=scaled(380))
         self._data_filter_side_panel.grid()
@@ -432,6 +434,7 @@ class PluginPanelDataMixin:
         except Exception:
             pass
         self._data_tab_dirty = False
+        _saved_open = self._collect_open_folder_paths()
         self._data_tree.delete(*self._data_tree.get_children())
         self._data_filemap_entries = []
         self._data_filemap_casefold = []
@@ -484,7 +487,8 @@ class PluginPanelDataMixin:
         # Build contested_keys from the shared conflict cache.
         contested_keys, _ = self._get_conflict_cache(None)
         self._data_contested_keys = contested_keys
-        self._build_data_tree_from_entries(self._data_filemap_entries, contested_keys)
+        self._build_data_tree_from_entries(self._data_filemap_entries, contested_keys,
+                                           _open_paths=_saved_open)
 
     def _resolve_data_entries(self, entries):
         """Prefix each entry's path with its resolved deploy destination so the
@@ -516,10 +520,13 @@ class PluginPanelDataMixin:
                         pass
             # Use _resolve_filemap_entries so include_siblings drags same-mod
             # files under a matched container along to the rule's dest.
+            prefix_skip_dest = getattr(game, "_PREFIX_SKIP_DEST", None)
             winners: dict[str, tuple[int, str, str]] = {}
             for rel_path, mod_name, dest, final_rel in game._resolve_filemap_entries(
                 list(entries)
             ):
+                if prefix_skip_dest is not None and dest == prefix_skip_dest:
+                    continue
                 full_path = dest + "/" + final_rel if dest else final_rel
                 rank = priority_map.get(mod_name, 1 << 30)
                 existing = winners.get(full_path)
@@ -617,6 +624,10 @@ class PluginPanelDataMixin:
         # rule claims its container before a later rule can match a file
         # inside it. Mirrors deploy_custom_rules' rule-ordered first pass.
         sibling_overrides: dict[int, str] = {}
+        # Entries routed into the Proton/Wine prefix don't live under the game
+        # root, so they don't belong in the Data tab tree — collect them and
+        # filter at the end.
+        prefix_hidden: set[int] = set()
         from Utils.deploy_custom_rules import _sibling_container
         claimed: set[int] = set()
         for rule, folders, exts, filenames in _rules:
@@ -632,6 +643,8 @@ class PluginPanelDataMixin:
                 primary_rules[idx] = (rule, strip_len, matched_ext)
                 claimed.add(idx)
                 new_primary_idxs.append(idx)
+                if getattr(rule, "to_prefix", False):
+                    prefix_hidden.add(idx)
             if not getattr(rule, "include_siblings", False) or not new_primary_idxs:
                 continue
             # Build drag specs for this rule's primaries, then claim siblings.
@@ -671,6 +684,8 @@ class PluginPanelDataMixin:
                     sibling_overrides[sib_idx] = (cname + "/" + ric) if cname else ric
                     primary_rules[sib_idx] = (rule, -2, "")
                     claimed.add(sib_idx)
+                    if getattr(rule, "to_prefix", False):
+                        prefix_hidden.add(sib_idx)
 
         # Second pass: mark companions (same folder, same stem, companion ext)
         # with their primary's rule.
@@ -699,10 +714,14 @@ class PluginPanelDataMixin:
                 for c in companions:
                     if sib_name_lower.endswith(c) and len(sib_name_lower) > len(c):
                         primary_rules[sib_idx] = (rule, strip_len, c)
+                        if getattr(rule, "to_prefix", False):
+                            prefix_hidden.add(sib_idx)
                         break
 
         resolved = []
         for idx, (rel_path, mod_name) in enumerate(entries):
+            if idx in prefix_hidden:
+                continue
             rel_norm = normalised[idx]
             match = primary_rules.get(idx)
             if match is not None:
@@ -753,13 +772,56 @@ class PluginPanelDataMixin:
                 entries.append((rel_path, mod_name))
         return entries
 
-    def _build_data_tree_from_entries(self, entries, contested_keys: "set[str] | None" = None):
+    def _collect_open_folder_paths(self) -> "set[tuple[str, ...]]":
+        """Return the path-tuples (stripped label segments) of every open folder node."""
+        tv = self._data_tree
+        open_paths: set[tuple[str, ...]] = set()
+
+        def walk(iid: str, ancestors: tuple[str, ...]):
+            label = tv.item(iid, "text").strip()
+            path = ancestors + (label,)
+            if tv.item(iid, "open"):
+                open_paths.add(path)
+                for child in tv.get_children(iid):
+                    walk(child, path)
+
+        for top in tv.get_children(""):
+            walk(top, ())
+        return open_paths
+
+    def _restore_open_folder_paths(self, open_paths: "set[tuple[str, ...]]") -> None:
+        """Re-open folder nodes whose label path is in *open_paths*.
+
+        Walks depth-first; realises lazy nodes before opening so children exist.
+        """
+        if not open_paths:
+            return
+        tv = self._data_tree
+
+        def walk(iid: str, ancestors: tuple[str, ...]):
+            label = tv.item(iid, "text").strip()
+            path = ancestors + (label,)
+            if path in open_paths:
+                self._realise_data_node(iid)
+                tv.item(iid, open=True)
+                for child in tv.get_children(iid):
+                    walk(child, path)
+
+        for top in tv.get_children(""):
+            walk(top, ())
+
+    def _build_data_tree_from_entries(self, entries, contested_keys: "set[str] | None" = None,
+                                      _open_paths: "set[tuple[str, ...]] | None" = None):
         """Build the tree hierarchy from a list of (rel_path, mod_name) entries.
 
         Folder children are realised lazily on first <<TreeviewOpen>> — only
         top-level folders + a placeholder per non-empty folder are inserted up
         front. See _realise_data_node / _on_data_tree_open.
         """
+        # Preserve the user's expanded folders across rebuilds.
+        if _open_paths is None:
+            _open_paths = self._collect_open_folder_paths()
+
         self._data_tree_expanded = False
         self._data_expand_btn.configure(text="⊞ Expand All")
         self._data_tree.delete(*self._data_tree.get_children())
@@ -824,6 +886,7 @@ class PluginPanelDataMixin:
             tags = (base, "mod_highlight") if (hi_mod and mod == hi_mod) else (base,)
             tree.insert("", "end", text=fname, values=(mod,), tags=tags)
 
+        self._restore_open_folder_paths(_open_paths)
         self._draw_data_marker_strip()
 
     def _realise_data_node(self, node_id: str) -> bool:
@@ -1143,7 +1206,7 @@ class PluginPanelDataMixin:
         if not query:
             self._data_search_prev_query = ""
             self._data_search_prev_indices = None
-            self._build_data_tree_from_entries(self._data_filemap_entries, _ck)
+            self._build_data_tree_from_entries(self._data_filemap_entries, _ck, _open_paths=set())
             return
 
         cf = self._data_filemap_casefold
@@ -1163,7 +1226,7 @@ class PluginPanelDataMixin:
         self._data_search_prev_indices = matched
 
         filtered = [entries[i] for i in matched]
-        self._build_data_tree_from_entries(filtered, _ck)
+        self._build_data_tree_from_entries(filtered, _ck, _open_paths=set())
         # Expand all nodes so filtered results are visible
         for item in self._data_tree.get_children():
             self._expand_all(item)

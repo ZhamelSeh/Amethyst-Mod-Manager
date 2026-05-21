@@ -90,6 +90,7 @@ from Utils.filemap import (
     build_filemap,
     read_mod_index,
     rebuild_mod_index,
+    rescan_mods_in_index,
     remove_from_mod_index,
     rename_in_mod_index,
     fix_flat_staging_folders,
@@ -4738,6 +4739,11 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._vis_dirty = True
         self._mod_to_sep_idx = None
         self._redraw()
+        # The cached index stores paths with strip_prefixes applied for non-root
+        # mods and verbatim for root-flagged mods. Toggling the flag invalidates
+        # the entry, so rescan just this mod before rebuilding the filemap.
+        self._rescan_root_toggled_mods([mod_name])
+        self._rebuild_filemap()
 
     def _set_root_folder_flag_multi(self, mod_names: list[str], enable: bool) -> None:
         """Apply rootFolder=enable to every mod in mod_names. Skips mods already
@@ -4772,8 +4778,37 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             self._vis_dirty = True
             self._mod_to_sep_idx = None
             self._redraw()
+            # Index entries for these mods were scanned with the old strip
+            # semantics — rescan before rebuilding the filemap.
+            self._rescan_root_toggled_mods(changed)
         # Rebuild filemap so filemap_root.txt reflects the updated root-folder assignment.
         self._rebuild_filemap()
+
+    def _rescan_root_toggled_mods(self, mod_names: list[str]) -> None:
+        """Rescan the index entries for *mod_names* using current root-flag state.
+
+        The index caches each mod's file list with strip_prefixes applied only
+        for non-root mods (see filemap.rebuild_mod_index). When a mod's
+        root_folder flag flips, its cached paths are wrong for the new state,
+        so this re-runs the scan for just those mods.
+        """
+        if not mod_names or self._filemap_path is None:
+            return
+        try:
+            rescan_mods_in_index(
+                self._filemap_path.parent / "modindex.bin",
+                self._staging_root,
+                mod_names,
+                strip_prefixes=self._strip_prefixes,
+                per_mod_strip_prefixes=self._mod_strip_prefixes or None,
+                allowed_extensions=self._install_extensions or None,
+                normalize_folder_case=self._normalize_folder_case,
+                exclude_dirs=self._filemap_exclude_dirs,
+                log_fn=self._log,
+                root_folder_mods=set(self._root_folder_mods) if self._root_folder_mods else None,
+            )
+        except Exception as exc:
+            self._log(f"Root-folder toggle: index rescan failed — {exc}")
 
     def _on_sep_lock_toggle(self, sep_name: str) -> None:
         self._sep_locks[sep_name] = not self._sep_locks.get(sep_name, False)

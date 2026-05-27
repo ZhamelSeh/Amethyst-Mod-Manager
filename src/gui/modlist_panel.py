@@ -6820,11 +6820,29 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         if dialog.result is None:
             return
         sep_name = self._unique_separator_name(dialog.result.strip() + "_separator")
-        # Under inverted priority sort, visual above/below is flipped in natural order.
-        visually_above = above
-        if self._sort_column == "priority" and self._sort_ascending:
-            visually_above = not above
-        insert_at = ref_idx if visually_above else ref_idx + 1
+        inverted = (self._sort_column == "priority" and self._sort_ascending)
+        ref_is_sep = self._entries[ref_idx].is_separator
+
+        if ref_is_sep:
+            # A separator is a group header that owns the mod block following it
+            # in natural order. Inserting between the header and its mods would
+            # transfer those mods to the new separator, so we must anchor to the
+            # whole group block — and account for inverted display where group
+            # order is reversed (visual-above == natural-after-block, and
+            # visual-below == natural-before-header).
+            block_end = ref_idx + 1
+            while (block_end < len(self._entries)
+                   and not self._entries[block_end].is_separator):
+                block_end += 1
+            if inverted:
+                insert_at = block_end if above else ref_idx
+            else:
+                insert_at = ref_idx if above else block_end
+        else:
+            # Under inverted priority sort, visual above/below is flipped in
+            # natural order for mod rows (mods within a group are reversed).
+            visually_above = (not above) if inverted else above
+            insert_at = ref_idx if visually_above else ref_idx + 1
         entry = ModEntry(name=sep_name, enabled=True, locked=True, is_separator=True)
         self._entries.insert(insert_at, entry)
         # Keep check_vars aligned (None for separators)

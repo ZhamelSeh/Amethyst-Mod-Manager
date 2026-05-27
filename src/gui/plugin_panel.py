@@ -58,8 +58,10 @@ from gui.theme import (
     BG_GREEN_ROW,
     BG_GREEN_DEEP,
     BG_RED_DEEP,
+    BG_ORANGE_DEEP,
     BG_GREEN_TEXT,
     BG_RED_TEXT,
+    BG_ORANGE_TEXT,
     BG_OVERLAY_ERR,
     STATUS_ERR_BRIGHT,
     TEXT_WHITE,
@@ -2718,6 +2720,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
     _FW_GREEN_TEXT = BG_GREEN_TEXT
     _FW_RED_BG     = BG_RED_DEEP
     _FW_RED_TEXT   = BG_RED_TEXT
+    _FW_ORANGE_BG  = BG_ORANGE_DEEP
+    _FW_ORANGE_TEXT = BG_ORANGE_TEXT
 
     def _refresh_framework_banners(self) -> None:
         """Rebuild the framework status banners at the top of the Plugins tab.
@@ -2761,6 +2765,23 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         # Show the container now that we know there's at least one banner to display
         self._framework_banners_frame.grid(row=1, column=0, sticky="ew")
 
+        # Set of filemap keys (deploy-relative paths, lowercased) — lets us tell
+        # "not deployed but staged in the modlist" apart from "not present at all".
+        staged_keys: set[str] = set()
+        filemap_path_str = self._get_filemap_path()
+        if filemap_path_str:
+            fm_path = Path(filemap_path_str)
+            if fm_path.is_file():
+                try:
+                    with fm_path.open(encoding="utf-8") as f:
+                        for line in f:
+                            if "\t" not in line:
+                                continue
+                            rel_path = line.split("\t", 1)[0].replace("\\", "/")
+                            staged_keys.add(rel_path.lower())
+                except OSError:
+                    pass
+
         # Build the desired banner states
         banner_data: list[tuple[str, str, str]] = []  # (msg, bg, fg)
         for label, exe in frameworks.items():
@@ -2778,6 +2799,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                     f"✔  {label} Installed",
                     self._FW_GREEN_BG,
                     self._FW_GREEN_TEXT,
+                ))
+            elif exe.replace("\\", "/").lower() in staged_keys:
+                banner_data.append((
+                    f"●  {label} present in modlist but not deployed",
+                    self._FW_ORANGE_BG,
+                    self._FW_ORANGE_TEXT,
                 ))
             else:
                 banner_data.append((

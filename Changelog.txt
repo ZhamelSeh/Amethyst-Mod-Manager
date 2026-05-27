@@ -6,6 +6,7 @@
 - checking a mod for updates now grabs the mods summary, This is displayed as a tooltip when hovering over the mod in the modlist panel. This can be disabled in the settings.
 - Opening the modlist filters menu now auto hides the plugins panel
 - Filter options can now be clicked a second time to exclude the selection from the list
+- Framework detection now also detects mods in the staging folder
 
 - v1.3.5
 - Tweaked the separator settings menu/custom deploy locations

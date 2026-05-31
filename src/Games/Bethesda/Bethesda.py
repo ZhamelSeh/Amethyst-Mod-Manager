@@ -175,7 +175,7 @@ class Fallout_3(BaseGame):
 
     @property
     def mod_folder_strip_prefixes(self) -> set[str]:
-        return {"Data"}
+        return {"Data","oblivion"}
     
     @property
     def mod_required_top_level_folders(self) -> set[str]:

@@ -28,6 +28,8 @@ _DATA_DIRS = {
     "distantlod", "lodsettings", "menus", "fonts", "dialogueviews", "grass",
     "seq", "asi", "calientetools", "skse", "obse", "f4se", "nvse", "mwse",
     "source", "tools", "docs",
+    # morrowind / openmw asset + localisation dirs
+    "l10n", "animation", "bookart", "distantland", "icons", "splash", "mge3",
     # screenshots
     "screenshots", "screens", "ss",
     # wrye bash dirs
@@ -37,9 +39,13 @@ _DATA_DIRS = {
 # Data/config file extensions (Wrye Bash: _top_files_extensions, WITHOUT docs).
 # A loose file with one of these at the archive root makes it a *simple*
 # package (type 1); inside a sub-folder it marks that folder as a sub-package.
+# Game-specific plugin extensions are added at call time via detect_bain's
+# *extra_exts* (e.g. OpenMW's .omwaddon / .omwscripts).
 _DATA_EXTS = {
     ".esp", ".esm", ".esu", ".esl", ".bsa", ".ba2", ".bsl", ".ckm", ".csv",
     ".ini", ".modgroups", ".toml",
+    # morrowind / openmw
+    ".omwaddon", ".omwscripts", ".omwgame",
 }
 
 # Documentation extensions (Wrye Bash: docExts). These count toward sub-package
@@ -50,9 +56,6 @@ _DOC_EXTS = {
     ".css", ".xls", ".xlsx", ".ods", ".odp", ".ppt", ".pptx", ".md", ".rst",
     ".url",
 }
-
-# Extensions that mark a folder as a sub-package (data + docs).
-_TOP_EXTS = _DATA_EXTS | _DOC_EXTS
 
 # Folders/files Wrye Bash silently skips when classifying a package. Lower-case.
 _SKIP_DIR_NAMES = {"bash", "omod conversion data", "wizard images"}
@@ -70,7 +73,7 @@ class BainSubPackage:
     name: str            # full folder name, e.g. "00 Core"
     display_name: str    # prefix stripped, e.g. "Core"
     path: str            # absolute path to the folder
-    default_selected: bool = True
+    default_selected: bool = False
 
 
 def _strip_numeric_prefix(name: str) -> str:
@@ -81,14 +84,22 @@ def _strip_numeric_prefix(name: str) -> str:
     return name[m.end():].strip() or name
 
 
+def _default_selected(name: str) -> bool:
+    """Sub-packages are off by default; ``00``-prefixed ones (the core/required
+    packages by BAIN convention) are pre-selected."""
+    m = _NUMERIC_PREFIX_RE.match(name)
+    return bool(m) and int(m.group(1)) == 0
+
+
 def _is_skipped_dir(name: str) -> bool:
     low = name.lower()
     return low in _SKIP_DIR_NAMES or low.startswith(_SKIP_PREFIXES)
 
 
-def _looks_like_subpackage(dir_path: str) -> bool:
+def _looks_like_subpackage(dir_path: str, data_exts: set[str]) -> bool:
     """True if *dir_path* behaves like a simple package: it directly contains a
     recognised data sub-folder or a top-level data/doc file."""
+    top_exts = data_exts | _DOC_EXTS
     try:
         with os.scandir(dir_path) as it:
             for e in it:
@@ -97,22 +108,34 @@ def _looks_like_subpackage(dir_path: str) -> bool:
                         return True
                 else:
                     ext = os.path.splitext(e.name)[1].lower()
-                    if ext in _TOP_EXTS:
+                    if ext in top_exts:
                         return True
     except OSError:
         return False
     return False
 
 
-def detect_bain(extract_dir: str) -> list[BainSubPackage] | None:
+def detect_bain(extract_dir: str,
+                extra_exts: "set[str] | list[str] | None" = None
+                ) -> list[BainSubPackage] | None:
     """Detect a BAIN complex package: a root holding ≥2 sub-package folders,
     each of which behaves like a simple package (contains data sub-folders or
     top-level data/doc files).
+
+    *extra_exts* lets the caller add game-specific plugin extensions (e.g. the
+    game's ``plugin_extensions``) so detection recognises formats beyond the
+    built-in defaults. Extensions may be given with or without a leading dot.
 
     Returns the ordered list of sub-packages, or ``None`` if the directory
     doesn't look like a complex BAIN package. The caller is expected to pass an
     already single-folder-unwrapped path.
     """
+    data_exts = set(_DATA_EXTS)
+    if extra_exts:
+        for x in extra_exts:
+            x = x.lower()
+            data_exts.add(x if x.startswith(".") else "." + x)
+
     try:
         entries = list(os.scandir(extract_dir))
     except OSError:
@@ -127,18 +150,19 @@ def detect_bain(extract_dir: str) -> list[BainSubPackage] | None:
             if e.name.lower() in _DATA_DIRS:
                 return None
         else:
-            if os.path.splitext(e.name)[1].lower() in _DATA_EXTS:
+            if os.path.splitext(e.name)[1].lower() in data_exts:
                 return None
 
     subpackages: list[BainSubPackage] = []
     for e in entries:
         if not e.is_dir() or _is_skipped_dir(e.name):
             continue
-        if _looks_like_subpackage(e.path):
+        if _looks_like_subpackage(e.path, data_exts):
             subpackages.append(BainSubPackage(
                 name=e.name,
                 display_name=_strip_numeric_prefix(e.name),
                 path=e.path,
+                default_selected=_default_selected(e.name),
             ))
 
     if len(subpackages) < 2:

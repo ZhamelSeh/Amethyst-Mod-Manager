@@ -1677,7 +1677,9 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                 for src, dst, is_folder in file_list:
                     kind = "[dir]" if is_folder else "[file]"
                     log_fn(f"[FOMOD DEV]   {kind} {src!r} → {dst!r}")
-        elif (bain_subpkgs := detect_bain(_unwrap_single_folder(extract_dir))):
+        elif (bain_subpkgs := detect_bain(
+                _unwrap_single_folder(extract_dir),
+                extra_exts=getattr(game, "plugin_extensions", None))):
             # --- BAIN (Wrye Bash bundled archive) install ---
             extract_dir = _unwrap_single_folder(extract_dir)
             mod_root = extract_dir
@@ -1718,13 +1720,14 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                     except (OSError, ValueError):
                         saved_selections = None
 
-            all_names = [p.name for p in bain_subpkgs]
+            default_names = [p.name for p in bain_subpkgs if p.default_selected]
             if headless:
                 # Collection / non-interactive install: keep prior choices if we
-                # have them, otherwise install every sub-package (BAIN default).
-                selected = (saved_selections or {}).get("selected") or all_names
+                # have them, otherwise use the per-package defaults (00-prefixed
+                # core packages only).
+                selected = (saved_selections or {}).get("selected") or default_names
                 log_fn("BAIN: non-interactive install — using "
-                       + ("saved" if saved_selections else "all-packages")
+                       + ("saved" if saved_selections else "default")
                        + " selection.")
             else:
                 if clear_progress_fn is not None:

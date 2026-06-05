@@ -2258,6 +2258,20 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
             try:
                 fn(dest_root, mod_name, log_fn)
             except Exception as e:
+                # A wizard hook may signal a user cancellation (marker attr) —
+                # abort the whole install and clean up the staged folder rather
+                # than leaving a half-installed mod in the modlist.
+                if getattr(e, "install_cancelled", False):
+                    log_fn(f"Install cancelled by user — removing '{mod_name}'.")
+                    if not was_existing_mod:
+                        def _force_remove(func, path, _exc):
+                            os.chmod(path, 0o700)
+                            func(path)
+                        try:
+                            shutil.rmtree(dest_root, onexc=_force_remove)
+                        except OSError as rm_exc:
+                            log_fn(f"  cleanup failed: {rm_exc}")
+                    return
                 log_fn(f"Additional install logic failed: {e}")
 
         # Resolve which profile directory to write modlist/plugins into.

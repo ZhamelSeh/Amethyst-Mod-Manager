@@ -384,7 +384,8 @@ class DragonAgeOrigins(BaseGame):
         try:
             dao_xml = self._load_dao_module("dao_xml")
             n_reg = dao_xml.build_registry_xml(
-                data_root, mod_staging=staging, log_fn=_log
+                data_root, mod_staging=staging,
+                game_path=self._game_path, log_fn=_log
             )
             _log(f"  Registries built ({n_reg} item(s)).")
         except Exception as exc:

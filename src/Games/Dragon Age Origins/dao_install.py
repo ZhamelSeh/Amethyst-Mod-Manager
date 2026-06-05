@@ -35,6 +35,13 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+class InstallCancelled(Exception):
+    """Raised when the user cancels an install-time wizard (e.g. the
+    OverrideConfig options dialog), signalling the installer to abort the
+    whole install rather than proceed with defaults."""
+    install_cancelled = True
+
+
 _OVERRIDE_DEST = Path("packages/core/override")
 
 # DAO package archive formats extracted at install time.
@@ -208,7 +215,7 @@ def _extract_archives(dest_root: Path, log_fn) -> int:
     return count
 
 
-def _maybe_apply_override_config(dest_root: Path, log_fn) -> bool:
+def _maybe_apply_override_config(dest_root: Path, log_fn, mod_name: str = "") -> bool:
     """Apply OverrideConfig.xml choices for a DAO-Modmanager .override mod.
 
     Searches the whole staged tree for an OverrideConfig.xml. This runs as its
@@ -234,7 +241,9 @@ def _maybe_apply_override_config(dest_root: Path, log_fn) -> bool:
     if config is None:
         return False
     try:
-        choices = _prompt_override_config(config, log_fn)
+        choices = _prompt_override_config(config, log_fn, mod_name=mod_name)
+    except InstallCancelled:
+        raise  # propagate so the installer aborts the whole install
     except Exception as exc:  # never let a wizard error abort the install
         log_fn(f"  [DAO] OverrideConfig handling failed: {exc}")
         choices = []
@@ -270,7 +279,8 @@ def _find_in_tree(root: Path, filename: str) -> "Path | None":
     return None
 
 
-def _prompt_override_config(config_path: Path, log_fn) -> list[tuple[str, str]]:
+def _prompt_override_config(config_path: Path, log_fn,
+                            mod_name: str = "") -> list[tuple[str, str]]:
     """Parse OverrideConfig.xml and ask the user to choose option variants.
 
     Returns a list of (original_file, chosen_replacement_file) pairs to apply.
@@ -312,21 +322,64 @@ def _prompt_override_config(config_path: Path, log_fn) -> list[tuple[str, str]]:
                f"keeping {len(options)} default(s).")
         return []
 
-    results: list[tuple[str, str]] = []
-    for opt in options:
+    # Navigation sentinels from the GUI hook — absent on headless paths.
+    try:
+        from gui.install_question import BACK, USE_DEFAULTS  # type: ignore
+    except Exception:
+        BACK = object()         # never returned by a non-GUI hook
+        USE_DEFAULTS = object()
+
+    total = len(options)
+    title = f"{mod_name} — Mod Options" if mod_name else "Dragon Age — Mod Options"
+    # Remember each page's chosen label so a Back navigation re-shows the user's
+    # prior selection as the default instead of resetting to the config default.
+    chosen_labels: list[str | None] = [None] * total
+
+    idx = 0
+    while idx < total:
+        opt = options[idx]
+        page = idx + 1
         labels = [v[0] for v in opt["values"]]
-        default_idx = next(
-            (i for i, v in enumerate(opt["values"]) if v[0] == opt["default"]), 0
-        )
+        if chosen_labels[idx] is not None and chosen_labels[idx] in labels:
+            default_idx = labels.index(chosen_labels[idx])
+        else:
+            default_idx = next(
+                (i for i, v in enumerate(opt["values"]) if v[0] == opt["default"]),
+                0,
+            )
         chosen = ask(
-            title="Dragon Age — Mod Options",
+            title=title,
             prompt=(f"{opt['section']} — {opt['key']}\n\n"
                     f"{opt['description']}\n\n"
                     f"(default: {opt['default']})"),
             options=labels,
             default_index=default_idx,
             log_fn=log_fn,
+            page=page,
+            total_pages=total,
         )
+        if chosen is BACK:
+            idx = max(0, idx - 1)
+            continue
+        if chosen is USE_DEFAULTS:
+            # Accept the config default for this page and all remaining pages
+            # without further prompting.
+            for j in range(idx, total):
+                chosen_labels[j] = options[j]["default"]
+            log_fn(f"  [DAO] OverrideConfig: using defaults for pages "
+                   f"{page}–{total}.")
+            break
+        if chosen is None:
+            # Cancel aborts the entire install, not just this page.
+            log_fn(f"  [DAO] OverrideConfig cancelled at page {page}/{total} "
+                   f"— aborting install.")
+            raise InstallCancelled("OverrideConfig wizard cancelled")
+        chosen_labels[idx] = chosen
+        idx += 1
+
+    # Resolve the final selections into (original, replacement) pairs.
+    results: list[tuple[str, str]] = []
+    for opt, chosen in zip(options, chosen_labels):
         if chosen is None:
             continue
         repl = next((f for name, f in opt["values"] if name == chosen), "")
@@ -380,7 +433,7 @@ def normalize_dao_mod(dest_root: Path, mod_name: str, log_fn=None) -> None:
     # Runs whether the .override was unpacked by us above or by the generic
     # installer before normalize was invoked. Applies the user's variant choice
     # and removes the config so it does not deploy.
-    if _maybe_apply_override_config(dest_root, _log):
+    if _maybe_apply_override_config(dest_root, _log, mod_name=mod_name):
         _log(f"  [DAO] {mod_name}: applied OverrideConfig.xml options.")
 
     # Collect the current file set first; we mutate the tree as we go.

@@ -87,7 +87,7 @@ class Cyberpunk2077(BaseGame):
 
     @property
     def conflict_ignore_filenames(self) -> set[str]:
-        return {"*.txt","*.png","*.jpg","*.jpeg"}
+        return {"*read*.txt","*.png","*.jpg","*.jpeg"}
 
     @property
     def mod_auto_strip_until_required(self) -> bool:

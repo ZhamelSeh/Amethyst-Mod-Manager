@@ -165,6 +165,12 @@ class _BodySlideBaseWizard(ctk.CTkFrame):
             env.setdefault("SteamAppId",  steam_id)
             env.setdefault("SteamGameId", steam_id)
 
+        # Proton's Xalia UI-automation helper destabilises BodySlide / Outfit
+        # Studio (wxWidgets): it floods the app with window-handle queries and
+        # crashes with "Invalid window handle" when the Preview child window
+        # opens ("Fatal exception has occurred"). Disabling it fixes the crash.
+        env["PROTON_DISABLE_XALIA"] = "1"
+
         return proton_script, env, prefix_path
 
     @staticmethod

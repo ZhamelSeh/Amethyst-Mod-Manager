@@ -4,6 +4,7 @@ Used by ModListPanel, PluginPanel, TopBar, and App. Imports dialogs and mod_name
 """
 
 import json
+import inspect
 import os
 import re
 import shutil
@@ -1683,7 +1684,7 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                 for src, dst, is_folder in file_list:
                     kind = "[dir]" if is_folder else "[file]"
                     log_fn(f"[FOMOD DEV]   {kind} {src!r} → {dst!r}")
-        elif (bain_subpkgs := detect_bain(
+        elif getattr(game, "supports_bain", True) and (bain_subpkgs := detect_bain(
                 _unwrap_single_folder(extract_dir),
                 extra_exts=getattr(game, "plugin_extensions", None))):
             # --- BAIN (Wrye Bash bundled archive) install ---
@@ -2254,9 +2255,20 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                                   is_fomod=is_fomod_install,
                                   is_bain=is_bain_install)
 
+        # Interactive == a normal single-mod install with a real UI. Collection
+        # installs defer/auto-resolve their wizards and headless installs have no
+        # UI, so hooks that pop dialogs (e.g. DAO's duplicate-override warning)
+        # should stay silent in those modes.
+        _interactive_install = not (headless
+                                    or defer_interactive_fomod
+                                    or defer_interactive_bain)
         for fn in getattr(game, "additional_install_logic", []):
             try:
-                fn(dest_root, mod_name, log_fn)
+                if "interactive" in inspect.signature(fn).parameters:
+                    fn(dest_root, mod_name, log_fn,
+                       interactive=_interactive_install)
+                else:
+                    fn(dest_root, mod_name, log_fn)
             except Exception as e:
                 # A wizard hook may signal a user cancellation (marker attr) —
                 # abort the whole install and clean up the staged folder rather

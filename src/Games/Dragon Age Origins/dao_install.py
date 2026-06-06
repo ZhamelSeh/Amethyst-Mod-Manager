@@ -405,8 +405,89 @@ def _get_question_hook(log_fn=None):
         return None
 
 
-def normalize_dao_mod(dest_root: Path, mod_name: str, log_fn=None) -> None:
-    """Restructure a freshly-staged DAO mod into the game's layout."""
+def _warn_duplicate_overrides(mod_name: str,
+                              duplicates: "dict[Path, list[str]]",
+                              log_fn, interactive: bool = True) -> None:
+    """Log and (for interactive installs) pop a warning about duplicate override
+    files.
+
+    Override is a flat namespace, so several source files flattening to the same
+    basename almost always means the archive bundles selectable variants the
+    user is meant to choose between. We deployed one (last wins) but can't know
+    which they want, so we surface it and point them at the mod page.
+
+    ``interactive`` is False for headless/collection installs — those log only,
+    never popping a dialog (the collection author already resolved the options).
+    """
+    n = len(duplicates)
+    log_fn(f"  [DAO] {mod_name}: WARNING — {n} override file(s) bundled multiple "
+           f"times (likely selectable variants; the last copy was kept):")
+    for dst, srcs in sorted(duplicates.items(), key=lambda kv: str(kv[0])):
+        log_fn(f"    -- {dst.name} --")
+        for s in srcs:
+            log_fn(f"      -> {s}")
+    log_fn(f"  [DAO] Only one copy of each is deployed. If this mod has options, "
+           f"read the mod page and remove the variants you don't want.")
+
+    if not interactive:
+        return
+
+    # Themed CTk popup, on the main thread (CTkAlert is modal). Resolve the GUI
+    # lazily so this module stays import-light/headless-safe.
+    try:
+        import tkinter as tk
+        from gui.dialogs import show_warning
+    except Exception:
+        return
+    root = getattr(tk, "_default_root", None)
+    try:
+        if root is None or not root.winfo_exists():
+            return
+    except Exception:
+        return
+
+    names = sorted({dst.name for dst in duplicates})
+    # Cap the visible list so a mod with hundreds of duplicate files can't grow
+    # the popup past its height cap and clip the OK button.
+    _MAX_LISTED = 10
+    shown = names[:_MAX_LISTED]
+    more = len(names) - len(shown)
+    detail = "\n".join(f"  • {nm}" for nm in shown)
+    if more > 0:
+        detail += f"\n  • …and {more} more"
+    # Keep an over-long mod name from inflating the header height.
+    title_name = mod_name if len(mod_name) <= 60 else mod_name[:57] + "…"
+    message = (
+        f"\"{title_name}\" bundles the same override file more than once:\n\n"
+        f"{detail}\n\n"
+        f"These are likely selectable variants. Only one copy of each was "
+        f"deployed (last one wins). Check the mod page for options and remove "
+        f"any variants you don't want."
+    )
+
+    def _show() -> None:
+        try:
+            # Raised design height: the body can be up to ~10 list lines plus
+            # two paragraphs, and CTkAlert caps auto-size at 2× this value —
+            # 280 keeps the OK button visible in the worst case.
+            show_warning("Dragon Age — Duplicate override files", message,
+                         parent=root, height=280)
+        except Exception as exc:
+            log_fn(f"  [DAO] duplicate warning popup failed: {exc!r}")
+
+    try:
+        root.after(0, _show)
+    except Exception as exc:
+        log_fn(f"  [DAO] could not schedule duplicate warning: {exc!r}")
+
+
+def normalize_dao_mod(dest_root: Path, mod_name: str, log_fn=None,
+                      interactive: bool = True) -> None:
+    """Restructure a freshly-staged DAO mod into the game's layout.
+
+    ``interactive`` is False for headless/collection installs — the duplicate
+    override warning then logs only, without popping a dialog.
+    """
     _log = log_fn or (lambda _: None)
     dest_root = Path(dest_root)
     if not dest_root.is_dir():
@@ -490,6 +571,22 @@ def normalize_dao_mod(dest_root: Path, mod_name: str, log_fn=None) -> None:
         if dst_rel != rel:
             planned.append((src, dst_rel))
 
+    # Detect basename collisions: because override is flattened to bare
+    # basenames, two sources mapping to the same destination means the mod ships
+    # the same file more than once — almost always selectable VARIANTS the user
+    # is meant to pick between (e.g. three robe-colour folders each containing
+    # pf_rob_mora_0d.dds). We can't know which the user wants, so we deploy one
+    # (last wins) and warn them to consult the mod page. Keyed by dst_rel; value
+    # is the list of mod-relative source paths that landed on it.
+    # Docs/readmes carry no game effect and routinely repeat across variant
+    # folders, so excluding them keeps the warning about real asset variants.
+    _DUP_IGNORE_SUFFIXES = _DOC_SUFFIXES | {".txt", ".rtf", ".md"}
+    collisions: dict[Path, list[str]] = {}
+    for src, dst_rel in planned:
+        if dst_rel.suffix.lower() in _DUP_IGNORE_SUFFIXES:
+            continue
+        collisions.setdefault(dst_rel, []).append(str(src.relative_to(dest_root)))
+
     for src, dst_rel in planned:
         dst = dest_root / dst_rel
         if src == dst:
@@ -505,6 +602,10 @@ def normalize_dao_mod(dest_root: Path, mod_name: str, log_fn=None) -> None:
         except OSError as exc:
             _log(f"  [DAO] failed to move {src.relative_to(dest_root)} "
                  f"→ {dst_rel}: {exc}")
+
+    duplicates = {d: srcs for d, srcs in collisions.items() if len(srcs) > 1}
+    if duplicates:
+        _warn_duplicate_overrides(mod_name, duplicates, _log, interactive)
 
     # Remove directories left empty by the moves (but keep the override tree).
     for dirpath, _dirnames, _filenames in os.walk(dest_root, topdown=False):

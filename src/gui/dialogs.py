@@ -154,6 +154,25 @@ def show_error(title: str, message: str, parent=None) -> None:
     alert.get()
 
 
+def show_warning(title: str, message: str, parent=None, height: int = 220) -> None:
+    """Warning dialog using CTkAlert.
+
+    ``height`` is the design height; CTkAlert auto-sizes to content but caps at
+    2×, so raise it for long bodies to keep the OK button from being clipped.
+    """
+    alert = CTkAlert(
+        state="warning",
+        title=title,
+        body_text=message,
+        btn1="OK",
+        btn2="",
+        parent=parent,
+        width=520,
+        height=height,
+    )
+    alert.get()
+
+
 def confirm_deploy_appdata(parent, game) -> bool:
     """Warn the user if the game's in-prefix AppData folder is missing.
 

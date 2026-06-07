@@ -584,6 +584,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._filter_fomod_only: int = 0
         self._filter_bain_only: int = 0
         self._filter_has_bsa: int = 0
+        self._filter_has_pbr: int = 0
         self._filter_categories: frozenset[str] = frozenset()         # include-only categories
         self._filter_categories_exclude: frozenset[str] = frozenset() # categories to hide
         self._filter_filetypes: frozenset[str] = frozenset()
@@ -2986,6 +2987,9 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         ("_filter_has_bsa", lambda s: s._get_mods_with_bsa(),
          lambda s, ms: (lambda e: e.name in ms),
          lambda s, ms: (lambda i: s._sep_block_has_bsa(i, ms))),
+        ("_filter_has_pbr", lambda s: s._get_mods_with_pbr(),
+         lambda s, ms: (lambda e: e.name in ms),
+         lambda s, ms: (lambda i: s._sep_block_has_pbr(i, ms))),
     )
 
     # ------------------------------------------------------------------
@@ -3945,6 +3949,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
     def _sep_block_has_bsa(self, sep_idx: int, mods_with_bsa: set[str]) -> bool:
         return self._sep_block_has_any(
             sep_idx, lambda e: e.name in mods_with_bsa,
+        )
+
+    def _get_mods_with_pbr(self) -> set[str]:
+        """Set of mod names that contain files under a textures/pbr folder."""
+        result: set[str] = set()
+        for mod, (normal, root) in self._read_mod_index_safe().items():
+            for rel_key in (*normal, *root):
+                # rel_key is the normalized (lowercased) relative path.
+                if rel_key.startswith("textures/pbr/"):
+                    result.add(mod)
+                    break
+        return result
+
+    def _sep_block_has_pbr(self, sep_idx: int, mods_with_pbr: set[str]) -> bool:
+        return self._sep_block_has_any(
+            sep_idx, lambda e: e.name in mods_with_pbr,
         )
 
     def _sep_block_has_category(self, sep_idx: int, allowed_categories: frozenset[str]) -> bool:

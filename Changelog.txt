@@ -7,6 +7,8 @@
 - Added a present but not enabled ribbon to framework detection
 - Fix for Bodyslide and outfit studio wizard to work with the newest version which removed/changed the x64 executable
 - Tweaks to cyberpunk handler to allow .txt files but remove loose files and folders that are not needed.
+- Tweaked the nxm handler to try and stop multiple instances opening
+- Added a filter by pbr textures to Skyrim's modlist filter menu
 
 - v1.3.7
 - Reworked Archive Invalidation for some bethesda games, Uses a dummy bsa file to make the gamebryo engine load loose files

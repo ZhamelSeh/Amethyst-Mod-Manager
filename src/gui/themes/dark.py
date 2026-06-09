@@ -135,6 +135,8 @@ PALETTE: dict[str, str | tuple] = {
     "BG_GREEN_TEXT":   "#c8ffc8",
     "BG_RED_TEXT":     "#ffc8c8",
     "BG_ORANGE_TEXT":  "#ffe0b0",
+    "BG_BLUE_DEEP":    "#1a3a5c",
+    "BG_BLUE_TEXT":    "#b0d8ff",
     "BG_DARK_BLUE":    "#1e1e2e",
     "BG_DARK_GREEN":   "#1e2a1e",
     "BG_ENTRY":        "#1e1e1e",

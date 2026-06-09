@@ -154,6 +154,25 @@ def show_error(title: str, message: str, parent=None) -> None:
     alert.get()
 
 
+def show_warning(title: str, message: str, parent=None, height: int = 220) -> None:
+    """Warning dialog using CTkAlert.
+
+    ``height`` is the design height; CTkAlert auto-sizes to content but caps at
+    2×, so raise it for long bodies to keep the OK button from being clipped.
+    """
+    alert = CTkAlert(
+        state="warning",
+        title=title,
+        body_text=message,
+        btn1="OK",
+        btn2="",
+        parent=parent,
+        width=520,
+        height=height,
+    )
+    alert.get()
+
+
 def confirm_deploy_appdata(parent, game) -> bool:
     """Warn the user if the game's in-prefix AppData folder is missing.
 
@@ -1124,16 +1143,57 @@ class ProtonToolsPanel(ctk.CTkFrame):
             return
         show(title, worker, log_fn=prefixed_log)
 
+    def _wine_tool_command(self, proton_script, env, tool):
+        """Build a launch command for a wine tool (winecfg/regedit).
+
+        Prefers the Proton dist's bundled ``wine`` binary directly (the way
+        Heroic launches these), which avoids booting Proton's steam.exe shim —
+        that shim asserts ``!status`` in steamclient_main.c and aborts when it
+        can't reach a Steam client (e.g. Steam Flatpak / non-Steam Heroic
+        prefix). Falls back to ``proton run`` if no wine binary is found.
+        """
+        log = self._log
+        proton_dir = Path(proton_script).parent
+        log(f"Proton Tools: resolving wine binary under {proton_dir}")
+        if not proton_dir.is_dir():
+            log(f"Proton Tools: WARNING — Proton dir does not exist: {proton_dir}")
+        wine_bin = None
+        checked = []
+        for sub in ("files/bin/wine", "dist/bin/wine"):
+            cand = proton_dir / sub
+            checked.append(str(cand))
+            if cand.is_file():
+                wine_bin = cand
+                break
+        if wine_bin is None:
+            log("Proton Tools: WARNING — no bundled wine binary found "
+                f"(checked: {', '.join(checked)}); falling back to "
+                "'proton run', which boots the steam.exe shim and may crash "
+                "with an lsteamclient assertion if Steam is unavailable.")
+            return ["python3", str(proton_script), "run", tool]
+        log(f"Proton Tools: using bundled wine binary {wine_bin}")
+        prefix_path = self._game.get_prefix_path()
+        if prefix_path is not None:
+            env["WINEPREFIX"] = str(prefix_path)
+            log(f"Proton Tools: WINEPREFIX set to {prefix_path}")
+            if not prefix_path.is_dir():
+                log(f"Proton Tools: WARNING — WINEPREFIX path does not exist: {prefix_path}")
+        else:
+            log("Proton Tools: WARNING — no prefix path for this game; "
+                "wine will use its default prefix (~/.wine).")
+        return [str(wine_bin), tool]
+
     def _run_winecfg(self):
         proton_script, env = self._get_proton_env()
         if proton_script is None:
             return
         log = self._log
+        cmd = self._wine_tool_command(proton_script, env, "winecfg")
         def _launch():
             log("Proton Tools: launching winecfg …")
             try:
-                subprocess.Popen(["python3", str(proton_script), "run", "winecfg"],
-                                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen(cmd, env=env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 log(f"Proton Tools error: {e}")
         self._close_and_run(_launch)
@@ -1173,11 +1233,12 @@ class ProtonToolsPanel(ctk.CTkFrame):
         if proton_script is None:
             return
         log = self._log
+        cmd = self._wine_tool_command(proton_script, env, "regedit")
         def _launch():
             log("Proton Tools: launching wine registry editor …")
             try:
-                subprocess.Popen(["python3", str(proton_script), "run", "regedit"],
-                                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen(cmd, env=env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 log(f"Proton Tools error: {e}")
         self._close_and_run(_launch)

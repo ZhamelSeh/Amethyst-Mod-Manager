@@ -228,7 +228,12 @@ def _scan_dir(
     return source_name, result, root_result, invalid_names
 
 
-def fix_flat_staging_folders(staging_root: Path) -> list[str]:
+def fix_flat_staging_folders(
+    staging_root: Path,
+    signal_filenames: "set[str] | None" = None,
+    signal_extensions: "set[str] | None" = None,
+    already_structured_markers: "set[str] | None" = None,
+) -> list[str]:
     """Wrap any flat mod staging folders so files are one level deeper.
 
     Some games (e.g. Stardew Valley) require mods to live inside a named
@@ -246,8 +251,22 @@ def fix_flat_staging_folders(staging_root: Path) -> list[str]:
     Only folders that contain *exclusively* loose files (no existing subdir) are
     touched, so mods that are already correctly structured are never modified.
 
+    The "needs wrapping" signal is a marker file at the staging root:
+      - ``signal_filenames`` — exact lowercase names (default: ``manifest.json``
+        for Stardew/SMAPI).
+      - ``signal_extensions`` — lowercase extensions incl. dot.
+
+    ``already_structured_markers`` — lowercase filenames (e.g. ``metadata.lua``)
+    that, when found in any immediate subdirectory, mark the mod as already
+    correctly structured so it is left untouched.  This prevents a loose file
+    at the root (e.g. a JA3 Packs ``.hpk`` sibling of an existing
+    ``<ModName>/metadata.lua`` folder) from triggering a spurious wrap.
+
     Returns a list of staging folder names that were restructured.
     """
+    names = {n.lower() for n in (signal_filenames or {"manifest.json"})}
+    exts = {e.lower() for e in (signal_extensions or set())}
+    guard = {n.lower() for n in (already_structured_markers or set())}
     fixed: list[str] = []
     if not staging_root.is_dir():
         return fixed
@@ -260,20 +279,38 @@ def fix_flat_staging_folders(staging_root: Path) -> list[str]:
         if not children:
             continue
 
-        # For games that require a subdir wrapper (e.g. Stardew Valley / SMAPI),
-        # manifest.json at the staging root is the definitive signal that the
+        # Already-correctly-structured guard: if any immediate subdirectory
+        # already contains a marker file (e.g. metadata.lua), the mod is NOT
+        # flat — a loose file at the root (e.g. a Packs .hpk sibling) is part of
+        # a multi-destination mod and must not trigger a wrap.
+        if guard and any(
+            sub.is_dir() and any(
+                f.is_file() and f.name.lower() in guard for f in sub.iterdir()
+            )
+            for sub in children
+        ):
+            continue
+
+        # A marker file at the staging root is the definitive signal that the
         # mod was copied flat and needs wrapping — regardless of whether there
         # are also subdirectories (assets/, i18n/, etc.) present.
-        has_manifest = any(c.name.lower() == "manifest.json"
-                           for c in children if c.is_file())
-        if not has_manifest:
+        has_signal = any(
+            c.is_file()
+            and (c.name.lower() in names or c.suffix.lower() in exts)
+            for c in children
+        )
+        if not has_signal:
             continue
 
         # Move everything (files and subdirs) into a new subfolder named after
         # the staging folder so the mod loader finds <ModName>/manifest.json.
+        # The manager's own metadata (meta.ini) must stay at the staging root,
+        # or the mod can no longer be matched to its meta.ini after wrapping.
         sub = mod_dir / mod_dir.name
         sub.mkdir(exist_ok=True)
         for child in children:
+            if child.is_file() and child.name.lower() in _EXCLUDE_NAMES:
+                continue
             shutil.move(str(child), str(sub / child.name))
         fixed.append(mod_dir.name)
 
@@ -809,6 +846,8 @@ def build_filemap(
     root_deploy_folders: set[str] | None = None,  # unused, kept for call-site compat
     disabled_plugins: dict[str, list[str]] | None = None,
     conflict_ignore_filenames: set[str] | None = None,
+    excluded_loose_filenames: set[str] | None = None,
+    allowed_top_level_folders: set[str] | None = None,
     excluded_mod_files: dict[str, set[str]] | None = None,
     normalize_folder_case: bool = True,
     filemap_casing: str = FILEMAP_CASING_UPPER,
@@ -839,6 +878,14 @@ def build_filemap(
     conflict_ignore_filenames — lowercase filenames (not paths) excluded from
     conflict tracking.  Files still appear in the filemap but do not count
     toward a mod's conflict status.  Pass None or an empty set to disable.
+
+    excluded_loose_filenames — lowercase glob patterns; matching files are
+    dropped from the filemap entirely, but only when the file is loose (no
+    parent folder).  Same-named files nested in folders are unaffected.
+
+    allowed_top_level_folders — when non-empty, any foldered entry whose first
+    path segment is not in this set is dropped from the filemap.  Loose
+    top-level files (no folder) are not affected by this rule.
 
     excluded_mod_files — dict mapping mod name to a set of lowercase rel_key
     paths that should be excluded from the filemap for that mod.  Excluded
@@ -894,6 +941,37 @@ def build_filemap(
             return False
         return bool(_ignore_re.match(rel_key.rsplit("/", 1)[-1]))
 
+    # Pre-compile loose-filename exclusion patterns.  Matches drop the file
+    # from the filemap entirely, but only when the file is loose (no "/" in
+    # its rel_key, i.e. it sits at the mod's top level).
+    _loose_excl_re: re.Pattern[str] | None = None
+    if excluded_loose_filenames:
+        _loose_excl_re = re.compile(
+            "|".join(fnmatch.translate(p.lower()) for p in excluded_loose_filenames)
+        )
+
+    def _is_excluded_loose(rel_key: str) -> bool:
+        if _loose_excl_re is None or "/" in rel_key:
+            return False
+        return bool(_loose_excl_re.match(rel_key))
+
+    # Lowercase allowed top-level folder names.  When set, any foldered entry
+    # whose first path segment is not in this set is dropped.  Loose top-level
+    # files (no "/") are intentionally left for the routing rules / the loose
+    # exclusion above to handle, so game-specific loose routing still works.
+    _allowed_top: set[str] | None = (
+        {f.lower() for f in allowed_top_level_folders}
+        if allowed_top_level_folders else None
+    )
+
+    def _is_unknown_top_level(rel_key: str) -> bool:
+        if _allowed_top is None:
+            return False
+        slash = rel_key.find("/")
+        if slash == -1:
+            return False
+        return rel_key[:slash] not in _allowed_top
+
     # Build per-mod excluded-file sets for fast lookup (lowercase rel_keys)
     _excluded: dict[str, set[str]] = excluded_mod_files or {}
 
@@ -944,6 +1022,10 @@ def build_filemap(
         _map_ns    = filemap_root        if _is_root_mod else filemap
         for rel_key, rel_str in normal.items():
             if exc and rel_key in exc:
+                continue
+            if _is_excluded_loose(rel_key):
+                continue
+            if _is_unknown_top_level(rel_key):
                 continue
             if _is_ignored(rel_key):
                 continue

@@ -62,6 +62,8 @@ from gui.theme import (
     BG_GREEN_TEXT,
     BG_RED_TEXT,
     BG_ORANGE_TEXT,
+    BG_BLUE_DEEP,
+    BG_BLUE_TEXT,
     BG_OVERLAY_ERR,
     STATUS_ERR_BRIGHT,
     TEXT_WHITE,
@@ -2722,6 +2724,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
     _FW_RED_TEXT   = BG_RED_TEXT
     _FW_ORANGE_BG  = BG_ORANGE_DEEP
     _FW_ORANGE_TEXT = BG_ORANGE_TEXT
+    _FW_BLUE_BG    = BG_BLUE_DEEP
+    _FW_BLUE_TEXT  = BG_BLUE_TEXT
 
     def _refresh_framework_banners(self) -> None:
         """Rebuild the framework status banners at the top of the Plugins tab.
@@ -2785,6 +2789,11 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                 except OSError:
                     pass
 
+        # Basenames of every file living in a *disabled* mod — lets us flag a
+        # framework that's installed but toggled off (it won't be in the
+        # enabled-only filemap, so it would otherwise read as "Not Present").
+        disabled_basenames = self._framework_disabled_basenames(filemap_path_str)
+
         # Build the desired banner states
         banner_data: list[tuple[str, str, str]] = []  # (msg, bg, fg)
         for label, exe in frameworks.items():
@@ -2797,6 +2806,8 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                 if _file_exists_ci(root_folder, exe_path):
                     present = True
 
+            exe_basename = exe.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
             if present:
                 banner_data.append((
                     f"✔  {label} Installed",
@@ -2808,6 +2819,12 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
                     f"●  {label} present in modlist but not deployed",
                     self._FW_ORANGE_BG,
                     self._FW_ORANGE_TEXT,
+                ))
+            elif exe_basename and exe_basename in disabled_basenames:
+                banner_data.append((
+                    f"●  {label} present in modlist but not enabled",
+                    self._FW_BLUE_BG,
+                    self._FW_BLUE_TEXT,
                 ))
             else:
                 banner_data.append((
@@ -2865,7 +2882,50 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             prefix = mods_dir + "/"
             if key.startswith(prefix) and key[len(prefix):] in staged_keys:
                 return True
+        # Loose framework files (e.g. BG3 ships DWrite.dll at the mod root) are
+        # relocated by a custom routing rule at deploy time, so the filemap key
+        # is the bare filename while the framework path includes the dest dir
+        # (bin/DWrite.dll). Fall back to a basename match in that case.
+        basename = key.rsplit("/", 1)[-1]
+        if basename and any(k.rsplit("/", 1)[-1] == basename for k in staged_keys):
+            return True
         return False
+
+    def _framework_disabled_basenames(self, filemap_path_str: "str | None") -> set[str]:
+        """Lowercased basenames of every file belonging to a disabled mod.
+
+        Lets us flag a framework that's installed but toggled off. modindex.bin
+        sits beside filemap.txt, but modlist.txt lives in the profile dir, which
+        is a *different* directory for some profiles (e.g. the "default"
+        profile's filemap is in the staging root, not the profile dir) — so the
+        modlist path comes from the mod panel rather than the filemap dir.
+        """
+        if not filemap_path_str:
+            return set()
+        mod_panel = getattr(self.winfo_toplevel(), "_mod_panel", None)
+        modlist_path = getattr(mod_panel, "_modlist_path", None) if mod_panel else None
+        index_path = Path(filemap_path_str).parent / "modindex.bin"
+        if not modlist_path or not Path(modlist_path).is_file() or not index_path.is_file():
+            return set()
+        try:
+            from Utils.modlist import read_modlist
+            from Utils.filemap import read_mod_index
+            disabled = {e.name for e in read_modlist(Path(modlist_path))
+                        if not e.is_separator and not e.enabled}
+            if not disabled:
+                return set()
+            index = read_mod_index(index_path) or {}
+        except Exception:
+            return set()
+        basenames: set[str] = set()
+        for mod_name in disabled:
+            entry = index.get(mod_name)
+            if not entry:
+                continue
+            normal, root = entry
+            for k in (*normal.keys(), *root.keys()):
+                basenames.add(k.rsplit("/", 1)[-1])
+        return basenames
 
     def _refresh_plugins_tab(self) -> None:
         """Reload plugin entries from plugins.txt and redraw."""

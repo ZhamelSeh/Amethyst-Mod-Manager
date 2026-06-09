@@ -342,6 +342,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._install_extensions: set[str] = set()
         self._root_deploy_folders: set[str] = set()
         self._staging_requires_subdir: bool = False
+        self._staging_wrap_signals: tuple[set[str], set[str]] = ({"manifest.json"}, set())
+        self._staging_already_structured: set[str] = set()
         self._normalize_folder_case: bool = True
         self._filemap_casing: str = "upper"
         self._filemap_exclude_dirs: frozenset[str] = frozenset({"fomod"})
@@ -584,6 +586,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._filter_fomod_only: int = 0
         self._filter_bain_only: int = 0
         self._filter_has_bsa: int = 0
+        self._filter_has_pbr: int = 0
         self._filter_categories: frozenset[str] = frozenset()         # include-only categories
         self._filter_categories_exclude: frozenset[str] = frozenset() # categories to hide
         self._filter_filetypes: frozenset[str] = frozenset()
@@ -701,9 +704,17 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._install_extensions = getattr(game, "mod_install_extensions", set())
         self._root_deploy_folders = getattr(game, "mod_root_deploy_folders", set())
         self._staging_requires_subdir = getattr(game, "mod_staging_requires_subdir", False)
+        self._staging_wrap_signals = getattr(game, "mod_staging_wrap_signals", ({"manifest.json"}, set()))
+        self._staging_already_structured = getattr(game, "mod_staging_already_structured_markers", set())
         self._normalize_folder_case = getattr(game, "normalize_folder_case", True) and load_normalize_folder_case()
         self._filemap_casing = str(getattr(game, "filemap_casing", "upper"))
         self._conflict_ignore_filenames = getattr(game, "conflict_ignore_filenames", set())
+        self._excluded_loose_filenames = getattr(game, "excluded_loose_filenames", set())
+        self._allowed_top_level_folders = (
+            set(getattr(game, "mod_required_top_level_folders", set()))
+            if getattr(game, "filemap_exclude_unknown_top_level", False)
+            else set()
+        )
         self._filemap_exclude_dirs = getattr(game, "filemap_exclude_dirs", frozenset({"fomod"}))
         # Load profile_state.json once; individual loaders pull from it
         self.__profile_state = read_profile_state(profile_dir)
@@ -2980,6 +2991,9 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         ("_filter_has_bsa", lambda s: s._get_mods_with_bsa(),
          lambda s, ms: (lambda e: e.name in ms),
          lambda s, ms: (lambda i: s._sep_block_has_bsa(i, ms))),
+        ("_filter_has_pbr", lambda s: s._get_mods_with_pbr(),
+         lambda s, ms: (lambda e: e.name in ms),
+         lambda s, ms: (lambda i: s._sep_block_has_pbr(i, ms))),
     )
 
     # ------------------------------------------------------------------
@@ -3939,6 +3953,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
     def _sep_block_has_bsa(self, sep_idx: int, mods_with_bsa: set[str]) -> bool:
         return self._sep_block_has_any(
             sep_idx, lambda e: e.name in mods_with_bsa,
+        )
+
+    def _get_mods_with_pbr(self) -> set[str]:
+        """Set of mod names that contain files under a textures/pbr folder."""
+        result: set[str] = set()
+        for mod, (normal, root) in self._read_mod_index_safe().items():
+            for rel_key in (*normal, *root):
+                # rel_key is the normalized (lowercased) relative path.
+                if rel_key.startswith("textures/pbr/"):
+                    result.add(mod)
+                    break
+        return result
+
+    def _sep_block_has_pbr(self, sep_idx: int, mods_with_pbr: set[str]) -> bool:
+        return self._sep_block_has_any(
+            sep_idx, lambda e: e.name in mods_with_pbr,
         )
 
     def _sep_block_has_category(self, sep_idx: int, allowed_categories: frozenset[str]) -> bool:
@@ -7521,6 +7551,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         rescan_index        = self._filemap_rescan_index
         per_mod_strip       = dict(self._mod_strip_prefixes) if self._mod_strip_prefixes else {}
         conflict_ignore_fn  = set(self._conflict_ignore_filenames) if self._conflict_ignore_filenames else None
+        excluded_loose_fn   = set(self._excluded_loose_filenames) if self._excluded_loose_filenames else None
+        allowed_top_level   = set(self._allowed_top_level_folders) if self._allowed_top_level_folders else None
         exclude_dirs        = set(self._filemap_exclude_dirs) if self._filemap_exclude_dirs else None
         from Games.ue5_game import UE5Game as _UE5Game
         from Utils.deploy_pipeline import _make_ue5_conflict_key_fn
@@ -7556,6 +7588,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             _plugin_order_snap = [e.name for e in getattr(_pp, "_plugin_entries", []) if e.enabled]
             _plugin_exts_snap = frozenset(e.lower() for e in getattr(_pp, "_plugin_extensions", []) or [])
         staging_requires_subdir = self._staging_requires_subdir
+        staging_wrap_signals    = self._staging_wrap_signals
+        staging_already_struct  = self._staging_already_structured
         normalize_folder_case   = self._normalize_folder_case
         filemap_casing          = self._filemap_casing
         self._filemap_rescan_index = False
@@ -7578,7 +7612,9 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             nonlocal rescan_index
             try:
                 if staging_requires_subdir:
-                    fixed = fix_flat_staging_folders(staging)
+                    _wrap_names, _wrap_exts = staging_wrap_signals
+                    fixed = fix_flat_staging_folders(
+                        staging, _wrap_names, _wrap_exts, staging_already_struct)
                     if fixed:
                         rescan_index = True
                         self.after(0, lambda names=fixed: self._log(
@@ -7606,6 +7642,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     root_deploy_folders=root_deploy_folders or None,
                     disabled_plugins=disabled_plugins or None,
                     conflict_ignore_filenames=conflict_ignore_fn,
+                    excluded_loose_filenames=excluded_loose_fn,
+                    allowed_top_level_folders=allowed_top_level,
                     excluded_mod_files=excluded_mod_files or None,
                     normalize_folder_case=normalize_folder_case,
                     filemap_casing=filemap_casing,

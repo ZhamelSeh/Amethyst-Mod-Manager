@@ -604,7 +604,8 @@ class StatusBar(ctk.CTkFrame):
         self._log_buffer.append((f"[{timestamp}]  {message}\n", tag))
         # Append to log file immediately (cheap I/O, keeps file in sync)
         try:
-            with open(self._log_file, "a", encoding="utf-8") as f:
+            with open(self._log_file, "a", encoding="utf-8",
+                      errors="replace") as f:
                 full_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 f.write(f"[{full_ts}]  {message}\n")
         except OSError:
@@ -1535,9 +1536,13 @@ class SettingsPanel(ctk.CTkFrame):
                 # steamapps/) or the steamapps folder itself — try both and
                 # validate before saving so we don't silently set a bogus
                 # path.
+                # Steam may name the file singular or plural and keep it under
+                # steamapps/, config/, or the root — accept any combination.
+                names = ("libraryfolders.vdf", "libraryfolder.vdf")
                 candidates = [
-                    chosen / "steamapps" / "libraryfolders.vdf",
-                    chosen / "libraryfolders.vdf",
+                    chosen / sub / name
+                    for sub in ("steamapps", "config", ".")
+                    for name in names
                 ]
                 vdf = next((c for c in candidates if c.is_file()), None)
                 if vdf is None:

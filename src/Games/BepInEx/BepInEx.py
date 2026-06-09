@@ -15,6 +15,7 @@ import stat
 
 from Games.base_game import BaseGame, WizardTool
 from Utils.deploy import LinkMode, deploy_core, deploy_custom_rules, deploy_filemap, load_per_mod_strip_prefixes, load_separator_deploy_paths, expand_separator_deploy_paths, cleanup_custom_deploy_dirs, move_to_core, restore_custom_rules, restore_data_core
+from Utils.deploy_shared import _FILEMAP_SNAPSHOT_NAME, _write_deploy_snapshot, _move_runtime_files
 from Utils.modlist import read_modlist
 from Utils.config_paths import get_profiles_dir
 
@@ -101,6 +102,9 @@ class Subnautica(BaseGame):
             CustomRule(dest="BepInEx", folders=["patchers"], flatten=True, loose_only=True),
             CustomRule(dest="BepInEx", folders=["plugins"], flatten=True, loose_only=True),
             CustomRule(dest="BepInEx/plugins", folders=["Tobey"], flatten=True, loose_only=True),
+            CustomRule(dest="", filenames=["qmodmanager-config.json"], flatten=True, loose_only=True),
+            CustomRule(dest="", filenames=["qmodmanager_log*.txt"], flatten=True, loose_only=True),
+            CustomRule(dest="", folders=["qmods"], flatten=True, loose_only=True),
         ]
     
     @property
@@ -243,6 +247,16 @@ class Subnautica(BaseGame):
             f"= {linked_mod + linked_core} total file(s) in {plugins_dir.name}/."
         )
 
+        # Snapshot the whole game root so restore() can sweep up files that
+        # mods generate at runtime *outside* the plugins folder (e.g. configs
+        # written to BepInEx/config) into overwrite/.  restore_data_core only
+        # rescues runtime files inside the plugins dir; this widens the net.
+        snapshot_path = filemap.parent / _FILEMAP_SNAPSHOT_NAME
+        try:
+            _write_deploy_snapshot(self._game_path, snapshot_path, log_fn=_log)
+        except Exception as exc:
+            _log(f"  WARN: could not write deploy snapshot: {exc}")
+
     def restore(self, log_fn=None, progress_fn=None) -> None:
         """Restore BepInEx/Plugins/ to its vanilla state."""
         _log = log_fn or (lambda _: None)
@@ -272,6 +286,38 @@ class Subnautica(BaseGame):
             _log(f"Restore: clearing {plugins_dir.name}/ and moving {core}/ back ...")
             restored = restore_data_core(plugins_dir, core_dir=core_dir, overwrite_dir=self.get_effective_overwrite_path(), log_fn=_log)
             _log(f"  Restored {restored} file(s). {core}/ removed.")
+
+        # Sweep up runtime-generated files anywhere in the game root (e.g. mod
+        # configs written to BepInEx/config) into overwrite/ so they survive the
+        # next deploy.  Runs after the plugins dir and custom-routed files have
+        # been restored/removed, so only genuinely new files are caught.  Uses
+        # the snapshot written at deploy time; if absent we silently skip.
+        snapshot_path = self.get_effective_filemap_path().parent / _FILEMAP_SNAPSHOT_NAME
+        if snapshot_path.is_file():
+            _log("Restore: scanning game root for runtime-generated files ...")
+            moved = _move_runtime_files(
+                self._game_path, snapshot_path,
+                self.get_effective_overwrite_path(), log_fn=_log,
+            )
+            _log(f"  Moved {moved} runtime-generated file(s) to overwrite/.")
+            try:
+                snapshot_path.unlink()
+            except OSError:
+                pass
+
+        # BepInEx/plugins (and BepInEx itself) are mod-introduced folders, not
+        # vanilla like Skyrim's Data.  A truly vanilla state has no BepInEx dir,
+        # so prune any now-empty folder from plugins_dir up to (but not
+        # including) the game root.  os.rmdir only succeeds when empty, so a dir
+        # that still holds vanilla/runtime files is left untouched.
+        _dir = plugins_dir
+        while _dir != self._game_path and _dir.is_dir():
+            try:
+                _dir.rmdir()
+            except OSError:
+                break  # not empty (or gone) — stop climbing
+            _log(f"  Removed empty folder {_dir.relative_to(self._game_path)}/.")
+            _dir = _dir.parent
 
         _log("Restore complete.")
         

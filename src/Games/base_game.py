@@ -163,6 +163,26 @@ class BaseGame(ABC):
         return set()
 
     @property
+    def excluded_loose_filenames(self) -> set[str]:
+        """
+        Lowercase filename glob patterns that are excluded from the filemap
+        entirely, but only when the file is *loose* (sits at the top level of
+        a mod with no parent folder).
+
+        Unlike conflict_ignore_filenames (which keeps files in the filemap and
+        only skips conflict tracking), matched loose files are dropped from the
+        filemap and never deployed.  Files of the same name nested inside a
+        folder are unaffected.
+
+        Useful for generic loose readme/spawn-command .txt files that can crash
+        a game, while preserving identically-extensioned files (e.g. .txt
+        localization) that live inside folders.
+
+        Return an empty set (the default) to disable.
+        """
+        return set()
+
+    @property
     def archive_extensions(self) -> frozenset[str]:
         """
         File extensions of game-specific archive formats (e.g. ``.bsa``,
@@ -294,6 +314,24 @@ class BaseGame(ABC):
         return False
 
     @property
+    def filemap_exclude_unknown_top_level(self) -> bool:
+        """
+        When True (and mod_required_top_level_folders is non-empty), any
+        filemap entry whose top-level path segment is not one of the
+        mod_required_top_level_folders is dropped from the filemap entirely
+        (and therefore from deployment and the Data tab).
+
+        Use for games like Cyberpunk 2077 where authors ship extra top-level
+        folders (e.g. screenshots, "aboutMods", source dumps) that must not be
+        deployed into the game root.  Loose top-level files (no folder) are
+        also excluded under this rule.
+
+        Return False (the default) to keep every entry regardless of its
+        top-level folder.
+        """
+        return False
+
+    @property
     def mod_required_file_types(self) -> set[str]:
         """
         File extensions (e.g. {".esp", ".esm", ".esl"}) that are recognised as
@@ -344,6 +382,19 @@ class BaseGame(ABC):
         When False (the default), the prefix dialog is shown instead.
         """
         return False
+
+    @property
+    def supports_bain(self) -> bool:
+        """
+        When True (the default), the installer runs BAIN (Wrye Bash bundled
+        archive) detection and shows the sub-package picker for archives that
+        look like a complex BAIN package.
+
+        Set to False for games whose mods are never authored as BAIN packages
+        (e.g. Dragon Age: Origins, whose loose override mods routinely trip the
+        Bethesda-centric heuristics by accident).
+        """
+        return True
 
     @property
     def collections_disabled(self) -> bool:
@@ -494,6 +545,30 @@ class BaseGame(ABC):
         Return False (the default) to disable this behaviour.
         """
         return False
+
+    @property
+    def mod_staging_wrap_signals(self) -> "tuple[set[str], set[str]]":
+        """Marker (filenames, extensions) that flag a flat mod as needing wrapping.
+
+        Only consulted when ``mod_staging_requires_subdir`` is True.  Returns a
+        tuple of (lowercase filenames, lowercase extensions incl. dot).  A flat
+        staging folder is wrapped into ``<ModName>/`` if any root-level file
+        matches.  Default matches ``manifest.json`` (Stardew/SMAPI).
+        """
+        return ({"manifest.json"}, set())
+
+    @property
+    def mod_staging_already_structured_markers(self) -> "set[str]":
+        """Marker filenames that mark a mod as already correctly structured.
+
+        Only consulted when ``mod_staging_requires_subdir`` is True.  If any
+        immediate subdirectory of a mod contains one of these files, the mod is
+        left untouched even if a wrap signal is present at the root — the loose
+        root file is a sibling (e.g. a JA3 Packs ``.hpk`` next to an existing
+        ``<ModName>/metadata.lua`` folder), not a flat mod.  Empty (the default)
+        disables the guard.
+        """
+        return set()
 
     @property
     def frameworks(self) -> dict[str, str]:

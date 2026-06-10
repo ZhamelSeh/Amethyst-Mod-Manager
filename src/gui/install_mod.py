@@ -295,7 +295,8 @@ def _show_fomod_dialog_on_main(parent_window, config, mod_root,
 
 def _show_bain_dialog_on_main(parent_window, subpackages, mod_root,
                               readme_text, saved_selections, selections_path,
-                              result_holder: list, done_event: threading.Event) -> None:
+                              result_holder: list, done_event: threading.Event,
+                              mod_name: str | None = None) -> None:
     """Run on main thread. Creates a BainDialog overlay on the mod-panel container."""
     import traceback as _tb
     try:
@@ -309,7 +310,8 @@ def _show_bain_dialog_on_main(parent_window, subpackages, mod_root,
                            readme_text=readme_text,
                            saved_selections=saved_selections,
                            selections_path=selections_path,
-                           on_done=on_done)
+                           on_done=on_done,
+                           mod_name=mod_name)
         try:
             if panel.winfo_exists():
                 panel.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -1786,7 +1788,8 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                                            readme_text=readme_text,
                                            saved_selections=saved_selections,
                                            selections_path=sel_path,
-                                           on_done=_on_done)
+                                           on_done=_on_done,
+                                           mod_name=mod_name)
                         try:
                             if panel.winfo_exists():
                                 panel.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -1805,7 +1808,7 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                                 lambda: _show_bain_dialog_on_main(
                                     parent_window, bain_subpkgs, mod_root,
                                     readme_text, saved_selections, sel_path,
-                                    result_holder, done_event,
+                                    result_holder, done_event, mod_name,
                                 ),
                             )
                             done_event.wait()

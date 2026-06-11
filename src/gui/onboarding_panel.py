@@ -92,7 +92,7 @@ class OnboardingPanel(ctk.CTkFrame):
     # ------------------------------------------------------------------ header
 
     def _build_header(self):
-        bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=scaled(48))
+        bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=48)
         bar.grid(row=0, column=0, sticky="ew")
         bar.grid_propagate(False)
 
@@ -114,7 +114,7 @@ class OnboardingPanel(ctk.CTkFrame):
     # ------------------------------------------------------------------ footer
 
     def _build_footer(self):
-        foot = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=scaled(52))
+        foot = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=52)
         foot.grid(row=2, column=0, sticky="ew")
         foot.grid_propagate(False)
         ctk.CTkFrame(foot, fg_color=BORDER, height=1, corner_radius=0).pack(fill="x", side="top")
@@ -122,7 +122,7 @@ class OnboardingPanel(ctk.CTkFrame):
         self._footer_btn = ctk.CTkButton(
             foot,
             text="Next →",
-            width=scaled(100),
+            width=100,
             font=FONT_BOLD,
             fg_color=ACCENT,
             hover_color=ACCENT_HOV,
@@ -134,7 +134,7 @@ class OnboardingPanel(ctk.CTkFrame):
         self._prev_btn = ctk.CTkButton(
             foot,
             text="← Back",
-            width=scaled(100),
+            width=100,
             font=FONT_NORMAL,
             fg_color=BG_PANEL,
             hover_color=BG_HOVER,
@@ -225,14 +225,14 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_NORMAL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(460),
+            wraplength=460,
         ).pack(pady=(0, 20))
 
         ctk.CTkButton(
             body,
             text="Open Wiki",
-            width=scaled(160),
-            height=scaled(34),
+            width=160,
+            height=34,
             font=FONT_BOLD,
             fg_color="#d98f40",
             hover_color="#e5a04d",
@@ -278,14 +278,14 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_NORMAL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(480),
+            wraplength=480,
         ).pack(pady=(0, 24))
 
         self._sso_btn = ctk.CTkButton(
             body,
             text="Log in via Nexus Mods",
-            width=scaled(220),
-            height=scaled(38),
+            width=220,
+            height=38,
             font=FONT_BOLD,
             fg_color="#d98f40",
             hover_color="#e5a04d",
@@ -299,7 +299,7 @@ class OnboardingPanel(ctk.CTkFrame):
         self._sso_cancel_btn = ctk.CTkButton(
             body,
             text="Cancel login",
-            width=scaled(140),
+            width=140,
             font=FONT_SMALL,
             fg_color="#8b1a1a",
             hover_color="#b22222",
@@ -313,7 +313,7 @@ class OnboardingPanel(ctk.CTkFrame):
             text="",
             font=FONT_SMALL,
             text_color=TEXT_DIM,
-            wraplength=scaled(460),
+            wraplength=460,
             justify="center",
         )
         self._nexus_status.pack(pady=(4, 0))
@@ -429,7 +429,7 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_SMALL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(480),
+            wraplength=480,
         ).pack(pady=(0, 6))
 
         staging_row = ctk.CTkFrame(body, fg_color="transparent")
@@ -438,19 +438,19 @@ class OnboardingPanel(ctk.CTkFrame):
         self._onb_staging_var = tk.StringVar(value=load_default_staging_path())
         ctk.CTkEntry(
             staging_row, textvariable=self._onb_staging_var,
-            font=FONT_NORMAL, width=scaled(340),
+            font=FONT_NORMAL, width=340,
             placeholder_text="Leave blank to use the default",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            staging_row, text="Browse", width=scaled(70), height=scaled(28),
+            staging_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_staging,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            staging_row, text="Clear", width=scaled(56), height=scaled(28),
+            staging_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._onb_staging_var.set(""),
         ).pack(side="left")
@@ -462,7 +462,7 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_SMALL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(480),
+            wraplength=480,
         ).pack(pady=(0, 16))
 
         # --- Download cache folder ---
@@ -479,7 +479,7 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_SMALL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(480),
+            wraplength=480,
         ).pack(pady=(0, 6))
 
         cache_row = ctk.CTkFrame(body, fg_color="transparent")
@@ -488,19 +488,19 @@ class OnboardingPanel(ctk.CTkFrame):
         self._onb_download_cache_var = tk.StringVar(value=load_download_cache_path())
         ctk.CTkEntry(
             cache_row, textvariable=self._onb_download_cache_var,
-            font=FONT_NORMAL, width=scaled(340),
+            font=FONT_NORMAL, width=340,
             placeholder_text="Leave blank to use the default",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            cache_row, text="Browse", width=scaled(70), height=scaled(28),
+            cache_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_download_cache,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            cache_row, text="Clear", width=scaled(56), height=scaled(28),
+            cache_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._onb_download_cache_var.set(""),
         ).pack(side="left")
@@ -512,7 +512,7 @@ class OnboardingPanel(ctk.CTkFrame):
             font=FONT_SMALL,
             text_color=TEXT_DIM,
             justify="center",
-            wraplength=scaled(480),
+            wraplength=480,
         ).pack(pady=(0, 24))
 
         ctk.CTkLabel(
@@ -535,8 +535,8 @@ class OnboardingPanel(ctk.CTkFrame):
         ctk.CTkButton(
             add_game_row,
             text="Add a Game",
-            width=scaled(160),
-            height=scaled(34),
+            width=160,
+            height=34,
             font=FONT_BOLD,
             fg_color=ACCENT,
             hover_color=ACCENT_HOV,

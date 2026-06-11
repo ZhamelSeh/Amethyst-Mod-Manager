@@ -34,6 +34,7 @@ from gui.theme import (
     font_sized_px,
     TEXT_DIM,
     TEXT_MAIN,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 
@@ -95,7 +96,7 @@ class LootGroupsOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text="LOOT Groups - Right click plugins to add them to groups",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -129,7 +130,7 @@ class LootGroupsOverlay(tk.Frame):
         left.grid_rowconfigure(1, weight=1)
         left.grid_columnconfigure(0, weight=1)
 
-        tk.Label(left, text="Groups", font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
+        tk.Label(left, text="Groups", font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
                  anchor="w").grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
         # List
@@ -187,7 +188,7 @@ class LootGroupsOverlay(tk.Frame):
         right.grid_rowconfigure(2, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
-        tk.Label(right, text="Group Rules", font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
+        tk.Label(right, text="Group Rules", font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
                  anchor="w").grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
         # New rule row (top)
@@ -196,7 +197,7 @@ class LootGroupsOverlay(tk.Frame):
         new_rule_frame.grid_columnconfigure(0, weight=1)
         new_rule_frame.grid_columnconfigure(2, weight=1)
 
-        tk.Label(new_rule_frame, text="Add rule:", font=FONT_SMALL,
+        tk.Label(new_rule_frame, text="Add rule:", font=TK_FONT_SMALL,
                  fg=TEXT_DIM, bg=BG_DEEP).grid(row=0, column=0, columnspan=3,
                                                sticky="w", pady=(0, 4))
 
@@ -334,7 +335,7 @@ class LootGroupsOverlay(tk.Frame):
         if not self._rules:
             tk.Label(
                 self._rules_inner, text="No rules defined.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
             ).pack(padx=12, pady=12)
             return
 
@@ -344,11 +345,11 @@ class LootGroupsOverlay(tk.Frame):
             row.pack(fill="x")
             row.grid_columnconfigure(1, weight=1)
 
-            tk.Label(row, text=a, font=FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
+            tk.Label(row, text=a, font=TK_FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
                      anchor="w").pack(side="left", padx=(10, 6), pady=4)
-            tk.Label(row, text=rel, font=FONT_SMALL, fg=ACCENT, bg=row_bg,
+            tk.Label(row, text=rel, font=TK_FONT_SMALL, fg=ACCENT, bg=row_bg,
                      anchor="w").pack(side="left", padx=(0, 6), pady=4)
-            tk.Label(row, text=b, font=FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
+            tk.Label(row, text=b, font=TK_FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
                      anchor="w").pack(side="left", pady=4)
 
             ctk.CTkButton(

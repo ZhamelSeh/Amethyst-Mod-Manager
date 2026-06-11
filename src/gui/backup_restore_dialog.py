@@ -27,9 +27,11 @@ _BG_HOVER_BTN = "#3e3e40"  # subtle grey hover for buttons (not the blue selecti
 _KEEP_BG      = "#1a3a1a"  # dark green background for kept backups
 _KEEP_FG      = "#6ecf6e"  # green text for kept backups
 
-def _font_normal(): return (_theme.FONT_FAMILY, _theme.FS12)
-def _font_bold():   return (_theme.FONT_FAMILY, _theme.FS12, "bold")
-def _font_small():  return (_theme.FONT_FAMILY, _theme.FS10)
+# CTk widgets scale fonts themselves → unscaled CTK_FS*; the tk.Listbox does
+# not → pre-scaled FS11.
+def _font_normal(): return (_theme.FONT_FAMILY, _theme.CTK_FS12)
+def _font_bold():   return (_theme.FONT_FAMILY, _theme.CTK_FS12, "bold")
+def _font_small():  return (_theme.FONT_FAMILY, _theme.CTK_FS10)
 def _font_list():   return (_theme.FONT_FAMILY, _theme.FS11)
 
 
@@ -55,7 +57,7 @@ class BackupRestorePanel(ctk.CTkFrame):
         self._backups      = list_backups(profile_dir)
 
         # Title bar
-        title_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=scaled(36))
+        title_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=36)
         title_bar.pack(fill="x")
         title_bar.pack_propagate(False)
         ctk.CTkLabel(

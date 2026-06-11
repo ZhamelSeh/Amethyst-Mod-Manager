@@ -740,7 +740,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
 
     def _build_new_profile_bar(self):
         """Inline bar (row 0) shown when the user clicks '+' to create a profile."""
-        bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=scaled(40))
+        bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=40)
         bar.grid(row=0, column=1, sticky="ew")
         bar.grid_propagate(False)
         bar.grid_remove()  # hidden by default
@@ -885,7 +885,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._create_pool()
 
     def _build_toolbar(self):
-        bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=scaled(36))
+        bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=36)
         bar.grid(row=3, column=1, sticky="ew")
         bar.grid_propagate(False)
         self._toolbar_bar = bar
@@ -973,7 +973,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._search_entry.pack(side="left", fill="x", expand=True, padx=(2, 2), pady=4)
 
         self._search_clear_btn = ctk.CTkButton(
-            bar, text="✕", width=scaled(32), height=scaled(24),
+            bar, text="✕", width=32, height=24,
             fg_color=BTN_DANGER, hover_color=BTN_DANGER_HOV, text_color=TEXT_WHITE,
             font=_theme.FONT_HEADER, cursor="hand2",
             command=self._on_search_clear,
@@ -6002,16 +6002,16 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         title_bar.pack(fill="x")
         title_bar.pack_propagate(False)
         tk.Label(title_bar, text=f"Separator Settings \u2014 {sep_name}",
-                 bg=BG_HEADER, fg=TEXT_MAIN, font=_theme.FONT_BOLD, anchor="w",
+                 bg=BG_HEADER, fg=TEXT_MAIN, font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=12, pady=8)
 
         content = tk.Frame(overlay, bg=BG_PANEL)
         content.pack(fill="both", expand=True, padx=16, pady=16)
         tk.Label(content, text="Deployment Location", bg=BG_PANEL, fg=TEXT_SEP,
-                 font=_theme.FONT_SMALL, anchor="w",
+                 font=_theme.TK_FONT_SMALL, anchor="w",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         entry_w = tk.Entry(content, textvariable=path_var, bg=BG_ENTRY, fg=TEXT_MAIN,
-                           insertbackground=TEXT_MAIN, relief="flat", font=_theme.FONT_SMALL)
+                           insertbackground=TEXT_MAIN, relief="flat", font=_theme.TK_FONT_SMALL)
         entry_w.grid(row=1, column=0, sticky="ew", padx=(0, 6))
 
         def _browse():
@@ -6024,14 +6024,14 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             pick_folder("Select deployment directory", _cb)
 
         tk.Button(content, text="Browse", command=_browse, bg=BG_HEADER, fg=TEXT_MAIN,
-                  relief="flat", font=_theme.FONT_SMALL, cursor="hand2",
+                  relief="flat", font=_theme.TK_FONT_SMALL, cursor="hand2",
         ).grid(row=1, column=1, padx=(0, 4))
         tk.Button(content, text="Clear", command=lambda: path_var.set(""), bg=BG_HEADER,
-                  fg=TEXT_MAIN, relief="flat", font=_theme.FONT_SMALL, cursor="hand2",
+                  fg=TEXT_MAIN, relief="flat", font=_theme.TK_FONT_SMALL, cursor="hand2",
         ).grid(row=1, column=2)
         content.columnconfigure(0, weight=1)
         tk.Label(content, text="Leave blank to use the game\u2019s default deployment directory.",
-                 bg=BG_PANEL, fg=TEXT_SEP, font=_theme.FONT_SMALL, anchor="w",
+                 bg=BG_PANEL, fg=TEXT_SEP, font=_theme.TK_FONT_SMALL, anchor="w",
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         btn_row = tk.Frame(overlay, bg=BG_PANEL)
@@ -6048,10 +6048,10 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             self._close_sep_settings()
 
         tk.Button(btn_row, text="Save", command=_save, bg=BG_BTN_SAVE, fg=TEXT_MAIN,
-                  relief="flat", font=_theme.FONT_SMALL, cursor="hand2", width=10,
+                  relief="flat", font=_theme.TK_FONT_SMALL, cursor="hand2", width=10,
         ).pack(side="right", padx=(6, 0))
         tk.Button(btn_row, text="Cancel", command=self._close_sep_settings, bg=BG_HEADER,
-                  fg=TEXT_MAIN, relief="flat", font=_theme.FONT_SMALL, cursor="hand2", width=10,
+                  fg=TEXT_MAIN, relief="flat", font=_theme.TK_FONT_SMALL, cursor="hand2", width=10,
         ).pack(side="right")
 
         overlay.place(relx=0, rely=0, relwidth=1, relheight=1)

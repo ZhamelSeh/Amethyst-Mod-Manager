@@ -22,6 +22,7 @@ from gui.theme import (
     FONT_BOLD,
     FONT_SMALL,
     FONT_MONO,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 def _find_changelog() -> Path:
@@ -76,7 +77,7 @@ class ChangelogOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text="Changelog",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -93,7 +94,7 @@ class ChangelogOverlay(tk.Frame):
 
         text = tk.Text(
             content,
-            font=FONT_SMALL,
+            font=TK_FONT_SMALL,
             bg=BG_PANEL,
             fg=TEXT_MAIN,
             insertbackground=TEXT_MAIN,
@@ -124,7 +125,7 @@ class ChangelogOverlay(tk.Frame):
             raw = "(Changelog.txt not found)"
 
         # Configure tags for version headers
-        text.tag_configure("version", font=FONT_BOLD, foreground="#c8a050", spacing1=10, spacing3=2)
+        text.tag_configure("version", font=TK_FONT_BOLD, foreground="#c8a050", spacing1=10, spacing3=2)
         text.tag_configure("bullet", foreground=TEXT_MAIN, lmargin1=8, lmargin2=16)
         text.tag_configure("dim", foreground=TEXT_DIM, lmargin1=8, lmargin2=16)
 

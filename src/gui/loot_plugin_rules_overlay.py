@@ -33,6 +33,7 @@ from gui.theme import (
     font_sized_px,
     TEXT_DIM,
     TEXT_MAIN,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 
@@ -93,7 +94,7 @@ class LootPluginRulesOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text="LOOT Plugin Rules - Select a plugin on the plugins panel",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -120,7 +121,7 @@ class LootPluginRulesOverlay(tk.Frame):
         left.grid_rowconfigure(1, weight=1)
         left.grid_columnconfigure(0, weight=1)
 
-        tk.Label(left, text="Plugins  —  drag onto rules pane", font=FONT_BOLD,
+        tk.Label(left, text="Plugins  —  drag onto rules pane", font=TK_FONT_BOLD,
                  fg=TEXT_MAIN, bg=BG_DEEP, anchor="w").grid(
             row=0, column=0, sticky="ew", pady=(0, 6))
 
@@ -168,7 +169,7 @@ class LootPluginRulesOverlay(tk.Frame):
             relief="flat", font=font_sized_px(FONT_FAMILY, 11),
             highlightthickness=1, highlightbackground=BORDER,
         ).grid(row=0, column=0, sticky="ew")
-        tk.Label(search_frame, text="Filter", font=FONT_SMALL,
+        tk.Label(search_frame, text="Filter", font=TK_FONT_SMALL,
                  fg=TEXT_DIM, bg=BG_DEEP).grid(row=0, column=1, padx=(6, 0))
 
         self._repaint_plugins()
@@ -182,7 +183,7 @@ class LootPluginRulesOverlay(tk.Frame):
         plugin_label = self._selected_plugin or "— no plugin selected —"
         self._rules_title = tk.Label(
             right, text=f"Rules for: {plugin_label}",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w")
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w")
         self._rules_title.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
         # Drop zone / rules list
@@ -402,7 +403,7 @@ class LootPluginRulesOverlay(tk.Frame):
             tk.Label(
                 self._rules_inner,
                 text="No plugin selected.\nRight-click a plugin and choose 'Plugin Rules'.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
             ).pack(padx=12, pady=12)
             return
 
@@ -410,7 +411,7 @@ class LootPluginRulesOverlay(tk.Frame):
             tk.Label(
                 self._rules_inner,
                 text="No rules yet.\nDrag a plugin from the left pane to add a rule.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
             ).pack(padx=12, pady=12)
             return
 
@@ -433,7 +434,7 @@ class LootPluginRulesOverlay(tk.Frame):
             )
             rel_btn.pack(side="left", padx=(10, 6), pady=4)
 
-            tk.Label(row, text=target, font=FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
+            tk.Label(row, text=target, font=TK_FONT_SMALL, fg=TEXT_MAIN, bg=row_bg,
                      anchor="w").pack(side="left", pady=4, fill="x", expand=True)
 
             ctk.CTkButton(

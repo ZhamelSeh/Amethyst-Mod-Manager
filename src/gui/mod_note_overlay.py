@@ -27,6 +27,7 @@ from gui.theme import (
     TEXT_DIM,
     TEXT_MAIN,
     TEXT_ON_ACCENT,
+    TK_FONT_BOLD, TK_FONT_NORMAL, TK_FONT_SMALL,
 )
 
 
@@ -72,7 +73,7 @@ class ModNoteOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text=f"Note — {self._mod_name}",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -96,7 +97,7 @@ class ModNoteOverlay(tk.Frame):
             insertbackground=TEXT_MAIN,
             selectbackground=ACCENT,
             selectforeground=TEXT_ON_ACCENT,
-            font=FONT_NORMAL,
+            font=TK_FONT_NORMAL,
             relief="flat",
             bd=0,
             highlightthickness=1,
@@ -122,7 +123,7 @@ class ModNoteOverlay(tk.Frame):
         tk.Label(
             self,
             text="Saved with the profile — survives uninstall and reinstall of this mod.",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
         ).grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 0))
 
         # Button row

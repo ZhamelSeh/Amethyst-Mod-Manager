@@ -94,7 +94,7 @@ class PluginPanelModFilesMixin:
             variable=self._mf_only_conflicts_var,
             width=140, height=20,
             checkbox_width=16, checkbox_height=16,
-            font=("Cantarell", _theme.FS10),
+            font=("Cantarell", _theme.CTK_FS10),
             text_color=TEXT_MAIN,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             border_color=BORDER, checkmark_color="white",
@@ -218,7 +218,7 @@ class PluginPanelModFilesMixin:
         self._mf_pack_bsa_btn = ctk.CTkButton(
             footer, text="Pack BSA", width=100, height=24,
             fg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOV, text_color="white",
-            font=(_theme.FONT_FAMILY, _theme.FS10), corner_radius=4,
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS10), corner_radius=4,
             command=self._on_pack_bsa_click,
             state="disabled",
         )
@@ -227,7 +227,7 @@ class PluginPanelModFilesMixin:
         self._mf_unpack_bsa_btn = ctk.CTkButton(
             footer, text="Unpack BSA", width=100, height=24,
             fg_color=RED_BTN, hover_color=RED_HOV, text_color="white",
-            font=(_theme.FONT_FAMILY, _theme.FS10), corner_radius=4,
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS10), corner_radius=4,
             command=self._on_unpack_bsa_click,
             state="disabled",
         )

@@ -37,6 +37,7 @@ from gui.theme import (
     TEXT_DIM,
     TEXT_MAIN,
     TEXT_ON_ACCENT,
+    TK_FONT_BOLD, TK_FONT_NORMAL, TK_FONT_SMALL,
 )
 from Utils.bsa_reader import read_bsa_file_list
 
@@ -106,7 +107,7 @@ class BsaUnpackOverlay(tk.Frame):
 
         self._title_label = tk.Label(
             toolbar, text=f"Unpack {kind_label} — {self._mod_name}",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
             anchor="w", justify="left",
         )
         self._title_label.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
@@ -149,7 +150,7 @@ class BsaUnpackOverlay(tk.Frame):
             tk.Label(
                 inner,
                 text="No archive files in this mod folder.",
-                font=FONT_NORMAL, fg=TEXT_DIM, bg=BG_DEEP,
+                font=TK_FONT_NORMAL, fg=TEXT_DIM, bg=BG_DEEP,
             ).pack(anchor="w", padx=12, pady=12)
         else:
             for group in groups:
@@ -165,7 +166,7 @@ class BsaUnpackOverlay(tk.Frame):
                 "archives, remove the plugin if it was a generated stub, "
                 "and re-enable the unpacked files in the Mod Files tab."
             ),
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
             justify="left",
         )
         self._hint_label.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
@@ -309,7 +310,7 @@ class BsaUnpackOverlay(tk.Frame):
         # Plugin name (or "(no matching plugin)") on the top line.
         name_lbl = tk.Label(
             info, text=group["label"],
-            font=FONT_BOLD,
+            font=TK_FONT_BOLD,
             fg=TEXT_DIM if group["is_orphan"] else TEXT_MAIN,
             bg=BG_PANEL,
             anchor="w", justify="left",
@@ -322,7 +323,7 @@ class BsaUnpackOverlay(tk.Frame):
         for archive in group["archives"]:
             arch_lbl = tk.Label(
                 info, text=f"  • {archive.name}",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
                 anchor="w", justify="left",
             )
             arch_lbl.grid(sticky="ew")
@@ -336,7 +337,7 @@ class BsaUnpackOverlay(tk.Frame):
             sub = f"unreadable — {size_mb:.1f} MiB"
         sub_lbl = tk.Label(
             info, text=sub,
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
             anchor="w", justify="left",
         )
         sub_lbl.grid(sticky="ew")

@@ -67,6 +67,7 @@ from gui.theme import (
     TONE_BLUE,
     TAG_BSA_ALT,
     FONT_FAMILY,
+    TK_FONT_BOLD, TK_FONT_NORMAL, TK_FONT_SMALL,
 )
 import gui.theme as _theme
 from gui.path_utils import _to_wine_path
@@ -110,19 +111,26 @@ def _center_dialog(dlg, parent, w: int, h: int | None = None):
     """
     dlg.withdraw()
     try:
-        dlg.geometry(f"{w}")       # fix width; let height float for layout flush
+        # CTkToplevel.geometry() scales W/H by window scaling but passes x/y
+        # through unscaled, so w/h are design units while x/y are physical px.
+        try:
+            scale = float(dlg._get_window_scaling()) or 1.0
+        except Exception:
+            scale = 1.0
         dlg.update_idletasks()
         if h is None:
-            h = dlg.winfo_reqheight()
+            # winfo_reqheight() returns physical px; convert to design units
+            # so CTk doesn't scale the value a second time.
+            h = round(dlg.winfo_reqheight() / scale)
         px = parent.winfo_rootx()
         py = parent.winfo_rooty()
         pw = parent.winfo_width()
         ph = parent.winfo_height()
-        x = px + (pw - w) // 2
-        y = py + (ph - h) // 2
+        x = px + (pw - round(w * scale)) // 2
+        y = py + (ph - round(h * scale)) // 2
         dlg.geometry(f"{w}x{h}+{x}+{y}")
     except Exception:
-        dlg.geometry(f"{w}x{h}" if h else f"{w}")
+        dlg.geometry(f"{w}x{h}" if h else f"{w}x200")
     dlg.deiconify()
 
 
@@ -383,14 +391,18 @@ class NameModDialog(ctk.CTkToplevel):
         ).pack(side="right", padx=4, pady=8)
 
         self.update_idletasks()
-        h = self.winfo_reqheight()
+        # reqheight is physical px; CTk geometry() wants design W/H but
+        # physical x/y, so convert before mixing.
+        scale = self._get_window_scaling() or 1
+        req_h = self.winfo_reqheight()
+        h = round(req_h / scale)
         owner = self.master
         px = owner.winfo_rootx()
         py = owner.winfo_rooty()
         pw = owner.winfo_width()
         ph = owner.winfo_height()
-        x = px + (pw - 480) // 2
-        y = py + (ph - h) // 2
+        x = px + (pw - round(480 * scale)) // 2
+        y = py + (ph - req_h) // 2
         self.geometry(f"480x{h}+{x}+{y}")
 
     def _on_ok(self):
@@ -1786,14 +1798,14 @@ class MewgenicsLaunchCommandPanel(tk.Frame):
 
         ctk.CTkButton(
             bar, text="Copy to clipboard",
-            width=scaled(140), height=scaled(30),
+            width=140, height=30,
             font=font_sized_px(_theme.FONT_FAMILY, 11),
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             command=self._copy,
         ).pack(side="right", padx=(scaled(4), scaled(10)), pady=scaled(8))
         ctk.CTkButton(
             bar, text="Close",
-            width=scaled(80), height=scaled(30),
+            width=80, height=30,
             font=font_sized_px(_theme.FONT_FAMILY, 11),
             fg_color=BG_PANEL, hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._on_close,
@@ -2237,7 +2249,7 @@ class _BENDrRunDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             self, text=f"Output: {self._output_dir}",
-            font=(_theme.FONT_FAMILY, 11), text_color=TEXT_DIM, wraplength=scaled(440),
+            font=(_theme.FONT_FAMILY, 11), text_color=TEXT_DIM, wraplength=440,
         ).pack(pady=(4, 12))
 
         ctk.CTkButton(
@@ -2334,7 +2346,7 @@ class _ParallaxRRunDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             self, text=f"Output: {self._output_dir}",
-            font=(_theme.FONT_FAMILY, 11), text_color=TEXT_DIM, wraplength=scaled(440),
+            font=(_theme.FONT_FAMILY, 11), text_color=TEXT_DIM, wraplength=440,
         ).pack(pady=(4, 12))
 
         ctk.CTkButton(
@@ -3753,10 +3765,12 @@ class _SelectFilesDialog(ctk.CTkToplevel):
     def _position_window(self):
         self.update_idletasks()
         owner = self.master
+        # Design units for W/H (CTk scales them); physical px for x/y.
+        scale = self._get_window_scaling() or 1
         w = 520
-        h = min(600, max(300, self.winfo_reqheight()))
-        x = owner.winfo_rootx() + (owner.winfo_width() - w) // 2
-        y = owner.winfo_rooty() + (owner.winfo_height() - h) // 2
+        h = min(600, max(300, round(self.winfo_reqheight() / scale)))
+        x = owner.winfo_rootx() + (owner.winfo_width() - round(w * scale)) // 2
+        y = owner.winfo_rooty() + (owner.winfo_height() - round(h * scale)) // 2
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _on_ok(self):
@@ -5021,7 +5035,7 @@ class MissingReqsPanel(ctk.CTkFrame):
         self._on_done = on_done or (lambda p: None)
 
         # Title bar
-        title_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=scaled(36))
+        title_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=36)
         title_bar.pack(fill="x")
         title_bar.pack_propagate(False)
         ctk.CTkLabel(
@@ -5069,7 +5083,7 @@ class MissingReqsPanel(ctk.CTkFrame):
             self._canvas.bind("<Button-5>", lambda e: (self._canvas.yview_scroll( 3, "units"), "break")[-1])
 
         # Footer
-        footer = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=scaled(44))
+        footer = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=44)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
         ctk.CTkFrame(footer, fg_color=BORDER, height=1, corner_radius=0).pack(side="top", fill="x")
@@ -5195,7 +5209,7 @@ class MissingReqsPanel(ctk.CTkFrame):
                 canvas.create_text(
                     NAME_PAD, y_pos + HDR_H // 2,
                     text=label, anchor="w",
-                    font=FONT_BOLD, fill=TEXT_MAIN,
+                    font=TK_FONT_BOLD, fill=TEXT_MAIN,
                 )
                 return y_pos + HDR_H
 
@@ -5233,13 +5247,13 @@ class MissingReqsPanel(ctk.CTkFrame):
                 vb = ctk.CTkButton(
                     self, text="View", width=VIEW_W, height=BTN_H,
                     fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_WHITE,
-                    font=(_theme.FONT_FAMILY, _theme.FS10), cursor="hand2",
+                    font=(_theme.FONT_FAMILY, _theme.CTK_FS10), cursor="hand2",
                     command=lambda u=url: open_url(u),
                 )
                 ib = ctk.CTkButton(
                     self, text="Install", width=BTN_W, height=BTN_H,
                     fg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOV, text_color=TEXT_WHITE,
-                    font=(_theme.FONT_FAMILY, _theme.FS10), cursor="hand2",
+                    font=(_theme.FONT_FAMILY, _theme.CTK_FS10), cursor="hand2",
                     command=lambda r=req: self._on_install(r),
                 )
                 view_btns.append(vb)
@@ -5322,7 +5336,7 @@ class CollectionInstallModeDialog(tk.Frame):
         header.grid_propagate(False)
         tk.Label(
             header, text="Install Collection",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
         row += 1
 
@@ -5338,7 +5352,7 @@ class CollectionInstallModeDialog(tk.Frame):
 
         tk.Label(
             body, text="How would you like to install this collection?",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="center", justify="center",
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="center", justify="center",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 14))
 
         ctk.CTkRadioButton(
@@ -5353,7 +5367,7 @@ class CollectionInstallModeDialog(tk.Frame):
             tk.Label(
                 body,
                 text="This collection requires a new profile and cannot be\nappended to an existing one.",
-                font=FONT_SMALL,
+                font=TK_FONT_SMALL,
                 fg=TEXT_DIM, bg=BG_PANEL, anchor="w", justify="left",
             ).grid(row=2, column=0, sticky="w", pady=(0, 8))
         else:
@@ -5477,7 +5491,7 @@ class CollectionContinueInstallDialog(tk.Frame):
         header.grid_propagate(False)
         tk.Label(
             header, text="Continue Collection Install",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
         row += 1
 
@@ -5493,7 +5507,7 @@ class CollectionContinueInstallDialog(tk.Frame):
 
         tk.Label(
             body, text=f"This collection is already installed in profile\n'{self._profile_name}'",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="center", justify="center",
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="center", justify="center",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 14))
 
         # Separator before buttons
@@ -5588,7 +5602,7 @@ class CollectionUpdateDialog(tk.Frame):
         header.grid_propagate(False)
         tk.Label(
             header, text="Update Collection",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
         row += 1
 
@@ -5605,7 +5619,7 @@ class CollectionUpdateDialog(tk.Frame):
         tk.Label(
             summary,
             text=f"Profile '{self._profile_name}': {from_label} → {to_label}",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL,
             anchor="center", justify="center",
         ).grid(row=0, column=0, sticky="ew")
 
@@ -5617,7 +5631,7 @@ class CollectionUpdateDialog(tk.Frame):
                 f"Add {len(self._to_add)}  ·  "
                 f"Orphans {len(self._orphans)}"
             ),
-            font=FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
+            font=TK_FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
             anchor="center", justify="center",
         )
         counts.grid(row=1, column=0, sticky="ew", pady=(4, 0))
@@ -5630,7 +5644,7 @@ class CollectionUpdateDialog(tk.Frame):
                 "the new collection manifest; mods with no defined position "
                 "will be placed at the top of the list."
             ),
-            font=FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
+            font=TK_FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
             anchor="center", justify="center",
         )
         warning_lbl.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -5714,7 +5728,7 @@ class CollectionUpdateDialog(tk.Frame):
             tk.Label(
                 body,
                 text="No changes detected between these revisions.",
-                font=FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
+                font=TK_FONT_NORMAL, fg=TEXT_DIM, bg=BG_PANEL,
             ).grid(row=8, column=0, sticky="ew", pady=12)
 
         tk.Frame(card, bg=BORDER, height=1).grid(row=row, column=0, sticky="ew")
@@ -5764,7 +5778,7 @@ class CollectionUpdateDialog(tk.Frame):
         toggle_btn = tk.Label(
             header_row,
             text=toggle_text,
-            font=FONT_BOLD, fg=accent, bg=BG_PANEL,
+            font=TK_FONT_BOLD, fg=accent, bg=BG_PANEL,
             anchor="w", cursor="hand2" if count else "",
         )
         toggle_btn.grid(row=0, column=0, sticky="w")
@@ -5782,7 +5796,7 @@ class CollectionUpdateDialog(tk.Frame):
         # Pre-populate the body with mod names.
         for i, name in enumerate(items):
             lbl = tk.Label(
-                body, text=name, font=FONT_NORMAL, fg=TEXT_MAIN, bg=BG_ROW,
+                body, text=name, font=TK_FONT_NORMAL, fg=TEXT_MAIN, bg=BG_ROW,
                 anchor="w", justify="left",
             )
             lbl.grid(row=i, column=0, sticky="ew", padx=8, pady=1)

@@ -31,6 +31,10 @@ from gui.theme import (
     FONT_SMALL,
     TEXT_MAIN,
     TEXT_DIM,
+    TK_FONT_BOLD,
+    TK_FONT_NORMAL,
+    TK_FONT_SMALL,
+    scaled,
 )
 from gui import game_helpers as _gh
 from gui.game_helpers import _profiles_for_game
@@ -98,7 +102,7 @@ class ProfileSettingsOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text="Profile Settings",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -219,7 +223,7 @@ class ProfileSettingsOverlay(tk.Frame):
             lbl_color = ACCENT if is_active else TEXT_MAIN
             tk.Label(
                 row, text=label_text,
-                font=FONT_BOLD if is_active else FONT_NORMAL,
+                font=TK_FONT_BOLD if is_active else FONT_NORMAL,
                 fg=lbl_color, bg=row_bg, anchor="w",
             ).grid(row=0, column=1, sticky="ew", padx=(4, 12))
 
@@ -280,7 +284,7 @@ class ProfileSettingsOverlay(tk.Frame):
 
         tk.Label(
             frame, text=f"Rename '{profile}' to:",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER,
         ).pack(side="left", padx=(12, 6))
 
         entry = ctk.CTkEntry(
@@ -527,25 +531,26 @@ class ProfileSettingsOverlay(tk.Frame):
         win.title("Steam Launch Command")
         win.configure(bg=BG_DEEP)
         win.resizable(True, False)
-        win.geometry("900x190")
+        # Plain tk.Toplevel — scale the fixed size ourselves.
+        win.geometry(f"{scaled(900)}x{scaled(190)}")
         win.transient(self.winfo_toplevel())
         win.update_idletasks()
         win.grab_set()
 
         tk.Label(
             win, text=f"Steam launch command for '{profile}':",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP,
         ).pack(anchor="w", padx=16, pady=(14, 2))
 
         tk.Label(
             win,
             text="Paste this as a non-Steam game launch option, or use it in a desktop shortcut.",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, justify="left",
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 8))
 
         entry_var = tk.StringVar(value=cmd)
         entry = tk.Entry(
-            win, textvariable=entry_var, font=FONT_NORMAL,
+            win, textvariable=entry_var, font=TK_FONT_NORMAL,
             fg=TEXT_MAIN, bg=BG_PANEL, readonlybackground=BG_PANEL,
             relief="flat", state="readonly", insertbackground=TEXT_MAIN,
         )

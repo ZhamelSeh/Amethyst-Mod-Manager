@@ -61,6 +61,7 @@ from gui.theme import (
     TEXT_OK,
     TEXT_ON_ACCENT,
     TEXT_WARN,
+    TK_FONT_SMALL,
 )
 
 
@@ -160,7 +161,7 @@ class StatusBar(ctk.CTkFrame):
         self._drag_handle.bind("<B1-Motion>", self._on_drag_motion)
         self._drag_handle.bind("<ButtonRelease-1>", self._on_drag_end)
 
-        label_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=scaled(20))
+        label_bar = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=20)
         label_bar.pack(side="top", fill="x")
         ctk.CTkLabel(
             label_bar, text="Log", font=FONT_SMALL, text_color=TEXT_DIM
@@ -256,7 +257,7 @@ class StatusBar(ctk.CTkFrame):
 
         from gui.tk_tooltip import TkTooltip
         self._rate_limit_tooltip = TkTooltip(
-            self, bg=BG_HEADER, fg=TEXT_MAIN, font=FONT_SMALL,
+            self, bg=BG_HEADER, fg=TEXT_MAIN, font=TK_FONT_SMALL,
         )
         self._rate_limit_tooltip_text = "Nexus API rate limits — no data yet."
 
@@ -770,13 +771,13 @@ class SettingsPanel(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
 
         # ---- title bar ----
-        title_bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=scaled(40))
+        title_bar = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=40)
         title_bar.grid(row=0, column=0, sticky="ew")
         title_bar.grid_propagate(False)
         ctk.CTkLabel(title_bar, text="Settings", font=FONT_NORMAL, text_color=TEXT_MAIN,
                      anchor="w").pack(side="left", padx=12, pady=8)
         ctk.CTkButton(
-            title_bar, text="✕", width=scaled(32), height=scaled(32), font=FONT_NORMAL,
+            title_bar, text="✕", width=32, height=32, font=FONT_NORMAL,
             fg_color="transparent", hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._on_close,
         ).pack(side="right", padx=4, pady=4)
@@ -825,13 +826,13 @@ class SettingsPanel(ctk.CTkFrame):
         self._slider = ctk.CTkSlider(
             scale_row, from_=1.0, to=2.0, number_of_steps=20,
             variable=self._scale_var,
-            width=scaled(220),
+            width=220,
             command=self._on_slider,
         )
         self._slider.pack(side="left", padx=(0, 10))
 
         self._scale_lbl = ctk.CTkLabel(scale_row, text=f"{round(init_scale * 20) / 20:.2f}×",
-                                       font=FONT_NORMAL, text_color=TEXT_MAIN, width=scaled(40))
+                                       font=FONT_NORMAL, text_color=TEXT_MAIN, width=40)
         self._scale_lbl.pack(side="left")
 
         self._auto_var = tk.BooleanVar(value=is_auto)
@@ -856,11 +857,11 @@ class SettingsPanel(ctk.CTkFrame):
             font_row, values=_FONT_OPTIONS, variable=self._font_var,
             font=FONT_NORMAL, text_color=TEXT_MAIN,
             fg_color=BG_PANEL, button_color=ACCENT, button_hover_color=ACCENT_HOV,
-            width=scaled(180),
+            width=180,
         ).pack(side="left")
 
         ctk.CTkButton(
-            font_row, text="Default", width=scaled(70), height=scaled(28),
+            font_row, text="Default", width=70, height=28,
             font=FONT_SMALL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._font_var.set(_DEFAULT_FONT),
         ).pack(side="left", padx=(8, 0))
@@ -890,7 +891,7 @@ class SettingsPanel(ctk.CTkFrame):
 
         self._clear_cache_btn = ctk.CTkButton(
             cache_row, text="Manage Caches… (—)",
-            height=scaled(28), font=FONT_NORMAL,
+            height=28, font=FONT_NORMAL,
             fg_color="#5a3a00", hover_color="#7a5200", text_color="#ffffff",
             command=self._on_manage_caches,
         )
@@ -939,7 +940,7 @@ class SettingsPanel(ctk.CTkFrame):
             dl_order_row,
             variable=self._dl_order_var,
             values=["Smallest first", "Largest first"],
-            width=scaled(140),
+            width=140,
             font=FONT_NORMAL,
         ).pack(side="left")
 
@@ -953,14 +954,14 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkSlider(
             dl_concurrent_row, from_=1, to=8, number_of_steps=7,
             variable=self._max_concurrent_var,
-            width=scaled(200),
+            width=200,
             command=lambda _v: self._max_concurrent_lbl.configure(
                 text=str(int(round(self._max_concurrent_var.get())))),
         ).pack(side="left")
 
         self._max_concurrent_lbl = ctk.CTkLabel(
             dl_concurrent_row, text=str(_col_cfg["max_concurrent"]),
-            font=FONT_NORMAL, text_color=TEXT_MAIN, width=scaled(20))
+            font=FONT_NORMAL, text_color=TEXT_MAIN, width=20)
         self._max_concurrent_lbl.pack(side="left", padx=(6, 0))
 
         ext_concurrent_row = ctk.CTkFrame(col_sec, fg_color="transparent")
@@ -973,14 +974,14 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkSlider(
             ext_concurrent_row, from_=1, to=8, number_of_steps=7,
             variable=self._max_extract_var,
-            width=scaled(200),
+            width=200,
             command=lambda _v: self._max_extract_lbl.configure(
                 text=str(int(round(self._max_extract_var.get())))),
         ).pack(side="left")
 
         self._max_extract_lbl = ctk.CTkLabel(
             ext_concurrent_row, text=str(_col_cfg["max_extract_workers"]),
-            font=FONT_NORMAL, text_color=TEXT_MAIN, width=scaled(20))
+            font=FONT_NORMAL, text_color=TEXT_MAIN, width=20)
         self._max_extract_lbl.pack(side="left", padx=(6, 0))
 
         ctk.CTkLabel(
@@ -1087,7 +1088,7 @@ class SettingsPanel(ctk.CTkFrame):
         mode_row.pack(fill="x", pady=(0, 4))
         ctk.CTkLabel(
             mode_row, text="Appearance", font=FONT_NORMAL, text_color=TEXT_MAIN,
-            anchor="w", width=scaled(220),
+            anchor="w", width=220,
         ).pack(side="left")
         from gui.theme import available_themes
         _themes = available_themes() or {"dark": "Dark"}
@@ -1103,7 +1104,7 @@ class SettingsPanel(ctk.CTkFrame):
             mode_row, values=list(_mode_label_to_val.keys()),
             variable=self._appearance_mode_var,
             command=_on_appearance_change,
-            width=scaled(120), height=scaled(28),
+            width=120, height=28,
             font=FONT_NORMAL,
         ).pack(side="left")
         ctk.CTkLabel(
@@ -1157,11 +1158,11 @@ class SettingsPanel(ctk.CTkFrame):
 
             ctk.CTkLabel(
                 row, text=label, font=FONT_NORMAL, text_color=TEXT_MAIN,
-                anchor="w", width=scaled(220),
+                anchor="w", width=220,
             ).pack(side="left")
 
             swatch = ctk.CTkFrame(
-                row, width=scaled(28), height=scaled(22),
+                row, width=28, height=22,
                 fg_color=current, corner_radius=4,
                 border_width=1, border_color=BORDER,
             )
@@ -1183,13 +1184,13 @@ class SettingsPanel(ctk.CTkFrame):
                 show(_label, get_theme_color(_key), _on_result)
 
             ctk.CTkButton(
-                row, text="Choose", width=scaled(60), height=scaled(28),
+                row, text="Choose", width=60, height=28,
                 font=FONT_SMALL, fg_color=BG_DEEP, hover_color=BG_HOVER,
                 text_color=TEXT_MAIN, command=_pick,
             ).pack(side="left", padx=(0, 6))
 
             ctk.CTkButton(
-                row, text="Default", width=scaled(70), height=scaled(28),
+                row, text="Default", width=70, height=28,
                 font=FONT_SMALL, fg_color=BG_DEEP, hover_color=BG_HOVER,
                 text_color=TEXT_DIM,
                 command=lambda _k=key, _d=default_hex: _set_color(_k, _d),
@@ -1216,17 +1217,17 @@ class SettingsPanel(ctk.CTkFrame):
             staging_entry_row, textvariable=self._default_staging_var,
             font=FONT_NORMAL,
             placeholder_text=f"Default: {get_profiles_dir()}",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         ctk.CTkButton(
-            staging_entry_row, text="Browse", width=scaled(70), height=scaled(28),
+            staging_entry_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_default_staging,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            staging_entry_row, text="Clear", width=scaled(56), height=scaled(28),
+            staging_entry_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._default_staging_var.set(""),
         ).pack(side="left")
@@ -1255,17 +1256,17 @@ class SettingsPanel(ctk.CTkFrame):
             cache_entry_row, textvariable=self._download_cache_var,
             font=FONT_NORMAL,
             placeholder_text=f"Default: {get_config_dir() / 'download_cache'}",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         ctk.CTkButton(
-            cache_entry_row, text="Browse", width=scaled(70), height=scaled(28),
+            cache_entry_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_download_cache,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            cache_entry_row, text="Clear", width=scaled(56), height=scaled(28),
+            cache_entry_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._download_cache_var.set(""),
         ).pack(side="left")
@@ -1289,17 +1290,17 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkEntry(
             heroic_entry_row, textvariable=self._heroic_path_var,
             font=FONT_NORMAL, placeholder_text="Auto-detect (leave blank)",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         ctk.CTkButton(
-            heroic_entry_row, text="Browse", width=scaled(70), height=scaled(28),
+            heroic_entry_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_heroic_path,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            heroic_entry_row, text="Clear", width=scaled(56), height=scaled(28),
+            heroic_entry_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._heroic_path_var.set(""),
         ).pack(side="left")
@@ -1322,17 +1323,17 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkEntry(
             steam_entry_row, textvariable=self._steam_vdf_var,
             font=FONT_NORMAL, placeholder_text="Auto-detect (leave blank)",
-            height=scaled(28),
+            height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         ctk.CTkButton(
-            steam_entry_row, text="Browse", width=scaled(70), height=scaled(28),
+            steam_entry_row, text="Browse", width=70, height=28,
             font=FONT_NORMAL, fg_color=BG_HOVER, hover_color=ACCENT, text_color=TEXT_MAIN,
             command=self._browse_steam_vdf,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            steam_entry_row, text="Clear", width=scaled(56), height=scaled(28),
+            steam_entry_row, text="Clear", width=56, height=28,
             font=FONT_NORMAL, fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
             command=lambda: self._steam_vdf_var.set(""),
         ).pack(side="left")
@@ -1344,22 +1345,22 @@ class SettingsPanel(ctk.CTkFrame):
         ).pack(anchor="w", pady=(6, 0))
 
         # ---- footer ----
-        foot = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=scaled(44))
+        foot = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=44)
         foot.grid(row=2, column=0, sticky="ew")
         foot.grid_propagate(False)
         self.grid_rowconfigure(2, weight=0)
 
-        ctk.CTkButton(foot, text="Cancel", width=scaled(80), height=scaled(28),
+        ctk.CTkButton(foot, text="Cancel", width=80, height=28,
                       fg_color=BG_DEEP, hover_color=BG_HOVER, text_color=TEXT_DIM,
                       font=FONT_NORMAL, command=self._on_close,
                       ).pack(side="right", padx=8, pady=8)
 
-        ctk.CTkButton(foot, text="Apply & Restart", width=scaled(120), height=scaled(28),
+        ctk.CTkButton(foot, text="Apply & Restart", width=120, height=28,
                       fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
                       font=FONT_NORMAL, command=self._apply,
                       ).pack(side="right", padx=(0, 0), pady=8)
 
-        ctk.CTkButton(foot, text="Save", width=scaled(80), height=scaled(28),
+        ctk.CTkButton(foot, text="Save", width=80, height=28,
                       fg_color="#3a5a3a", hover_color="#4a7a4a", text_color="#ffffff",
                       font=FONT_NORMAL, command=self._save_no_restart,
                       ).pack(side="right", padx=(0, 4), pady=8)

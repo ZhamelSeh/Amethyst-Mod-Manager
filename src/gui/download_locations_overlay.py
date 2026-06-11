@@ -34,6 +34,7 @@ from gui.theme import (
     TEXT_DIM,
     FONT_BOLD,
     FONT_SMALL,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 
@@ -189,7 +190,7 @@ class DownloadLocationsOverlay(tk.Frame):
 
         tk.Label(
             toolbar, text="Download Locations",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
@@ -210,7 +211,7 @@ class DownloadLocationsOverlay(tk.Frame):
                 "Folders to scan for mod archives. The default Downloads folder "
                 "is included automatically — remove it if you don't want it scanned."
             ),
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, wraplength=400,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, wraplength=400,
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         # Scrollable list of paths
@@ -319,7 +320,7 @@ class DownloadLocationsOverlay(tk.Frame):
             )
         tk.Label(
             row, text=lbl_text, anchor="w", justify="left",
-            font=FONT_SMALL, fg=fg_col, bg=BG_PANEL,
+            font=TK_FONT_SMALL, fg=fg_col, bg=BG_PANEL,
             wraplength=wrap,
         ).grid(row=0, column=0, sticky="ew", padx=8, pady=4)
         btn.grid(row=0, column=1, padx=4, pady=4, sticky="ne")
@@ -352,7 +353,7 @@ class DownloadLocationsOverlay(tk.Frame):
                 )
             tk.Label(
                 cache_row, text=cache_lbl_text, anchor="w", justify="left",
-                font=FONT_SMALL, fg=cache_fg, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=cache_fg, bg=BG_PANEL,
                 wraplength=wrap,
             ).grid(row=0, column=0, sticky="ew", padx=8, pady=4)
             cache_btn.grid(row=0, column=1, padx=4, pady=4, sticky="ne")
@@ -367,7 +368,7 @@ class DownloadLocationsOverlay(tk.Frame):
             display = str(path) if path.is_dir() else str(path_str)
             tk.Label(
                 row, text=display, anchor="w", justify="left",
-                font=FONT_SMALL, fg=TEXT_MAIN, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=TEXT_MAIN, bg=BG_PANEL,
                 wraplength=wrap,
             ).grid(row=0, column=0, sticky="ew", padx=8, pady=4)
 
@@ -382,7 +383,7 @@ class DownloadLocationsOverlay(tk.Frame):
             tk.Label(
                 self._list_inner,
                 text="Click 'Add Folder' to scan additional locations.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
             ).grid(row=row_idx, column=0, sticky="w", padx=8, pady=8)
 
     def _on_add(self):

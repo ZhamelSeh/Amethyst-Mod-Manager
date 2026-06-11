@@ -49,24 +49,15 @@ if not os.environ.get("MOD_MANAGER_GAMES"):
             continue
         break
 
-# Load UI scale before the Xft.dpi override so scale detection reads the real
-# system DPI.  The override only affects font rasterisation in the main window.
 from Utils.ui_config import load_ui_scale, get_ui_scale, load_window_geometry, save_window_geometry, load_allow_prerelease
 _UI_SCALE = load_ui_scale()
 
-# Override Xft.dpi to 96 before the main Tk window is created so font
-# rasterisation ignores the OS global scaling setting (e.g. 200% sets
-# Xft.dpi=192, doubling fonts).
-try:
-    subprocess.run(
-        ["xrdb", "-merge"],
-        input="Xft.dpi: 96\n",
-        text=True,
-        timeout=2,
-        check=False,
-    )
-except Exception:
-    pass
+# Note: older versions ran `xrdb -merge Xft.dpi: 96` here to stop the DE's
+# global scaling from doubling fonts. That mutated the X resource DB for the
+# whole session (shrinking every app launched afterwards) and poisoned our own
+# scale detection on relaunch. It's unnecessary: init_fonts() pins `tk
+# scaling` to the design baseline, and CustomTkinter renders all fonts as
+# negative-pixel sizes which ignore Xft.dpi entirely.
 
 import customtkinter as ctk
 
@@ -254,16 +245,21 @@ class App(ctk.CTk):
         # -------------------------------------------------------------------
 
         init_fonts(self)
+        # CTk multiplies geometry()/minsize() arguments by window scaling, so
+        # everything here is in DESIGN units; screen caps are converted from
+        # physical pixels by dividing by the UI scale.
+        _s = get_ui_scale()
         # Restore saved window size/position, or use default
         saved_geom = load_window_geometry()
         if saved_geom:
             try:
-                # Parse WxH or WxH+X+Y
+                # Parse WxH or WxH+X+Y (saved values are design units — CTk's
+                # geometry() getter reverse-scales before we persist it)
                 import re
                 m = re.match(r"(\d+)x(\d+)", saved_geom)
                 if m:
-                    sw = self.winfo_screenwidth()
-                    sh = self.winfo_screenheight()
+                    sw = self.winfo_screenwidth() / _s
+                    sh = self.winfo_screenheight() / _s
                     w, h = int(m.group(1)), int(m.group(2))
                     if w <= sw and h <= sh:
                         self.geometry(saved_geom)
@@ -275,11 +271,10 @@ class App(ctk.CTk):
                 self.geometry("1280x720")
         else:
             self.geometry("1280x720")
-        # Scale minsize with UI scale so window can't be shrunk below the toolbar
-        # Cap to screen dimensions so the window is always resizable on smaller monitors
-        _s = get_ui_scale()
-        _min_w = min(int(1280 * _s), self.winfo_screenwidth() - 50)
-        _min_h = min(int(720 * _s), self.winfo_screenheight() - 100)
+        # Keep the window from shrinking below the toolbar, but cap the
+        # minimum to the screen so it always fits on smaller/HiDPI monitors.
+        _min_w = min(1280, int((self.winfo_screenwidth() - 50) / _s))
+        _min_h = min(720, int((self.winfo_screenheight() - 100) / _s))
         self.minsize(_min_w, _min_h)
         self.bind("<Configure>", self._on_window_configure)
         self._geom_save_id: str | None = None
@@ -1007,7 +1002,9 @@ class App(ctk.CTk):
         max_h = int(self.winfo_height() * 0.85)
         h = min(h, max_h)
         self.grid_rowconfigure(2, minsize=h, weight=0)
-        self._status.configure(height=h)
+        # h is physical px (from the drag) but CTkFrame.configure(height=)
+        # multiplies by widget scaling — convert back to design units.
+        self._status.configure(height=round(h / get_ui_scale()))
 
     # --- plugin panel column drag-resize -------------------------------------
 

@@ -35,6 +35,7 @@ from gui.theme import (
     font_sized_px,
     TEXT_DIM,
     TEXT_MAIN,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 
@@ -139,7 +140,7 @@ class PluginCycleOverlay(tk.Frame):
         toolbar.grid_propagate(False)
 
         self._title_label = tk.Label(
-            toolbar, text="", font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            toolbar, text="", font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         )
         self._title_label.pack(side="left", padx=12, pady=8)
 
@@ -153,7 +154,7 @@ class PluginCycleOverlay(tk.Frame):
         self._status_frame = tk.Frame(self, bg=STATUS_BROKEN_BG)
         self._status_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(10, 0))
         self._status_label = tk.Label(
-            self._status_frame, text="", font=FONT_BOLD,
+            self._status_frame, text="", font=TK_FONT_BOLD,
             fg=STATUS_BROKEN_FG, bg=STATUS_BROKEN_BG, anchor="w",
         )
         self._status_label.pack(fill="x", padx=12, pady=8)
@@ -179,7 +180,7 @@ class PluginCycleOverlay(tk.Frame):
         left.grid_columnconfigure(0, weight=1)
 
         tk.Label(
-            left, text="Plugins in cycle", font=FONT_BOLD,
+            left, text="Plugins in cycle", font=TK_FONT_BOLD,
             fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
@@ -221,7 +222,7 @@ class PluginCycleOverlay(tk.Frame):
         right.grid_columnconfigure(0, weight=1)
 
         tk.Label(
-            right, text="Rules between these plugins", font=FONT_BOLD,
+            right, text="Rules between these plugins", font=TK_FONT_BOLD,
             fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
@@ -311,7 +312,7 @@ class PluginCycleOverlay(tk.Frame):
             tk.Label(
                 self._rules_inner,
                 text="No rules between these plugins.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL, justify="left",
             ).pack(padx=12, pady=12)
             return
 
@@ -353,7 +354,7 @@ class PluginCycleOverlay(tk.Frame):
             elif reason.get("kind") == "group":
                 tk.Label(
                     line, text="(group rule — edit via Groups overlay)",
-                    font=FONT_SMALL, fg=TEXT_DIM, bg=row_bg,
+                    font=TK_FONT_SMALL, fg=TEXT_DIM, bg=row_bg,
                 ).grid(row=0, column=1, padx=(6, 0), sticky="e")
 
     def _build_rule_tokens(self, parent: tk.Frame, row_bg: str, text_fg: str,
@@ -369,7 +370,7 @@ class PluginCycleOverlay(tk.Frame):
             if owner and target and field in ("after", "before"):
                 kw_fg = AFTER_FG if field == "after" else BEFORE_FG
                 tk.Label(
-                    parent, text=owner, font=FONT_SMALL,
+                    parent, text=owner, font=TK_FONT_SMALL,
                     fg=text_fg, bg=row_bg, anchor="w",
                 ).pack(side="left")
                 tk.Label(
@@ -378,7 +379,7 @@ class PluginCycleOverlay(tk.Frame):
                     fg=kw_fg, bg=row_bg, anchor="w",
                 ).pack(side="left")
                 tk.Label(
-                    parent, text=target, font=FONT_SMALL,
+                    parent, text=target, font=TK_FONT_SMALL,
                     fg=text_fg, bg=row_bg, anchor="w",
                 ).pack(side="left")
                 return
@@ -391,7 +392,7 @@ class PluginCycleOverlay(tk.Frame):
             if marker in text:
                 left, right = text.split(marker, 1)
                 tk.Label(
-                    parent, text=left, font=FONT_SMALL,
+                    parent, text=left, font=TK_FONT_SMALL,
                     fg=TEXT_DIM, bg=row_bg, anchor="w",
                 ).pack(side="left")
                 tk.Label(
@@ -400,13 +401,13 @@ class PluginCycleOverlay(tk.Frame):
                     fg=AFTER_FG, bg=row_bg, anchor="w",
                 ).pack(side="left", padx=(4, 4))
                 tk.Label(
-                    parent, text=right, font=FONT_SMALL,
+                    parent, text=right, font=TK_FONT_SMALL,
                     fg=TEXT_DIM, bg=row_bg, anchor="w",
                 ).pack(side="left")
                 return
         # Fallback — flat text.
         tk.Label(
-            parent, text=reason.get("text", ""), font=FONT_SMALL,
+            parent, text=reason.get("text", ""), font=TK_FONT_SMALL,
             fg=text_fg, bg=row_bg, anchor="w", justify="left",
         ).pack(side="left")
 

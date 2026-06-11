@@ -26,6 +26,7 @@ from gui.theme import (
     TEXT_MAIN,
     TEXT_OK,
     scaled,
+    TK_FONT_BOLD, TK_FONT_NORMAL, TK_FONT_SMALL,
 )
 
 _CLEAR_ALL_PRESERVE = {"md5_cache.json"}
@@ -100,12 +101,12 @@ class CacheManagerOverlay(ctk.CTkFrame):
 
         tk.Label(
             toolbar, text="Manage Download Caches",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
         ).pack(side="left", padx=12, pady=8)
 
         ctk.CTkButton(
             toolbar, text="✕ Close",
-            width=scaled(85), height=scaled(30),
+            width=85, height=30,
             fg_color="#6b3333", hover_color="#8c4444", text_color="white",
             font=FONT_BOLD, command=self._do_close,
         ).pack(side="right", padx=(6, 12), pady=5)
@@ -118,7 +119,7 @@ class CacheManagerOverlay(ctk.CTkFrame):
         self._desc_lbl = tk.Label(
             header,
             text=f"Location: {self._cache_dir}",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
             justify="left", anchor="w", wraplength=scaled(400),
         )
         self._desc_lbl.grid(row=0, column=0, sticky="ew")
@@ -129,7 +130,7 @@ class CacheManagerOverlay(ctk.CTkFrame):
 
         self._total_lbl = tk.Label(
             header, text="Total: calculating…",
-            font=FONT_NORMAL, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
+            font=TK_FONT_NORMAL, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
         )
         self._total_lbl.grid(row=1, column=0, sticky="w", pady=(6, 0))
 
@@ -175,7 +176,7 @@ class CacheManagerOverlay(ctk.CTkFrame):
         action.grid_columnconfigure(0, weight=1)
 
         self._status_lbl = tk.Label(
-            action, text="", font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
+            action, text="", font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
         )
         self._status_lbl.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
@@ -186,21 +187,21 @@ class CacheManagerOverlay(ctk.CTkFrame):
 
         ctk.CTkButton(
             btn_row, text="All",
-            height=scaled(30),
+            height=30,
             fg_color="#3a4a5a", hover_color="#4a6a7a", text_color="white",
             font=FONT_NORMAL, command=self._select_all,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         ctk.CTkButton(
             btn_row, text="None",
-            height=scaled(30),
+            height=30,
             fg_color="#3a4a5a", hover_color="#4a6a7a", text_color="white",
             font=FONT_NORMAL, command=self._select_none,
         ).grid(row=0, column=1, sticky="ew", padx=(0, 4))
 
         self._clear_sel_btn = ctk.CTkButton(
             btn_row, text="Clear Selected",
-            height=scaled(30),
+            height=30,
             fg_color="#5a3a00", hover_color="#7a5200", text_color="white",
             font=FONT_BOLD, command=self._on_clear_selected,
         )
@@ -208,7 +209,7 @@ class CacheManagerOverlay(ctk.CTkFrame):
 
         self._clear_all_btn = ctk.CTkButton(
             btn_row, text="Clear All",
-            height=scaled(30),
+            height=30,
             fg_color="#a83232", hover_color="#c43c3c", text_color="white",
             font=FONT_BOLD, command=self._on_clear_all,
         )
@@ -231,7 +232,7 @@ class CacheManagerOverlay(ctk.CTkFrame):
             tk.Label(
                 self._inner,
                 text="No per-game caches found.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_PANEL,
             ).grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=12)
             return
 
@@ -246,19 +247,19 @@ class CacheManagerOverlay(ctk.CTkFrame):
             var = tk.BooleanVar(value=False)
             self._check_vars[name] = var
             ctk.CTkCheckBox(
-                row, text="", variable=var, width=scaled(24),
+                row, text="", variable=var, width=24,
             ).grid(row=0, column=0, padx=(8, 6), pady=4)
 
             label_text = f"{name}  (active)" if is_active else name
             tk.Label(
                 row, text=label_text, anchor="w",
-                font=FONT_NORMAL,
+                font=TK_FONT_NORMAL,
                 fg=(TEXT_OK if is_active else TEXT_MAIN), bg=BG_PANEL,
             ).grid(row=0, column=1, sticky="ew", padx=(2, 8), pady=4)
 
             size_lbl = ctk.CTkLabel(
                 row, text="—", font=FONT_SMALL, text_color=TEXT_DIM, anchor="e",
-                width=scaled(80),
+                width=80,
             )
             size_lbl.grid(row=0, column=2, sticky="e", padx=(0, 12), pady=4)
             self._size_labels[name] = size_lbl

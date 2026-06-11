@@ -46,7 +46,9 @@ from gui.theme import (
     FS11,
     scaled,
     font_sized,
+    font_sized_px,
     FONT_FAMILY,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 _ROW_H   = scaled(26)
@@ -125,7 +127,7 @@ class VersionPickerOverlay(tk.Frame):
         self._col1_x = int(400 * self._COL0_FRAC)
         self._hdr_labels: list[tk.Label] = []
 
-        self._font = font_sized(FONT_FAMILY, 10)
+        self._font = font_sized_px(FONT_FAMILY, 10)
 
         self._build_ui(mod_name)
         self._create_pool()
@@ -137,14 +139,14 @@ class VersionPickerOverlay(tk.Frame):
         toolbar.pack_propagate(False)
 
         ctk.CTkButton(
-            toolbar, text="✕ Close", width=scaled(72), height=scaled(26),
+            toolbar, text="✕ Close", width=72, height=26,
             fg_color="#b33a3a", hover_color="#c94848", text_color="white",
             font=FONT_HEADER, command=self._on_close,
         ).pack(side="right", padx=(4, 8), pady=2)
 
         tk.Label(
             toolbar, text=f"Select version — {mod_name}",
-            bg=BG_HEADER, fg=TEXT_MAIN, font=FONT_BOLD,
+            bg=BG_HEADER, fg=TEXT_MAIN, font=TK_FONT_BOLD,
         ).pack(side="left", padx=8)
 
         self._hdr_frame = tk.Frame(self, bg=BG_HEADER, height=scaled(22))
@@ -154,7 +156,7 @@ class VersionPickerOverlay(tk.Frame):
         for text in ("File ID — Version", "Name"):
             lbl = tk.Label(
                 self._hdr_frame, text=text, bg=BG_HEADER, fg=TEXT_MAIN,
-                font=FONT_BOLD, anchor="w",
+                font=TK_FONT_BOLD, anchor="w",
             )
             self._hdr_labels.append(lbl)
 
@@ -380,20 +382,20 @@ class SourcePickerOverlay(tk.Frame):
         toolbar.pack_propagate(False)
 
         ctk.CTkButton(
-            toolbar, text="✕ Close", width=scaled(72), height=scaled(26),
+            toolbar, text="✕ Close", width=72, height=26,
             fg_color="#b33a3a", hover_color="#c94848", text_color="white",
             font=FONT_HEADER, command=self._on_close,
         ).pack(side="right", padx=(4, 8), pady=2)
 
         ctk.CTkButton(
-            toolbar, text="Apply", width=scaled(72), height=scaled(26),
+            toolbar, text="Apply", width=72, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._apply,
         ).pack(side="right", padx=(0, 4), pady=2)
 
         tk.Label(
             toolbar, text=f"Source — {mod_name}",
-            bg=BG_HEADER, fg=TEXT_MAIN, font=FONT_BOLD,
+            bg=BG_HEADER, fg=TEXT_MAIN, font=TK_FONT_BOLD,
         ).pack(side="left", padx=8)
 
         body = tk.Frame(self, bg=BG_DEEP)
@@ -413,19 +415,19 @@ class SourcePickerOverlay(tk.Frame):
                 command=self._on_radio_change,
             ).pack(side="left")
             tk.Label(
-                row, text=f"— {desc}", bg=BG_DEEP, fg=TEXT_DIM, font=FONT_SMALL,
+                row, text=f"— {desc}", bg=BG_DEEP, fg=TEXT_DIM, font=TK_FONT_SMALL,
             ).pack(side="left", padx=(scaled(6), 0))
 
         # URL entry (shown only when Direct is selected)
         self._url_frame = tk.Frame(body, bg=BG_DEEP)
 
         tk.Label(
-            self._url_frame, text="Download URL:", bg=BG_DEEP, fg=TEXT_DIM, font=FONT_SMALL,
+            self._url_frame, text="Download URL:", bg=BG_DEEP, fg=TEXT_DIM, font=TK_FONT_SMALL,
         ).pack(side="left", padx=(scaled(24), scaled(6)))
 
         self._url_entry = ctk.CTkEntry(
             self._url_frame, textvariable=self._url_var,
-            width=scaled(340), height=scaled(26),
+            width=340, height=26,
             font=FONT_SMALL, placeholder_text="https://…",
         )
         self._url_entry.pack(side="left")
@@ -500,12 +502,13 @@ class WorkshopDialog(tk.Frame):
 
         self._canvas_w  = scaled(840)
         self._col_cw, self._col_cx = _compute_col_layout(self._canvas_w)
-        self._font_main = font_sized(FONT_FAMILY, 10, "bold")
-        self._font_small = font_sized(FONT_FAMILY, 9, "bold")
+        self._font_main = font_sized_px(FONT_FAMILY, 10, "bold")
+        self._font_small = font_sized_px(FONT_FAMILY, 9, "bold")
 
         global _tk_font_cache
         if _tk_font_cache is None:
-            _tk_font_cache = tkfont.Font(family=FONT_FAMILY, size=10)
+            # Measure with the same pre-scaled px font the canvas renders with.
+            _tk_font_cache = tkfont.Font(font=self._font_main)
 
         self._version_overlay: Optional[VersionPickerOverlay] = None
 
@@ -529,32 +532,32 @@ class WorkshopDialog(tk.Frame):
         toolbar.grid_propagate(False)
 
         ctk.CTkButton(
-            toolbar, text="✕ Close", width=scaled(72), height=scaled(26),
+            toolbar, text="✕ Close", width=72, height=26,
             fg_color="#b33a3a", hover_color="#c94848", text_color="white",
             font=FONT_HEADER, command=self._do_close,
         ).pack(side="right", padx=(4, 8), pady=2)
 
         ctk.CTkButton(
-            toolbar, text="Export", width=scaled(72), height=scaled(26),
+            toolbar, text="Export", width=72, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._do_export,
         ).pack(side="right", padx=(0, 4), pady=2)
 
         ctk.CTkButton(
-            toolbar, text="Load", width=scaled(60), height=scaled(26),
+            toolbar, text="Load", width=60, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._do_load,
         ).pack(side="right", padx=(0, 4), pady=2)
 
         ctk.CTkButton(
-            toolbar, text="Save", width=scaled(60), height=scaled(26),
+            toolbar, text="Save", width=60, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._do_save,
         ).pack(side="right", padx=(0, 4), pady=2)
 
         tk.Label(
             toolbar, text="Workshop", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=FONT_BOLD,
+            font=TK_FONT_BOLD,
         ).pack(side="left", padx=8)
 
         tk.Checkbutton(
@@ -562,7 +565,7 @@ class WorkshopDialog(tk.Frame):
             variable=self._hide_no_fileid_var,
             bg=BG_HEADER, fg=TEXT_MAIN, selectcolor=BG_DEEP,
             activebackground=BG_HEADER, activeforeground=TEXT_MAIN,
-            font=FONT_SMALL, bd=0, highlightthickness=0,
+            font=TK_FONT_SMALL, bd=0, highlightthickness=0,
             command=self._apply_filter,
         ).pack(side="left", padx=(12, 0))
 
@@ -583,7 +586,7 @@ class WorkshopDialog(tk.Frame):
         self._search_entry.pack(side="left", fill="x", expand=True, padx=(2, 2), pady=4)
 
         self._search_clear_btn = ctk.CTkButton(
-            search_bar, text="✕", width=scaled(32), height=scaled(24),
+            search_bar, text="✕", width=32, height=24,
             fg_color="#b33a3a", hover_color="#c94848", text_color="white",
             font=FONT_HEADER, cursor="hand2",
             command=self._on_search_clear,
@@ -608,7 +611,7 @@ class WorkshopDialog(tk.Frame):
         for text in _HEADERS:
             lbl = tk.Label(
                 self._hdr_frame, text=text, bg=BG_HEADER, fg=TEXT_MAIN,
-                font=FONT_BOLD, anchor="w",
+                font=TK_FONT_BOLD, anchor="w",
             )
             self._hdr_labels.append(lbl)
         self._update_header()
@@ -741,13 +744,13 @@ class WorkshopDialog(tk.Frame):
 
         tk.Label(
             top, text="Select a saved workshop file:",
-            bg=BG_DEEP, fg=TEXT_MAIN, font=FONT_BOLD,
+            bg=BG_DEEP, fg=TEXT_MAIN, font=TK_FONT_BOLD,
         ).pack(padx=12, pady=(12, 6), anchor="w")
 
         lb = tk.Listbox(
             top, width=50, height=min(15, max(4, len(files))),
             bg=BG_ROW, fg=TEXT_MAIN, selectbackground=ACCENT,
-            highlightthickness=0, bd=0, font=FONT_SMALL,
+            highlightthickness=0, bd=0, font=TK_FONT_SMALL,
         )
         for f in files:
             lb.insert("end", f.name)
@@ -765,12 +768,12 @@ class WorkshopDialog(tk.Frame):
         btns = tk.Frame(top, bg=BG_DEEP)
         btns.pack(fill="x", padx=12, pady=(6, 12))
         ctk.CTkButton(
-            btns, text="Load", width=scaled(80), height=scaled(26),
+            btns, text="Load", width=80, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=_load_selected,
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
-            btns, text="Cancel", width=scaled(80), height=scaled(26),
+            btns, text="Cancel", width=80, height=26,
             fg_color="#b33a3a", hover_color="#c94848", text_color="white",
             font=FONT_HEADER, command=top.destroy,
         ).pack(side="right")
@@ -874,7 +877,7 @@ class WorkshopDialog(tk.Frame):
         self._export_status_var = tk.StringVar(value="Fetching file sizes…")
         status_lbl = tk.Label(
             self, textvariable=self._export_status_var,
-            bg=BG_DEEP, fg=TEXT_DIM, font=FONT_SMALL,
+            bg=BG_DEEP, fg=TEXT_DIM, font=TK_FONT_SMALL,
         )
         status_lbl.place(relx=0.0, rely=1.0, anchor="sw", x=8, y=-4)
 

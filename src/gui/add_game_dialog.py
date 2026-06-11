@@ -57,6 +57,7 @@ from gui.theme import (
     FONT_SMALL,
     FONT_MONO,
     scaled,
+    TK_FONT_NORMAL,
 )
 from Utils.ui_config import get_ui_scale, load_default_staging_path
 from gui.tk_tooltip import TkTooltip
@@ -200,7 +201,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
 
         self._help_tooltip = TkTooltip(
             self, bg="#1a1a2e", fg="#d6e4ff",
-            font=(FONT_NORMAL[0], FONT_NORMAL[1]),
+            font=TK_FONT_NORMAL,
         )
 
         # --- Game path section ---
@@ -216,7 +217,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._status_label.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 2))
 
         self._path_box = ctk.CTkTextbox(
-            body, height=scaled(42), font=FONT_MONO,
+            body, height=42, font=FONT_MONO,
             fg_color=BG_ROW, text_color=TEXT_MAIN,
             wrap="none", corner_radius=4
         )
@@ -229,21 +230,21 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         _path_btn_frame.grid(row=3, column=0, sticky="w", padx=16, pady=(0, 8))
 
         self._browse_btn = ctk.CTkButton(
-            _path_btn_frame, text="Browse manually…", width=scaled(160), height=scaled(26),
+            _path_btn_frame, text="Browse manually…", width=160, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_browse
         )
         self._browse_btn.pack(side="left", padx=(0, 6))
 
         self._open_btn = ctk.CTkButton(
-            _path_btn_frame, text="Open", width=scaled(70), height=scaled(26),
+            _path_btn_frame, text="Open", width=70, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_open_path, state="disabled"
         )
         self._open_btn.pack(side="left", padx=(0, 6))
 
         self._scan_btn = ctk.CTkButton(
-            _path_btn_frame, text="Scan", width=scaled(70), height=scaled(26),
+            _path_btn_frame, text="Scan", width=70, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_scan_drives
         )
@@ -276,7 +277,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._prefix_status_label.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 2))
 
         self._prefix_box = ctk.CTkTextbox(
-            body, height=scaled(42), font=FONT_MONO,
+            body, height=42, font=FONT_MONO,
             fg_color=BG_ROW, text_color=TEXT_MAIN,
             wrap="none", corner_radius=4
         )
@@ -293,7 +294,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         _prefix_btn_frame.grid(row=8, column=0, sticky="w", padx=16, pady=(0, 6))
 
         self._prefix_browse_btn = ctk.CTkButton(
-            _prefix_btn_frame, text="Browse manually…", width=scaled(160), height=scaled(26),
+            _prefix_btn_frame, text="Browse manually…", width=160, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_browse_prefix,
             state="normal" if _has_prefix_source else "disabled"
@@ -301,7 +302,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._prefix_browse_btn.pack(side="left", padx=(0, 6))
 
         self._prefix_open_btn = ctk.CTkButton(
-            _prefix_btn_frame, text="Open", width=scaled(70), height=scaled(26),
+            _prefix_btn_frame, text="Open", width=70, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_open_prefix, state="disabled"
         )
@@ -329,7 +330,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._staging_status_label.grid(row=11, column=0, sticky="ew", padx=16, pady=(0, 2))
 
         self._staging_box = ctk.CTkTextbox(
-            body, height=scaled(42), font=FONT_MONO,
+            body, height=42, font=FONT_MONO,
             fg_color=BG_ROW, text_color=TEXT_MAIN,
             wrap="none", corner_radius=4
         )
@@ -342,20 +343,20 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         _staging_btn_frame.grid(row=13, column=0, sticky="w", padx=16, pady=(0, 6))
 
         ctk.CTkButton(
-            _staging_btn_frame, text="Browse manually…", width=scaled(160), height=scaled(26),
+            _staging_btn_frame, text="Browse manually…", width=160, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_browse_staging
         ).pack(side="left", padx=(0, 6))
 
         self._staging_open_btn = ctk.CTkButton(
-            _staging_btn_frame, text="Open", width=scaled(70), height=scaled(26),
+            _staging_btn_frame, text="Open", width=70, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_open_staging
         )
         self._staging_open_btn.pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
-            _staging_btn_frame, text="Reset to default", width=scaled(130), height=scaled(26),
+            _staging_btn_frame, text="Reset to default", width=130, height=26,
             font=FONT_SMALL, fg_color=BG_HEADER, hover_color=BG_HOVER,
             text_color=TEXT_MAIN, command=self._on_reset_staging
         ).pack(side="left")
@@ -429,7 +430,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
                       "Controls the modsettings.lsx format written on deploy "
                       "(Patch 8 = GustavX campaign, Patch 7 = Gustav campaign, "
                       "Patch 6 = legacy ModOrder schema)."),
-                font=FONT_SMALL, text_color=TEXT_DIM, wraplength=scaled(560),
+                font=FONT_SMALL, text_color=TEXT_DIM, wraplength=560,
                 anchor="w", justify="left",
             ).grid(row=22, column=0, sticky="ew", padx=16, pady=(0, 4))
             _patch_row = ctk.CTkFrame(body, fg_color="transparent")
@@ -451,14 +452,14 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         )
 
         self._cancel_btn = ctk.CTkButton(
-            btn_bar, text="Cancel", width=scaled(100), height=scaled(30), font=FONT_NORMAL,
+            btn_bar, text="Cancel", width=100, height=30, font=FONT_NORMAL,
             fg_color=BG_HEADER, hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._on_cancel
         )
         self._cancel_btn.pack(side="right", padx=(4, 12), pady=10)
 
         self._add_btn = ctk.CTkButton(
-            btn_bar, text="Save", width=scaled(110), height=scaled(30), font=FONT_BOLD,
+            btn_bar, text="Save", width=110, height=30, font=FONT_BOLD,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             state="disabled", command=self._on_add
         )
@@ -466,7 +467,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
 
         if self._game.is_configured():
             self._reset_loc_btn = ctk.CTkButton(
-                btn_bar, text="Reset Locations", width=scaled(140), height=scaled(30),
+                btn_bar, text="Reset Locations", width=140, height=30,
                 font=FONT_NORMAL, fg_color=BG_HEADER, hover_color=BG_HOVER,
                 text_color=TEXT_MAIN, command=self._on_reset_locations
             )
@@ -480,14 +481,14 @@ class ReconfigureGamePanel(ctk.CTkFrame):
             )
 
             self._remove_btn = ctk.CTkButton(
-                btn_bar, text="Remove Instance", width=scaled(140), height=scaled(30),
+                btn_bar, text="Remove Instance", width=140, height=30,
                 font=FONT_BOLD, fg_color=RED_BTN, hover_color=RED_HOV,
                 text_color="white", command=self._on_remove
             )
             self._remove_btn.pack(side="left", padx=(12, 4), pady=10)
 
             self._clean_btn = ctk.CTkButton(
-                btn_bar, text="Clean Game Folder", width=scaled(150), height=scaled(30),
+                btn_bar, text="Clean Game Folder", width=150, height=30,
                 font=FONT_NORMAL, fg_color=RED_BTN, hover_color=RED_HOV,
                 text_color="white", command=self._on_clean_game_folder
             )
@@ -506,7 +507,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
 
         help_marker = ctk.CTkLabel(
             header, text="?", font=FONT_BOLD, text_color=ACCENT,
-            width=scaled(16), cursor="question_arrow"
+            width=16, cursor="question_arrow"
         )
         help_marker.pack(side="left", padx=(6, 0))
         self._help_tooltip.attach(
@@ -1544,8 +1545,8 @@ class AddGameDialog(ctk.CTkToplevel):
     def __init__(self, parent, game: BaseGame):
         super().__init__(parent, fg_color=BG_DEEP)
         self.title(f"Reconfigure Game — {game.name}")
-        s = get_ui_scale()
-        self.geometry(f"{round(self.WIDTH * s)}x{round(self.HEIGHT * s)}")
+        # CTkToplevel scales geometry by window scaling itself.
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
         self.resizable(False, False)
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
@@ -1602,8 +1603,8 @@ class _RemoveConfirmDialog(ctk.CTkToplevel):
     def __init__(self, parent, game_name: str, message: str):
         super().__init__(parent, fg_color=BG_DEEP)
         self.title(f"Remove {game_name}?")
-        s = get_ui_scale()
-        self.geometry(f"{round(self.WIDTH * s)}x{round(self.HEIGHT * s)}")
+        # CTkToplevel scales geometry by window scaling itself.
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
         self.resizable(False, False)
         self.transient(parent)
         self.confirmed = False
@@ -1629,7 +1630,7 @@ class _RemoveConfirmDialog(ctk.CTkToplevel):
         msg_label = ctk.CTkLabel(
             body, text=message,
             font=FONT_NORMAL, text_color=TEXT_MAIN,
-            anchor="nw", justify="left", wraplength=scaled(self.WIDTH - 40)
+            anchor="nw", justify="left", wraplength=self.WIDTH - 40
         )
         msg_label.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 
@@ -1642,13 +1643,13 @@ class _RemoveConfirmDialog(ctk.CTkToplevel):
         )
 
         ctk.CTkButton(
-            btn_bar, text="Cancel", width=scaled(100), height=scaled(30), font=FONT_NORMAL,
+            btn_bar, text="Cancel", width=100, height=30, font=FONT_NORMAL,
             fg_color=BG_HEADER, hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._cancel
         ).pack(side="right", padx=(4, 12), pady=10)
 
         ctk.CTkButton(
-            btn_bar, text="Remove", width=scaled(110), height=scaled(30), font=FONT_BOLD,
+            btn_bar, text="Remove", width=110, height=30, font=FONT_BOLD,
             fg_color=RED_BTN, hover_color=RED_HOV, text_color="white",
             command=self._confirm
         ).pack(side="right", padx=4, pady=10)
@@ -1687,8 +1688,8 @@ class _CleanGameFolderDialog(ctk.CTkToplevel):
     def __init__(self, parent, game_name: str, target_dir):
         super().__init__(parent, fg_color=BG_DEEP)
         self.title(f"Clean Game Folder — {game_name}")
-        s = get_ui_scale()
-        self.geometry(f"{round(self.WIDTH * s)}x{round(self.HEIGHT * s)}")
+        # CTkToplevel scales geometry by window scaling itself.
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
         self.resizable(False, False)
         self.transient(parent)
         self.confirmed = False
@@ -1727,7 +1728,7 @@ class _CleanGameFolderDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             body, text=message,
             font=FONT_NORMAL, text_color=TEXT_MAIN,
-            anchor="nw", justify="left", wraplength=scaled(self.WIDTH - 40)
+            anchor="nw", justify="left", wraplength=self.WIDTH - 40
         ).grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 
         # Button bar
@@ -1739,13 +1740,13 @@ class _CleanGameFolderDialog(ctk.CTkToplevel):
         )
 
         ctk.CTkButton(
-            btn_bar, text="Cancel", width=scaled(100), height=scaled(30), font=FONT_NORMAL,
+            btn_bar, text="Cancel", width=100, height=30, font=FONT_NORMAL,
             fg_color=BG_HEADER, hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._cancel
         ).pack(side="right", padx=(4, 12), pady=10)
 
         ctk.CTkButton(
-            btn_bar, text="Clean Folder", width=scaled(120), height=scaled(30), font=FONT_BOLD,
+            btn_bar, text="Clean Folder", width=120, height=30, font=FONT_BOLD,
             fg_color=RED_BTN, hover_color=RED_HOV, text_color="white",
             command=self._confirm
         ).pack(side="right", padx=4, pady=10)

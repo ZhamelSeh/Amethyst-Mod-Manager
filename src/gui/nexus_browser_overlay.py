@@ -43,6 +43,7 @@ from gui.theme import (
     FONT_SMALL,
     load_icon,
     scaled,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 
@@ -82,8 +83,8 @@ class _FileChooserOverlay(tk.Frame):
         # Auto-size the card to fit the widest row, clamped to [_MIN_WIDTH, _MAX_WIDTH]
         # and the parent's available width.
         try:
-            bold_font = tkfont.Font(font=FONT_BOLD)
-            small_font = tkfont.Font(font=FONT_SMALL)
+            bold_font = tkfont.Font(font=TK_FONT_BOLD)
+            small_font = tkfont.Font(font=TK_FONT_SMALL)
             header_w = bold_font.measure(f"'{mod_name}' has multiple main files.")
             row_w = 0
             for f in files:
@@ -119,11 +120,11 @@ class _FileChooserOverlay(tk.Frame):
         header.grid(row=0, column=0, sticky="ew")
         tk.Label(
             header, text=f"'{mod_name}' has multiple main files.",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_DEEP, anchor="w",
         ).pack(fill="x", padx=pad, pady=(pad, 2))
         tk.Label(
             header, text="Select which file to install:",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP, anchor="w",
         ).pack(fill="x", padx=pad, pady=(0, 8))
 
         # Scrollable file list
@@ -166,7 +167,7 @@ class _FileChooserOverlay(tk.Frame):
             name_text = f.name or f.file_name
             tk.Label(
                 row, text=name_text,
-                font=FONT_BOLD, fg=TEXT_MAIN, bg=bg, anchor="w",
+                font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=bg, anchor="w",
             ).pack(side="left", padx=(12, 6), pady=(4, 0), anchor="nw")
 
             size_bytes = f.size_in_bytes or (f.size_kb * 1024 if f.size_kb else 0)
@@ -178,7 +179,7 @@ class _FileChooserOverlay(tk.Frame):
             if detail_parts:
                 tk.Label(
                     row, text="  —  ".join(detail_parts),
-                    font=FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="e",
+                    font=TK_FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="e",
                 ).pack(side="right", padx=(6, 12), pady=(4, 0))
 
             def _enter(e, r=row):

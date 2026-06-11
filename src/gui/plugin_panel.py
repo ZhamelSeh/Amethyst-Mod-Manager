@@ -336,7 +336,7 @@ class _PackOptionsDialog(tk.Frame):
             card,
             text="Delete loose files after packing",
             variable=self._delete_var,
-            font=(_theme.FONT_FAMILY, _theme.FS11),
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS11),
             text_color=TEXT_MAIN,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             border_color=BORDER, checkmark_color="white",
@@ -367,7 +367,7 @@ class _PackOptionsDialog(tk.Frame):
                 card,
                 text="Separate textures archive",
                 variable=self._split_textures_var,
-                font=(_theme.FONT_FAMILY, _theme.FS11),
+                font=(_theme.FONT_FAMILY, _theme.CTK_FS11),
                 text_color=TEXT_MAIN,
                 fg_color=ACCENT, hover_color=ACCENT_HOV,
                 border_color=BORDER, checkmark_color="white",
@@ -398,7 +398,7 @@ class _PackOptionsDialog(tk.Frame):
             card,
             text="Keep winning conflict files loose",
             variable=self._skip_winners_var,
-            font=(_theme.FONT_FAMILY, _theme.FS11),
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS11),
             text_color=TEXT_MAIN,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             border_color=BORDER, checkmark_color="white",
@@ -428,7 +428,7 @@ class _PackOptionsDialog(tk.Frame):
             btn_row, text="Cancel", width=110, height=34,
             fg_color="transparent", border_width=1,
             text_color=TEXT_MAIN,
-            font=(_theme.FONT_FAMILY, _theme.FS11),
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS11),
             command=self._on_cancel,
         ).pack(side="right", padx=(8, 4))
 
@@ -436,7 +436,7 @@ class _PackOptionsDialog(tk.Frame):
             btn_row, text="Pack", width=110, height=34,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             text_color=TEXT_ON_ACCENT,
-            font=(_theme.FONT_FAMILY, _theme.FS11),
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS11),
             command=self._on_confirm,
         ).pack(side="right")
 
@@ -2179,7 +2179,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
 
         tk.Label(
             header, text="Plugin Filters", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=_theme.FONT_BOLD, anchor="w",
+            font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         close_btn = tk.Label(
@@ -2193,7 +2193,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
 
         clear_btn = tk.Label(
             header, text="Clear all", bg=BG_HEADER, fg=TEXT_DIM,
-            font=_theme.FONT_SMALL, cursor="hand2",
+            font=_theme.TK_FONT_SMALL, cursor="hand2",
         )
         clear_btn.pack(side="right", padx=(0, 4))
         clear_btn.bind("<Button-1>", lambda _e: self._clear_all_plugin_filters())

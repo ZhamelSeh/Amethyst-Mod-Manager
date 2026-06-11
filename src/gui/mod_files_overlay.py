@@ -27,6 +27,7 @@ from gui.theme import (
     FONT_BOLD,
     FONT_SMALL,
     scaled,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 _COL_VERSION  = scaled(90)
@@ -114,7 +115,7 @@ class ModFilesOverlay(tk.Frame):
         tk.Label(
             toolbar,
             text=f"Change Version — {self._mod_name}",
-            font=FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
+            font=TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_HEADER,
             anchor="w",
         ).pack(side="left", padx=12, pady=8, fill="x", expand=True)
 
@@ -162,13 +163,13 @@ class ModFilesOverlay(tk.Frame):
             ipadx = 12 if col == 0 else 8
             tk.Label(
                 self._inner, text=text,
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER, anchor="w",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER, anchor="w",
             ).grid(row=0, column=col, sticky="nsew", ipadx=ipadx, ipady=4)
 
         # Loading placeholder
         self._loading_lbl = tk.Label(
             self._inner, text="Loading files…",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
         )
         self._loading_lbl.grid(row=1, column=0, columnspan=5, padx=20, pady=20, sticky="w")
 
@@ -245,7 +246,7 @@ class ModFilesOverlay(tk.Frame):
         if not files:
             tk.Label(
                 self._inner, text="No files found.",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_DEEP,
             ).grid(row=1, column=0, columnspan=5, padx=20, pady=20, sticky="w")
             return
 
@@ -286,26 +287,26 @@ class ModFilesOverlay(tk.Frame):
             # File name
             tk.Label(
                 self._inner, text=name_text,
-                font=FONT_SMALL, fg=name_fg, bg=bg, anchor="w",
+                font=TK_FONT_SMALL, fg=name_fg, bg=bg, anchor="w",
             ).grid(row=grid_row, column=0, sticky="nsew", ipadx=12, ipady=6)
 
             # Version
             tk.Label(
                 self._inner, text=f.version or "",
-                font=FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
             ).grid(row=grid_row, column=1, sticky="nsew", ipadx=8, ipady=6)
 
             # Category
             tk.Label(
                 self._inner, text=(f.category_name or "").capitalize(),
-                font=FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
             ).grid(row=grid_row, column=2, sticky="nsew", ipadx=8, ipady=6)
 
             # Size
             size_str = _fmt_size(f.size_in_bytes or (f.size_kb * 1024 if f.size_kb else 0))
             tk.Label(
                 self._inner, text=size_str,
-                font=FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
+                font=TK_FONT_SMALL, fg=TEXT_DIM, bg=bg, anchor="w",
             ).grid(row=grid_row, column=3, sticky="nsew", ipadx=8, ipady=6)
 
             # Buttons
@@ -317,7 +318,7 @@ class ModFilesOverlay(tk.Frame):
                 f"?tab=files&file_id={f.file_id}"
             )
             ctk.CTkButton(
-                btn_frame, text="View", width=60, height=scaled(28),
+                btn_frame, text="View", width=60, height=28,
                 fg_color="#444", hover_color="#555",
                 text_color=TEXT_MAIN, font=FONT_SMALL,
                 command=lambda url=nexus_url: open_url(url),
@@ -325,7 +326,7 @@ class ModFilesOverlay(tk.Frame):
 
             fid, fname = f.file_id, f.file_name
             ctk.CTkButton(
-                btn_frame, text="Install", width=70, height=scaled(28),
+                btn_frame, text="Install", width=70, height=28,
                 fg_color=ACCENT, hover_color=ACCENT_HOV,
                 text_color=TEXT_ON_ACCENT, font=FONT_SMALL,
                 command=lambda i=fid, n=fname: self._do_install(i, n),

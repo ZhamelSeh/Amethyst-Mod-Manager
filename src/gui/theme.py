@@ -170,26 +170,32 @@ load_font_family()
 FONT_FAMILY = get_font_family()
 FONT_MONO_FAMILY = "Liberation Mono"
 
-# Base sizes are tuned for Windows/SteamOS at 96 DPI (tk scaling ~1.33).
-# Point sizes are scaled by ui_scale so fonts scale on HiDPI; CustomTkinter
-# does not scale user-provided font tuples.
+# Scaling contract (two widget worlds, two font families of constants):
+#   - CustomTkinter widgets scale user values themselves (set_widget_scaling):
+#     font tuples, width/height/wraplength args, CTkImage sizes and window
+#     geometry are all multiplied by ui_scale inside CTk. They must receive
+#     UNSCALED design values: FONT_*, CTK_FS*, font_sized(), plain ints.
+#   - Plain tk/ttk/canvas widgets scale nothing. They must receive PRE-SCALED
+#     values: TK_FONT_*, FS*, font_sized_px(), scaled().
+# Passing a pre-scaled value to a CTk widget double-scales it (ui_scale²) —
+# that was the historic HiDPI cut-off bug.
 def _font_pt(base: int) -> int:
-    """Return scaled point size for font tuples."""
-    return max(8, round(base * get_ui_scale()))
+    """Return the design point size for CTk font tuples (CTk scales these)."""
+    return max(8, round(base))
 
 
 def font_sized(name: str, base_pt: int, *styles: str) -> tuple:
-    """Return a font tuple (name, size, *styles) with size scaled by ui_scale.
+    """Return an UNSCALED font tuple (name, size, *styles) for CTk widgets.
     Use for one-off fonts instead of hardcoding e.g. font=(FONT_FAMILY, 11)."""
     return (name, _font_pt(base_pt), *styles)
 
 
 def font_sized_px(name: str, base_pt: int, *styles: str) -> tuple:
-    """Return a font tuple with pixel size (negative) for tk widgets.
-    Use for tk.Label/tk.Button where point sizes may not scale on Linux HiDPI."""
+    """Return a ui_scale-scaled negative-pixel font tuple for plain tk widgets."""
     return (name, _pt_to_px(base_pt), *styles)
 
 
+# Unscaled font tuples — CTk widgets only (CTk multiplies by ui_scale itself).
 FONT_NORMAL = (FONT_FAMILY, _font_pt(14))
 FONT_BOLD   = (FONT_FAMILY, _font_pt(14), "bold")
 FONT_SMALL  = (FONT_FAMILY, _font_pt(12))
@@ -206,15 +212,37 @@ FONT_HEADER = (FONT_FAMILY, _font_pt(12), "bold")
 _BASELINE = 1.3333  # 96 DPI / 72 pt
 
 def _pt_to_px(pt: int) -> int:
-    """Convert a design point size to a negative-pixel size (96 DPI baseline)."""
+    """Convert a design point size to a ui_scaled negative-pixel size (tk only)."""
     return -max(8, round(pt * _BASELINE * get_ui_scale()))
 
+
+def _pt_to_px_design(pt: int) -> int:
+    """Convert a design point size to an UNSCALED negative-pixel size (CTk only)."""
+    return -max(8, round(pt * _BASELINE))
+
+# Pre-scaled pixel sizes — plain tk/ttk/canvas widgets only.
 FS9  = _pt_to_px(9)
 FS10 = _pt_to_px(10)
 FS11 = _pt_to_px(11)
 FS12 = _pt_to_px(12)
 FS13 = _pt_to_px(13)
 FS16 = _pt_to_px(16)
+
+# Unscaled pixel sizes — CTk widgets only (CTk multiplies by ui_scale itself).
+CTK_FS9  = _pt_to_px_design(9)
+CTK_FS10 = _pt_to_px_design(10)
+CTK_FS11 = _pt_to_px_design(11)
+CTK_FS12 = _pt_to_px_design(12)
+CTK_FS13 = _pt_to_px_design(13)
+CTK_FS16 = _pt_to_px_design(16)
+
+# Pre-scaled font tuples — plain tk/ttk/canvas widgets only.
+TK_FONT_NORMAL = (FONT_FAMILY, _pt_to_px(14))
+TK_FONT_BOLD   = (FONT_FAMILY, _pt_to_px(14), "bold")
+TK_FONT_SMALL  = (FONT_FAMILY, _pt_to_px(12))
+TK_FONT_MONO   = (FONT_MONO_FAMILY, _pt_to_px(14))
+TK_FONT_SEP    = (FONT_FAMILY, _pt_to_px(12), "bold")
+TK_FONT_HEADER = (FONT_FAMILY, _pt_to_px(12), "bold")
 
 
 def init_fonts(widget) -> None:
@@ -252,15 +280,14 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
 def load_icon(name: str, size: tuple[int, int] = (16, 16)) -> ctk.CTkImage | None:
     """Load a CTkImage from the icons directory. Returns None if file not found.
 
-    Icon size is scaled by ui_scale for HiDPI displays.
+    Pass the UNSCALED design size — CTk scales CTkImages by widget scaling
+    (ui_scale) itself when rendering.
     """
     path = _ICONS_DIR / name
     if not path.is_file():
         return None
-    scale = get_ui_scale()
-    scaled_size = (max(1, round(size[0] * scale)), max(1, round(size[1] * scale)))
     img = PilImage.open(path).convert("RGBA")
-    return ctk.CTkImage(light_image=img, dark_image=img, size=scaled_size)
+    return ctk.CTkImage(light_image=img, dark_image=img, size=(size[0], size[1]))
 
 
 def scaled(px: int | float) -> int:

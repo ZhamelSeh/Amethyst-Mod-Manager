@@ -35,6 +35,7 @@ from gui.theme import (
     FONT_NORMAL,
     FONT_SMALL,
     scaled,
+    TK_FONT_HEADER, TK_FONT_SMALL,
 )
 
 
@@ -410,12 +411,12 @@ class _NexusModListPanel:
 
         tk.Label(
             header, text="Categories", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=FONT_HEADER, anchor="w",
+            font=TK_FONT_HEADER, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         self._cat_panel_status = tk.Label(
             header, text="", bg=BG_HEADER, fg=TEXT_DIM,
-            font=FONT_SMALL, anchor="e",
+            font=TK_FONT_SMALL, anchor="e",
         )
         self._cat_panel_status.pack(side="right", padx=4)
 
@@ -456,14 +457,14 @@ class _NexusModListPanel:
             btn_row, text="Select All",
             bg="#2d7a2d", fg="#ffffff", activebackground="#3a9e3a",
             activeforeground="#ffffff",
-            relief="flat", font=FONT_SMALL, bd=0, highlightthickness=0, cursor="hand2",
+            relief="flat", font=TK_FONT_SMALL, bd=0, highlightthickness=0, cursor="hand2",
             command=_select_all_cats,
         ).pack(side="left", padx=(0, 4))
         tk.Button(
             btn_row, text="Clear All",
             bg=BG_HEADER, fg=TEXT_MAIN, activebackground=BG_HOVER,
             activeforeground="#ffffff",
-            relief="flat", font=FONT_SMALL, bd=0, highlightthickness=0, cursor="hand2",
+            relief="flat", font=TK_FONT_SMALL, bd=0, highlightthickness=0, cursor="hand2",
             command=_clear_all_cats,
         ).pack(side="left")
 

@@ -36,6 +36,7 @@ from gui.theme import (
     TEXT_SEP,
     BORDER,
     FONT_NORMAL,
+    TK_FONT_NORMAL,
     FONT_BOLD,
     FONT_SMALL,
     FONT_HEADER,
@@ -470,7 +471,7 @@ class FomodDialog(ctk.CTkFrame):
         _base_style = dict(
             bg=BG_DEEP, fg=TEXT_MAIN, activebackground=BG_DEEP,
             activeforeground=TEXT_MAIN, selectcolor=BG_DEEP,
-            font=FONT_NORMAL, bd=0, highlightthickness=0, anchor="w",
+            font=TK_FONT_NORMAL, bd=0, highlightthickness=0, anchor="w",
             indicatoron=False, compound="left", padx=4, pady=2,
         )
         _radio_style = {**_base_style, "image": self._radio_off, "selectimage": self._radio_on}

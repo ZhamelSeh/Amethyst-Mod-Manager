@@ -110,7 +110,7 @@ class PluginPanelIniMixin:
         self._ini_content_clear_btn = ctk.CTkButton(
             self._ini_content_status_row, text="✕ Clear", width=60, height=22,
             fg_color=BG_HOVER, hover_color=BG_HOVER_ROW, text_color=TEXT_MAIN,
-            font=(_theme.FONT_FAMILY, _theme.FS10), corner_radius=4,
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS10), corner_radius=4,
             command=self._clear_ini_content_filter,
         )
         self._ini_content_clear_btn.pack(side="left", padx=(0, 8), pady=2)
@@ -258,7 +258,7 @@ class PluginPanelIniMixin:
 
         tk.Label(
             header, text="Ini Filters", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=_theme.FONT_BOLD, anchor="w",
+            font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         close_btn = tk.Label(
@@ -272,7 +272,7 @@ class PluginPanelIniMixin:
 
         clear_btn = tk.Label(
             header, text="Clear all", bg=BG_HEADER, fg=TEXT_DIM,
-            font=_theme.FONT_SMALL, cursor="hand2",
+            font=_theme.TK_FONT_SMALL, cursor="hand2",
         )
         clear_btn.pack(side="right", padx=(0, 4))
         clear_btn.bind("<Button-1>", lambda _e: self._clear_all_ini_filters())
@@ -289,7 +289,7 @@ class PluginPanelIniMixin:
 
         tk.Label(
             scroll_frame, text="By file type",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(2, 4))
 
         self._ifsp_filetype_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
@@ -298,7 +298,7 @@ class PluginPanelIniMixin:
 
         tk.Label(
             scroll_frame, text="By source",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(10, 4))
 
         self._ifsp_source_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
@@ -703,7 +703,7 @@ class PluginPanelIniMixin:
         self._ini_content_search_var = tk.StringVar()
         self._ini_content_search_entry = ctk.CTkEntry(
             bar, textvariable=self._ini_content_search_var,
-            font=(_theme.FONT_FAMILY, _theme.FS10),
+            font=(_theme.FONT_FAMILY, _theme.CTK_FS10),
             fg_color=BG_PANEL, text_color=TEXT_MAIN, border_color=BORDER,
             placeholder_text="e.g.  fCompassPosY",
             width=140, height=26,

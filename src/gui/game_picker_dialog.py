@@ -428,7 +428,7 @@ class GamePickerPanel(tk.Frame):
         ctk.CTkLabel(
             card, text=name,
             font=(_theme.FONT_FAMILY, 12, "bold"), text_color=TEXT_MAIN,
-            wraplength=scaled(self._CARD_W - 8), anchor="center", justify="center",
+            wraplength=self._CARD_W - 8, anchor="center", justify="center",
         ).grid(row=1, column=0, padx=4, pady=(4, 2), sticky="ew")
 
         is_configured = bool(game and game.is_configured())
@@ -988,7 +988,7 @@ class GamePickerPanel(tk.Frame):
         ctk.CTkLabel(
             card, text=display_name,
             font=(_theme.FONT_FAMILY, 12, "bold"), text_color=TEXT_MAIN,
-            wraplength=scaled(self._CARD_W - 8), anchor="center", justify="center",
+            wraplength=self._CARD_W - 8, anchor="center", justify="center",
         ).grid(row=1, column=0, padx=4, pady=(4, 2), sticky="ew")
 
         btn = ctk.CTkButton(

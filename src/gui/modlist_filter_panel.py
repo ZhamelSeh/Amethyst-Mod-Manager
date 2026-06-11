@@ -85,7 +85,7 @@ class ModListFilterPanelMixin:
 
         tk.Label(
             header, text="Filters", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=_theme.FONT_BOLD, anchor="w",
+            font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         close_btn = tk.Label(
@@ -99,7 +99,7 @@ class ModListFilterPanelMixin:
 
         clear_btn = tk.Label(
             header, text="Clear all", bg=BG_HEADER, fg=TEXT_DIM,
-            font=_theme.FONT_SMALL, cursor="hand2",
+            font=_theme.TK_FONT_SMALL, cursor="hand2",
         )
         clear_btn.pack(side="right", padx=(0, 4))
         clear_btn.bind("<Button-1>", lambda _e: self._clear_all_filters())
@@ -115,7 +115,7 @@ class ModListFilterPanelMixin:
 
         tk.Label(
             scroll_frame, text="By status",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(2, 4))
 
         self._fsp_vars: dict[str, tk.IntVar] = {}
@@ -143,7 +143,7 @@ class ModListFilterPanelMixin:
 
         self._fsp_category_label = tk.Label(
             scroll_frame, text="By category",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         )
         self._fsp_category_label.pack(anchor="w", pady=(10, 4))
         self._fsp_category_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
@@ -152,7 +152,7 @@ class ModListFilterPanelMixin:
 
         tk.Label(
             scroll_frame, text="By file type",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(10, 4))
         self._fsp_filetype_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
         self._fsp_filetype_frame.pack(anchor="w", fill="x", pady=(2, 0))

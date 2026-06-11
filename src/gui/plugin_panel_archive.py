@@ -99,7 +99,7 @@ class PluginPanelArchiveMixin:
             variable=self._arc_only_conflicts_var,
             width=140, height=20,
             checkbox_width=16, checkbox_height=16,
-            font=("Cantarell", _theme.FS10),
+            font=("Cantarell", _theme.CTK_FS10),
             text_color=TEXT_MAIN,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             border_color=BORDER, checkmark_color="white",

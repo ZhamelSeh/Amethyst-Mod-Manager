@@ -48,6 +48,7 @@ from gui.theme import (
     FS10,
     FS11,
     scaled,
+ CTK_FS10, CTK_FS11, TK_FONT_NORMAL, TK_FONT_SMALL, TK_FONT_HEADER,
 )
 
 # Smaller, denser fonts to match the Plugins tab. Filenames use FS11
@@ -155,13 +156,11 @@ class _RemoveArchivesConfirmDialog(ctk.CTkToplevel):
     HEIGHT = 460
 
     def __init__(self, parent, paths: list[Path]):
-        from Utils.ui_config import get_ui_scale
-
         super().__init__(parent, fg_color=BG_DEEP)
         self.title("Remove archives")
-        s = get_ui_scale()
-        self.geometry(f"{round(self.WIDTH * s)}x{round(self.HEIGHT * s)}")
-        self.minsize(round(self.WIDTH * s), round(self.HEIGHT * s))
+        # CTkToplevel scales geometry/minsize by window scaling itself.
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
+        self.minsize(self.WIDTH, self.HEIGHT)
         self.transient(parent)
         self.confirmed = False
 
@@ -174,7 +173,7 @@ class _RemoveArchivesConfirmDialog(ctk.CTkToplevel):
         header.grid_propagate(False)
         ctk.CTkLabel(
             header, text=f"Remove {len(paths)} archive(s)?",
-            font=(FONT_FAMILY, FS11, "bold"),
+            font=(FONT_FAMILY, CTK_FS11, "bold"),
             text_color="white", anchor="w",
         ).pack(side="left", padx=12, pady=8)
 
@@ -188,10 +187,10 @@ class _RemoveArchivesConfirmDialog(ctk.CTkToplevel):
             body,
             text="The following archive(s) will be permanently deleted "
                  "from disk. This cannot be undone.",
-            font=(FONT_FAMILY, FS11),
+            font=(FONT_FAMILY, CTK_FS11),
             text_color=TEXT_MAIN,
             anchor="nw", justify="left",
-            wraplength=scaled(self.WIDTH - 40),
+            wraplength=self.WIDTH - 40,
         ).grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
 
         # Scrollable list of every archive
@@ -204,7 +203,7 @@ class _RemoveArchivesConfirmDialog(ctk.CTkToplevel):
             ctk.CTkLabel(
                 list_frame,
                 text=p.name,
-                font=(FONT_FAMILY, FS10),
+                font=(FONT_FAMILY, CTK_FS10),
                 text_color=TEXT_MAIN,
                 anchor="w", justify="left",
             ).pack(anchor="w", fill="x", padx=8, pady=1)
@@ -219,16 +218,16 @@ class _RemoveArchivesConfirmDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             btn_bar, text="Cancel",
-            width=scaled(100), height=scaled(30),
-            font=(FONT_FAMILY, FS11),
+            width=100, height=30,
+            font=(FONT_FAMILY, CTK_FS11),
             fg_color=BG_HEADER, hover_color=BG_HOVER, text_color=TEXT_MAIN,
             command=self._cancel,
         ).pack(side="right", padx=(4, 12), pady=10)
 
         ctk.CTkButton(
             btn_bar, text="Remove",
-            width=scaled(110), height=scaled(30),
-            font=(FONT_FAMILY, FS11, "bold"),
+            width=110, height=30,
+            font=(FONT_FAMILY, CTK_FS11, "bold"),
             fg_color="#a02d2d", hover_color="#c33a3a", text_color="white",
             command=self._confirm,
         ).pack(side="right", padx=4, pady=10)
@@ -412,7 +411,7 @@ class DownloadsPanel:
 
         self._dir_label = tk.Label(
             toolbar, text="", anchor="w",
-            font=FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER,
+            font=TK_FONT_SMALL, fg=TEXT_DIM, bg=BG_HEADER,
         )
         self._dir_label.pack(side="left", padx=4)
 
@@ -538,19 +537,19 @@ class DownloadsPanel:
             )
             cb_mark = c.create_text(
                 0, OFF, text="✓", anchor="center",
-                font=FONT_SMALL, fill=TEXT_MAIN, state="hidden",
+                font=TK_FONT_SMALL, fill=TEXT_MAIN, state="hidden",
             )
 
             name_id = c.create_text(NAME_PAD_L, OFF, text="", anchor="w",
-                                    font=FONT_NORMAL, fill=TEXT_MAIN, state="hidden")
+                                    font=TK_FONT_NORMAL, fill=TEXT_MAIN, state="hidden")
             size_id = c.create_text(0, OFF, text="", anchor="e",
-                                    font=FONT_SMALL, fill=TEXT_DIM, state="hidden")
+                                    font=TK_FONT_SMALL, fill=TEXT_DIM, state="hidden")
 
             btn = tk.Button(
                 c, text="Install",
                 bg="#2d7a2d", fg="#ffffff",
                 activebackground="#3a9e3a", activeforeground="#ffffff",
-                relief="flat", font=FONT_SMALL, bd=0,
+                relief="flat", font=TK_FONT_SMALL, bd=0,
                 cursor="hand2", highlightthickness=0,
             )
             if not LEGACY_WHEEL_REDUNDANT:
@@ -846,11 +845,11 @@ class DownloadsPanel:
             c.itemconfigure(self._pool_size[s], state="hidden")
             c.itemconfigure(self._pool_btn_ids[s], state="hidden")
             label = _truncate_text_cached(
-                tk_call, entry.section_name, FONT_HEADER, max(cw - scaled(16), 20),
+                tk_call, entry.section_name, TK_FONT_HEADER, max(cw - scaled(16), 20),
             )
             c.coords(self._pool_name[s], scaled(8), yc)
             c.itemconfigure(self._pool_name[s], text=label,
-                            font=FONT_HEADER, fill=TEXT_MAIN, state="normal")
+                            font=TK_FONT_HEADER, fill=TEXT_MAIN, state="normal")
             return
 
         # Archive row
@@ -1296,7 +1295,7 @@ class DownloadsPanel:
 
         tk.Label(
             header, text="Download Filters", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=_theme.FONT_BOLD, anchor="w",
+            font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         close_btn = tk.Label(
@@ -1310,7 +1309,7 @@ class DownloadsPanel:
 
         clear_btn = tk.Label(
             header, text="Clear all", bg=BG_HEADER, fg=TEXT_DIM,
-            font=_theme.FONT_SMALL, cursor="hand2",
+            font=_theme.TK_FONT_SMALL, cursor="hand2",
         )
         clear_btn.pack(side="right", padx=(0, 4))
         clear_btn.bind("<Button-1>", lambda _e: self._clear_all_filters())
@@ -1328,7 +1327,7 @@ class DownloadsPanel:
         # --- Status section (installed / not installed) ---
         tk.Label(
             scroll_frame, text="By status",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN,
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN,
             bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(2, 4))
 
@@ -1363,7 +1362,7 @@ class DownloadsPanel:
         # --- Location section ---
         tk.Label(
             scroll_frame, text="By location",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN,
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN,
             bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(10, 4))
 
@@ -1373,7 +1372,7 @@ class DownloadsPanel:
         # --- File type section ---
         tk.Label(
             scroll_frame, text="By file type",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN,
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN,
             bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(10, 4))
 

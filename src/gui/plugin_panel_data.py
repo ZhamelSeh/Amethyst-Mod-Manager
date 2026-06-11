@@ -91,7 +91,7 @@ class PluginPanelDataMixin:
             variable=self._data_only_conflicts_var,
             width=140, height=20,
             checkbox_width=16, checkbox_height=16,
-            font=("Cantarell", _theme.FS10),
+            font=("Cantarell", _theme.CTK_FS10),
             text_color=TEXT_MAIN,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             border_color=BORDER, checkmark_color="white",
@@ -255,7 +255,7 @@ class PluginPanelDataMixin:
 
         tk.Label(
             header, text="Data Filters", bg=BG_HEADER, fg=TEXT_MAIN,
-            font=_theme.FONT_BOLD, anchor="w",
+            font=_theme.TK_FONT_BOLD, anchor="w",
         ).pack(side="left", padx=10, pady=6)
 
         close_btn = tk.Label(
@@ -269,7 +269,7 @@ class PluginPanelDataMixin:
 
         clear_btn = tk.Label(
             header, text="Clear all", bg=BG_HEADER, fg=TEXT_DIM,
-            font=_theme.FONT_SMALL, cursor="hand2",
+            font=_theme.TK_FONT_SMALL, cursor="hand2",
         )
         clear_btn.pack(side="right", padx=(0, 4))
         clear_btn.bind("<Button-1>", lambda _e: self._clear_all_data_filters())
@@ -285,7 +285,7 @@ class PluginPanelDataMixin:
 
         tk.Label(
             scroll_frame, text="By file type",
-            font=_theme.FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
+            font=_theme.TK_FONT_BOLD, fg=TEXT_MAIN, bg=BG_PANEL, anchor="w",
         ).pack(anchor="w", pady=(2, 4))
         self._dfsp_filetype_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
         self._dfsp_filetype_frame.pack(anchor="w", fill="x", pady=(2, 0))

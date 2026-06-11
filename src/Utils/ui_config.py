@@ -110,32 +110,32 @@ def _get_compositor_scale() -> float:
 
     # KDE Plasma 6: per-output scale lives in the compositor; kscreen-doctor
     # exposes it.  Output contains ANSI colour codes so strip those first.
-    try:
-        r = subprocess.run(
-            ["kscreen-doctor", "-o"],
-            capture_output=True, text=True, timeout=3,
-        )
-        clean = _re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
+    # The binary isn't in Flatpak runtimes, so retry via flatpak-spawn --host
+    # (--directory=/ because the sandbox cwd doesn't exist on the host) so
+    # Flatpak and AppImage detect the same scale on the same machine.
+    out = _run_capture(["kscreen-doctor", "-o"])
+    if not out:
+        out = _run_capture(["flatpak-spawn", "--host", "--directory=/", "kscreen-doctor", "-o"])
+    if out:
+        clean = _re.sub(r"\x1b\[[0-9;]*m", "", out)
         scales = [float(m.group(1)) for m in _re.finditer(r"Scale:\s*([\d.]+)", clean)]
         if scales:
             return max(1.0, max(scales))
-    except Exception:
-        pass
 
     # GNOME: integer scaling-factor (fractional scaling is not exposed here,
     # but integer scaling is still better than nothing).  Output looks like
     # "uint32 2" — anchor on the type prefix so the regex doesn't match the
-    # "32" inside "uint32".
-    try:
-        r = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "scaling-factor"],
-            capture_output=True, text=True, timeout=2,
-        )
-        m = _re.search(r"uint32\s+(\d+)", r.stdout)
+    # "32" inside "uint32".  Inside Flatpak, sandboxed gsettings reads default
+    # (empty) dconf, so ask the host when the sandbox copy reports nothing.
+    for argv in (
+        ["gsettings", "get", "org.gnome.desktop.interface", "scaling-factor"],
+        ["flatpak-spawn", "--host", "--directory=/",
+         "gsettings", "get", "org.gnome.desktop.interface", "scaling-factor"],
+    ):
+        out = _run_capture(argv, timeout=2)
+        m = _re.search(r"uint32\s+(\d+)", out)
         if m and int(m.group(1)) > 1:
             return float(int(m.group(1)))
-    except Exception:
-        pass
 
     # Environment variables set by some DEs / launch wrappers
     env_scale = 1.0
@@ -303,19 +303,26 @@ def get_screen_info() -> tuple[int, int, float]:
     if w <= 0 or h <= 0:
         return w, h, _DEFAULT_SCALE
 
-    # XDG Settings portal gives an authoritative scale on every backend that
-    # supports fractional scaling (GNOME/KDE/wlroots).  When it reports a
-    # value, trust it and skip the brittle "derive from monitor height" path —
-    # that path exists only for compositors that don't tell us their scale.
-    portal = _get_portal_scale()
-    if portal > 1.0:
-        scale = round(min(_AUTO_MAX_SCALE, portal) * 20) / 20
-        return w, h, scale
+    # Wayland guard: Tk is X11-only, so on Wayland we run under XWayland and
+    # most compositors (GNOME always, KDE in "Scaled by the system" mode)
+    # already upscale the window. Scaling again on top would double-scale.
+    # The reliable tell is Xft.dpi: when the session expects X11 apps to
+    # scale *themselves*, the DE raises Xft.dpi (e.g. 192 at 200%); when the
+    # compositor scales them, Xft.dpi stays at ~96. So only trust a reported
+    # compositor scale if Xft.dpi confirms we are expected to apply it.
+    on_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    compositor = max(_get_portal_scale(), _get_compositor_scale())
+    if on_wayland and compositor > 1.0 and de_scale <= 1.05:
+        return w, h, 1.0
 
-    # Xft.dpi may already have been overridden to 96 (by a previous launch),
-    # hiding the true compositor scale.  Read it directly from the DE and use
-    # whichever value is larger.
-    de_scale = max(de_scale, _get_compositor_scale())
+    # XDG Settings portal / compositor gives an authoritative scale on every
+    # backend that supports fractional scaling (GNOME/KDE/wlroots). When it
+    # reports a value, trust it and skip the brittle "derive from monitor
+    # height" path — that exists only for setups that don't tell us their
+    # scale.
+    if compositor > 1.0:
+        scale = round(min(_AUTO_MAX_SCALE, compositor) * 20) / 20
+        return w, h, scale
 
     # On multi-monitor setups winfo_screenwidth/height is the combined virtual
     # desktop — use xrandr to get just the primary monitor's physical size.
@@ -329,11 +336,12 @@ def get_screen_info() -> tuple[int, int, float]:
         physical_h = h / de_scale if de_scale > 1.0 else h
     else:
         physical_h = h
-    # UI designed for Steam Deck (1280x800). Use height only; ≤1080 = 1.0.
-    # Never auto-scale below 1.0: detection is unreliable enough on Wayland /
-    # Flatpak / multi-monitor that a sub-1.0 result is almost always wrong —
-    # users with a genuinely tiny screen can still pick one manually.
-    if physical_h >= 1080:
+    # Resolution-only fallback. A bare resolution is a weak scaling signal —
+    # a 27" 1440p desktop monitor at 100% DE scale wants 1.0 — so only kick
+    # in above 1600p (e.g. 4K), capped at _AUTO_MAX_SCALE. Never auto-scale
+    # below 1.0: detection is unreliable enough on Wayland / Flatpak /
+    # multi-monitor that a sub-1.0 result is almost always wrong.
+    if physical_h > 1600:
         scale = min(_AUTO_MAX_SCALE, physical_h / 1080)
     else:
         scale = 1.0
@@ -342,11 +350,12 @@ def get_screen_info() -> tuple[int, int, float]:
 
 
 def detect_hidpi_scale() -> float:
-    """Detect suggested UI scale from primary screen height.
+    """Detect suggested UI scale (compositor-reported, else screen height).
 
-    UI designed for Steam Deck (1280x800). Heights 800–1080 → 1.0.
-    Above 1080 scales up, capped at _AUTO_MAX_SCALE (1.5x) so 4K displays
-    don't get an over-eager auto-scale; manual selection can still go higher.
+    Prefers the DE/compositor's own scale (portal, kscreen-doctor, gsettings,
+    env vars), skipped when the Wayland compositor already upscales XWayland.
+    Resolution fallback: heights ≤1600 → 1.0; above scales by h/1080, capped
+    at _AUTO_MAX_SCALE (1.5x); manual selection can still go higher.
     """
     _, _, scale = get_screen_info()
     return scale

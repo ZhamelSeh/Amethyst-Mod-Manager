@@ -26,9 +26,11 @@ from gui.theme import (
     TEXT_DIM,
     TEXT_MAIN,
     font_sized,
+    font_sized_px,
     FONT_FAMILY,
     scaled,
 )
+from Utils.ui_config import get_ui_scale
 from gui.tk_tooltip import TkTooltip
 
 # Card dimensions (shared with browse)
@@ -159,13 +161,15 @@ class ModCard:
         stats_str = "  ".join(stats_parts)
 
         title_font = font_sized(FONT_FAMILY, 13, "bold")
-        # Rebuild a tkfont.Font from the same tuple so text measurements match
-        # the rendered label (size is already scaled inside font_sized()).
+        # CTk renders tuple sizes as ui_scaled negative pixels; rebuild the
+        # same effective px font so measurements match the rendered label.
         title_measure_font = tkfont.Font(
-            family=title_font[0], size=title_font[1], weight="bold",
+            family=title_font[0],
+            size=-max(1, round(title_font[1] * get_ui_scale())),
+            weight="bold",
         )
-        # Font size is already scaled; measure() returns scaled pixels, so
-        # compare against the scaled design width.
+        # measure() returns real (scaled) pixels, so compare against the
+        # scaled design width.
         title_text = _truncate_to_lines(
             title_text, title_measure_font, scaled(CARD_W - 20), max_lines=2,
         )
@@ -310,7 +314,7 @@ class ModCard:
         self._tooltip = TkTooltip(
             self.card,
             bg=BG_DEEP, fg=TEXT_MAIN,
-            font=font_sized(FONT_FAMILY, 11),
+            font=font_sized_px(FONT_FAMILY, 11),
             wraplength=scaled(320), padx=scaled(8), pady=scaled(6),
             alpha=0.95,
         )

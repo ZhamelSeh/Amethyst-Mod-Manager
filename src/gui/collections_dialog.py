@@ -139,6 +139,7 @@ from gui.theme import (
     font_sized_px,
     FONT_FAMILY,
     scaled,
+    TK_FONT_BOLD, TK_FONT_SMALL,
 )
 
 PAGE_SIZE    = 20
@@ -770,7 +771,7 @@ class CollectionCard:
         tk.Label(
             text_frame, text=name_text,
             bg=BG_PANEL, fg=TEXT_MAIN,
-            font=FONT_BOLD,
+            font=TK_FONT_BOLD,
             wraplength=_wrap, justify="left", anchor="w",
         ).pack(padx=scaled(8), fill="x")
 
@@ -779,7 +780,7 @@ class CollectionCard:
         tk.Label(
             text_frame, text=stats,
             bg=BG_PANEL, fg=TEXT_DIM,
-            font=FONT_SMALL,
+            font=TK_FONT_SMALL,
             anchor="w", wraplength=_wrap,
         ).pack(padx=scaled(8), fill="x")
 
@@ -788,7 +789,7 @@ class CollectionCard:
             tk.Label(
                 text_frame, text=f"by {col.user_name}",
                 bg=BG_PANEL, fg=TEXT_DIM,
-                font=FONT_SMALL,
+                font=TK_FONT_SMALL,
                 anchor="w", wraplength=_wrap,
             ).pack(padx=scaled(8), fill="x")
 
@@ -860,7 +861,7 @@ class CollectionCard:
         wrap = min(scaled(340), scaled(int(self._coll_w * 1.4)))
         self._tooltip = TkTooltip(
             widget,
-            bg=BG_DEEP, fg=TEXT_MAIN, font=FONT_SMALL,
+            bg=BG_DEEP, fg=TEXT_MAIN, font=TK_FONT_SMALL,
             wraplength=wrap, padx=scaled(8), pady=scaled(6),
             alpha=0.95,
         )
@@ -1083,8 +1084,8 @@ class CollectionDetailDialog(tk.Frame):
             rev_frame,
             textvariable=self._revision_var,
             state="disabled",
-            width=scaled(130),
-            height=scaled(26),
+            width=130,
+            height=26,
             fg_color=BG_PANEL,
             hover_color=BG_HOVER,
             border_color=_theme.BG_SEP,
@@ -1109,7 +1110,7 @@ class CollectionDetailDialog(tk.Frame):
         # --- Install progress bar (hidden until a collection install starts) ---
         self._install_progress_bar = ctk.CTkProgressBar(
             self,
-            height=scaled(8),
+            height=8,
             progress_color=ACCENT,
             fg_color=BG_PANEL,
             corner_radius=4,
@@ -1204,7 +1205,7 @@ class CollectionDetailDialog(tk.Frame):
 
         ctk.CTkButton(
             ftr, text="Close",
-            height=scaled(30), fg_color=BTN_GREY_ALT, hover_color=BTN_GREY_ALT_HOV,
+            height=30, fg_color=BTN_GREY_ALT, hover_color=BTN_GREY_ALT_HOV,
             text_color=TEXT_MAIN, font=font_sized(FONT_FAMILY, 12, "bold"),
             border_width=0,
             command=self._on_close,
@@ -1212,7 +1213,7 @@ class CollectionDetailDialog(tk.Frame):
 
         self._install_btn = ctk.CTkButton(
             ftr, text="Install Collection",
-            height=scaled(30), fg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOV,
+            height=30, fg_color=BTN_SUCCESS, hover_color=BTN_SUCCESS_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 12, "bold"),
             border_width=0,
             command=self._on_install_collection,
@@ -1221,7 +1222,7 @@ class CollectionDetailDialog(tk.Frame):
 
         ctk.CTkButton(
             ftr, text="Open on Nexus",
-            height=scaled(30), fg_color=BTN_NEUTRAL, hover_color=BTN_NEUTRAL_HOV,
+            height=30, fg_color=BTN_NEUTRAL, hover_color=BTN_NEUTRAL_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 12, "bold"),
             border_width=0,
             command=self._on_open_on_nexus,
@@ -1229,7 +1230,7 @@ class CollectionDetailDialog(tk.Frame):
 
         self._open_missing_btn = ctk.CTkButton(
             ftr, text="Open Missing on Nexus",
-            height=scaled(30), fg_color=BTN_WARN_BROWN, hover_color=BTN_WARN_BROWN_HOV,
+            height=30, fg_color=BTN_WARN_BROWN, hover_color=BTN_WARN_BROWN_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 12, "bold"),
             border_width=0,
             command=self._on_open_missing_on_nexus,
@@ -1238,7 +1239,7 @@ class CollectionDetailDialog(tk.Frame):
 
         self._reset_btn = ctk.CTkButton(
             ftr, text="Reset Load Order",
-            height=scaled(30), fg_color=BTN_WARN_ORANGE, hover_color=BTN_WARN_ORANGE_HOV,
+            height=30, fg_color=BTN_WARN_ORANGE, hover_color=BTN_WARN_ORANGE_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 12, "bold"),
             border_width=0,
             command=self._on_reset_load_order,
@@ -4475,7 +4476,7 @@ class CollectionDetailDialog(tk.Frame):
 
         pause_btn = ctk.CTkButton(
             btn_row, text="Pause",
-            height=scaled(28), width=scaled(110),
+            height=28, width=110,
             fg_color=BTN_WARN_DEEP, hover_color=BTN_WARN_DEEP_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 10),
             border_width=0,
@@ -4485,7 +4486,7 @@ class CollectionDetailDialog(tk.Frame):
 
         cancel_btn = ctk.CTkButton(
             btn_row, text="Cancel",
-            height=scaled(28), width=scaled(110),
+            height=28, width=110,
             fg_color=BTN_DANGER_DEEP, hover_color=BTN_DANGER_DEEP_HOV,
             text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 10),
             border_width=0,
@@ -6306,7 +6307,7 @@ class CollectionDetailDialog(tk.Frame):
 
             _url = url  # capture for lambda
             ctk.CTkButton(
-                row, text="Open", width=scaled(55), height=scaled(22),
+                row, text="Open", width=55, height=22,
                 fg_color=ACCENT, hover_color=ACCENT_HOV,
                 text_color=TEXT_WHITE, font=font_sized(FONT_FAMILY, 9),
                 border_width=0,
@@ -6712,13 +6713,13 @@ class CollectionsDialog(tk.Frame):
 
         # Close button — top-right, returns to modlist
         ctk.CTkButton(
-            toolbar, text="✕ Close", width=scaled(72), height=scaled(26),
+            toolbar, text="✕ Close", width=72, height=26,
             fg_color=BTN_DANGER, hover_color=BTN_DANGER_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._do_close,
         ).pack(side="right", padx=(4, 8), pady=2)
 
         self._prev_btn = ctk.CTkButton(
-            toolbar, text="← Prev", width=scaled(70), height=scaled(26),
+            toolbar, text="← Prev", width=70, height=26,
             fg_color=BTN_WARN, hover_color=BTN_WARN_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._go_prev_page,
             state="disabled",
@@ -6726,7 +6727,7 @@ class CollectionsDialog(tk.Frame):
         self._prev_btn.pack(side="left", padx=(8, 4), pady=2)
 
         self._next_btn = ctk.CTkButton(
-            toolbar, text="Next →", width=scaled(52), height=scaled(26),
+            toolbar, text="Next →", width=52, height=26,
             fg_color=BTN_WARN, hover_color=BTN_WARN_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._go_next_page,
             state="disabled",
@@ -6734,7 +6735,7 @@ class CollectionsDialog(tk.Frame):
         self._next_btn.pack(side="left", padx=4, pady=2)
 
         self._open_current_btn = ctk.CTkButton(
-            toolbar, text="Open Current", width=scaled(95), height=scaled(26),
+            toolbar, text="Open Current", width=95, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._open_current_collection,
         )
@@ -6743,21 +6744,21 @@ class CollectionsDialog(tk.Frame):
         self._update_open_current_visibility()
 
         self._url_toggle_btn = ctk.CTkButton(
-            toolbar, text="Open URL…", width=scaled(90), height=scaled(26),
+            toolbar, text="Open URL…", width=90, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._toggle_url_bar,
         )
         self._url_toggle_btn.pack(side="left", padx=4, pady=2)
 
         self._workshop_btn = ctk.CTkButton(
-            toolbar, text="Workshop", width=scaled(90), height=scaled(26),
+            toolbar, text="Workshop", width=90, height=26,
             fg_color=BTN_PURPLE, hover_color=BTN_PURPLE_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._open_workshop,
         )
         self._workshop_btn.pack(side="left", padx=4, pady=2)
 
         self._import_manifest_btn = ctk.CTkButton(
-            toolbar, text="Import Manifest", width=scaled(115), height=scaled(26),
+            toolbar, text="Import Manifest", width=115, height=26,
             fg_color=BTN_SUCCESS_DEEP, hover_color=BTN_SUCCESS_DEEP_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._import_manifest,
         )
@@ -6785,7 +6786,7 @@ class CollectionsDialog(tk.Frame):
             self._url_bar,
             textvariable=self._url_var,
             fg_color=BG_ROW, text_color=TEXT_MAIN,
-            font=FONT_SMALL, height=scaled(26),
+            font=FONT_SMALL, height=26,
             border_width=0,
         )
         self._url_entry.pack(side="left", fill="x", expand=True, pady=4)
@@ -6797,13 +6798,13 @@ class CollectionsDialog(tk.Frame):
         self._url_entry.bind("<Escape>", lambda _e: self._toggle_url_bar())
 
         ctk.CTkButton(
-            self._url_bar, text="Go", width=scaled(40), height=scaled(26),
+            self._url_bar, text="Go", width=40, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._go_from_url,
         ).pack(side="left", padx=4, pady=4)
 
         ctk.CTkButton(
-            self._url_bar, text="✕", width=scaled(32), height=scaled(26),
+            self._url_bar, text="✕", width=32, height=26,
             fg_color=BTN_DANGER, hover_color=BTN_DANGER_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._toggle_url_bar,
         ).pack(side="left", padx=(0, 8), pady=4)
@@ -6854,7 +6855,7 @@ class CollectionsDialog(tk.Frame):
             search_bar,
             textvariable=self._search_var,
             fg_color=BG_ROW, text_color=TEXT_MAIN,
-            font=FONT_SMALL, height=scaled(26),
+            font=FONT_SMALL, height=26,
             border_width=0,
         )
         self._search_entry.pack(side="left", fill="x", expand=True, pady=4, padx=(0, 4))
@@ -6865,14 +6866,14 @@ class CollectionsDialog(tk.Frame):
         )
 
         self._search_btn = ctk.CTkButton(
-            search_bar, text="Search", width=scaled(64), height=scaled(26),
+            search_bar, text="Search", width=64, height=26,
             fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
             font=FONT_HEADER, command=self._do_search,
         )
         self._search_btn.pack(side="left", padx=2, pady=4)
 
         self._clear_btn = ctk.CTkButton(
-            search_bar, text="✕", width=scaled(32), height=scaled(26),
+            search_bar, text="✕", width=32, height=26,
             fg_color=BTN_DANGER, hover_color=BTN_DANGER_HOV, text_color=TEXT_WHITE,
             font=FONT_HEADER, command=self._clear_search,
         )

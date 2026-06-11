@@ -313,7 +313,7 @@ def install_nexus_mod_from_entry(app, api, game, mod_panel, log_fn, entry,
 
                 def _show_chooser():
                     if mod_panel:
-                        mod_panel.hide_download_progress(cancel=cancel_ev)
+                        mod_panel.suspend_download_progress(cancel=cancel_ev)
 
                     def _on_pick(result):
                         chosen[0] = result
@@ -338,17 +338,21 @@ def install_nexus_mod_from_entry(app, api, game, mod_panel, log_fn, entry,
             return
 
         if file_info is None:
-            if not user_picked:
-                app.after(0, lambda: (
-                    mod_panel.hide_download_progress(cancel=cancel_ev) if mod_panel else None,
-                    log_fn(f"{label}: No files found for '{mod_name}'."),
-                ))
+            def _no_file():
+                if mod_panel:
+                    mod_panel.hide_download_progress(cancel=cancel_ev)
+                if not user_picked:
+                    log_fn(f"{label}: No files found for '{mod_name}'.")
+            app.after(0, _no_file)
             return
 
         # Re-show download progress after the chooser dialog was dismissed
         if user_picked and mod_panel:
-            app.after(0, lambda: mod_panel.show_download_progress(
-                f"Installing: {mod_name}", cancel=cancel_ev))
+            app.after(0, lambda: (
+                mod_panel.resume_download_progress(cancel=cancel_ev),
+                mod_panel.show_download_progress(
+                    f"Installing: {mod_name}", cancel=cancel_ev),
+            ))
 
         mod_info_for_meta = None
         try:

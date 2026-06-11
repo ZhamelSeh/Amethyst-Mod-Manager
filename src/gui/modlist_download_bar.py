@@ -18,13 +18,14 @@ from gui.theme import scaled
 
 
 class _DlSlot:
-    __slots__ = ("popup", "cancel", "bind_id")
+    __slots__ = ("popup", "cancel", "bind_id", "suspended")
 
     def __init__(self, popup: CTkProgressPopup, cancel: threading.Event,
                  bind_id: str | None):
         self.popup = popup
         self.cancel = cancel
         self.bind_id = bind_id
+        self.suspended = False
 
 
 class ModListDownloadBarMixin:
@@ -49,7 +50,7 @@ class ModListDownloadBarMixin:
         y = ry + rh - margin
         for slot in self._dl_slots:
             p = slot.popup
-            if not p.winfo_exists():
+            if slot.suspended or not p.winfo_exists():
                 continue
             pw, ph = p.winfo_width(), p.winfo_height()
             y -= ph
@@ -121,7 +122,7 @@ class ModListDownloadBarMixin:
     def _deferred_reshow(self) -> None:
         self._dl_cancel_locked = False
         for s in self._dl_slots:
-            if s.popup.winfo_exists():
+            if not s.suspended and s.popup.winfo_exists():
                 s.popup.deiconify()
         self._reposition_all_dl_popups()
 
@@ -166,6 +167,22 @@ class ModListDownloadBarMixin:
         slot.popup.update_message(
             label if label else f"{cur_u:.2f} / {tot_u:.2f} {unit}  ({pct}%)"
         )
+
+    def suspend_download_progress(self, cancel: threading.Event | None = None):
+        """Temporarily hide the popup for `cancel` without destroying its slot."""
+        slot = self._resolve_slot(cancel)
+        if slot and slot.popup.winfo_exists():
+            slot.suspended = True
+            slot.popup.withdraw()
+            self._reposition_all_dl_popups()
+
+    def resume_download_progress(self, cancel: threading.Event | None = None):
+        """Re-show a popup hidden via suspend_download_progress()."""
+        slot = self._resolve_slot(cancel)
+        if slot and slot.popup.winfo_exists():
+            slot.suspended = False
+            slot.popup.deiconify()
+            self._reposition_all_dl_popups()
 
     def hide_download_progress(self, cancel: threading.Event | None = None):
         """Close the popup for `cancel` (or most recent). No-op if already gone."""

@@ -182,6 +182,28 @@ def shutdown_prefix_wineserver(proton_script: Path, compat_data: Path, log_fn=No
         pass
 
 
+def refresh_topbar_deploy_state(widget):
+    """Refresh deploy-dependent UI (profile dropdown colour, framework
+    banners) after a wizard deploy."""
+    def _apply():
+        try:
+            app = widget.winfo_toplevel()
+        except Exception:
+            return
+        try:
+            app._topbar._update_profile_menu_color()
+        except Exception:
+            pass
+        try:
+            app._plugin_panel._refresh_framework_banners()
+        except Exception:
+            pass
+    try:
+        widget.after(0, _apply)
+    except Exception:
+        pass
+
+
 class ProtonPrefixStepMixin:
     """Choose-Proton-Version wizard step + tool prefix env resolution.
 
@@ -211,6 +233,9 @@ class ProtonPrefixStepMixin:
             except Exception:
                 pass
         self.after(delay, _run)
+
+    def _refresh_topbar_deploy_state(self):
+        refresh_topbar_deploy_state(self)
 
     def _get_tool_env(self):
         """Resolve (proton_script, env, compat_data) for the tool's own prefix.

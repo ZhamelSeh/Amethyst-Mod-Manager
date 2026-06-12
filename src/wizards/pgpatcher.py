@@ -544,6 +544,7 @@ class PGPatcherWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
                 deploy_root_folder(target_rf, game_root, mode=deploy_mode, log_fn=_tlog)
 
             self._set_label("_deploy_status", "Deploy complete.", color="#6bc76b")
+            self._refresh_topbar_deploy_state()
             self.after(0, self._show_step_run)
 
         except Exception as exc:

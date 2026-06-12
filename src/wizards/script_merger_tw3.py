@@ -316,6 +316,8 @@ class ScriptMergerWizard(ctk.CTkFrame):
                 deploy_root_folder(target_rf, game_root, mode=deploy_mode, log_fn=_tlog)
 
             self._set_label("_deploy_status", "Deploy complete.", color="#6bc76b")
+            from wizards._proton_prefix import refresh_topbar_deploy_state
+            refresh_topbar_deploy_state(self)
             self.after(0, self._advance_from_deploy)
 
         except Exception as exc:

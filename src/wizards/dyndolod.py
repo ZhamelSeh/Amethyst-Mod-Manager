@@ -419,6 +419,7 @@ class _DynDOLODBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
 
             if success:
                 self._set_label("_deploy_status", "Deploy complete.", color="#6bc76b")
+                self._refresh_topbar_deploy_state()
                 self.after(0, self._show_step_proton)
             else:
                 self._set_label("_deploy_status", "Deploy failed — see log.", color="#e06c6c")

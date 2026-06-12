@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 from gui.theme import (
     ACCENT, ACCENT_HOV, BG_DEEP, BG_HEADER, BG_PANEL,
-    TEXT_DIM, TEXT_MAIN,
+    TEXT_DIM, TEXT_MAIN, TEXT_ON_ACCENT,
     FONT_NORMAL, FONT_BOLD,
 )
 
@@ -67,7 +67,7 @@ class WryeBashWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
 
     _tool_exe_name      = _EXE_NAME
     _tool_display_name  = "Wrye Bash"
-    _proton_step_title  = "Step 2: Choose Proton Version"
+    _proton_step_title  = "Step 3: Choose Proton Version"
     _exe_missing_text   = (
         f"{_EXE_NAME!r} was not found.\n"
         "Please restart the wizard to reinstall Wrye Bash."
@@ -147,7 +147,7 @@ class WryeBashWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
 
     def _show_step_download(self):
         if self._exe is not None:
-            self._show_step_proton()
+            self._show_step_deploy()
             return
 
         self._clear_body()
@@ -198,21 +198,106 @@ class WryeBashWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
 
             self._log(f"Wrye Bash Wizard: extracted {file_count} file(s).")
             self._set_label("_dl_status", f"Downloaded and extracted {tag}.", color="#6bc76b")
-            self.after(500, self._show_step_proton)
+            self.after(500, self._show_step_deploy)
 
         except Exception as exc:
             self._set_label("_dl_status", f"Error: {exc}", color="#e06c6c")
             self._log(f"Wrye Bash Wizard: download error: {exc}")
 
     # ------------------------------------------------------------------
-    # Step 3 — Run Wrye Bash
+    # Step 2 — Deploy modlist
+    # ------------------------------------------------------------------
+
+    def _show_step_deploy(self):
+        self._clear_body()
+
+        ctk.CTkLabel(
+            self._body, text="Step 2: Deploy Modlist",
+            font=FONT_BOLD, text_color=TEXT_MAIN,
+        ).pack(pady=(0, 12))
+
+        ctk.CTkLabel(
+            self._body,
+            text=(
+                "Deploy the modlist so Wrye Bash sees your mods and the\n"
+                "Bashed Patch it creates lands in the modded Data folder.\n"
+                "On restore, the new plugin is moved to Overwrite."
+            ),
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=460,
+        ).pack(pady=(0, 20))
+
+        self._deploy_status = ctk.CTkLabel(
+            self._body, text="",
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=460,
+        )
+        self._deploy_status.pack(pady=(0, 8))
+
+        btn_frame = ctk.CTkFrame(self._body, fg_color="transparent")
+        btn_frame.pack(side="bottom", pady=(8, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="Skip", width=100, height=36,
+            font=FONT_BOLD,
+            fg_color=BG_HEADER, hover_color="#3d3d3d", text_color=TEXT_DIM,
+            command=self._show_step_proton,
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="Deploy", width=160, height=36,
+            font=FONT_BOLD,
+            fg_color=ACCENT, hover_color=ACCENT_HOV, text_color=TEXT_ON_ACCENT,
+            command=self._start_deploy,
+        ).pack(side="left")
+
+    def _start_deploy(self):
+        from gui.dialogs import confirm_deploy_appdata
+        if not confirm_deploy_appdata(self.winfo_toplevel(), self._game):
+            self._set_label("_deploy_status", "Deploy cancelled — AppData folder missing.", color="#e06c6c")
+            return
+        for w in self._body.winfo_children():
+            if isinstance(w, ctk.CTkButton):
+                w.configure(state="disabled")
+        self._set_label("_deploy_status", "Deploying…")
+        threading.Thread(target=self._do_deploy, daemon=True).start()
+
+    def _do_deploy(self):
+        try:
+            from Utils.deploy_pipeline import run_deploy_pipeline
+
+            game = self._game
+            try:
+                root_win = self.winfo_toplevel()
+                profile  = root_win._topbar._profile_var.get()
+            except Exception:
+                profile = "default"
+
+            def _tlog(msg):
+                self.after(0, lambda m=msg: self._log(m))
+
+            success = run_deploy_pipeline(
+                game, profile, log_fn=_tlog,
+            )
+
+            if success:
+                self._set_label("_deploy_status", "Deploy complete.", color="#6bc76b")
+                self._refresh_topbar_deploy_state()
+                self.after(0, self._show_step_proton)
+            else:
+                self._set_label("_deploy_status", "Deploy failed — see log.", color="#e06c6c")
+
+        except Exception as exc:
+            self._set_label("_deploy_status", f"Deploy error: {exc}", color="#e06c6c")
+            self._log(f"Wrye Bash Wizard: deploy error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Step 4 — Run Wrye Bash
     # ------------------------------------------------------------------
 
     def _show_step_run(self):
         self._clear_body()
 
         ctk.CTkLabel(
-            self._body, text="Step 3: Run Wrye Bash",
+            self._body, text="Step 4: Run Wrye Bash",
             font=FONT_BOLD, text_color=TEXT_MAIN,
         ).pack(pady=(0, 12))
 

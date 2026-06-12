@@ -66,11 +66,19 @@ def find_deployed_exe(game: "BaseGame", exe_name) -> Path | None:
     data_path = game.get_mod_data_path()
     if data_path is None or not data_path.is_dir():
         return None
+    fallback = None
     for name in _as_names(exe_name):
         for candidate in data_path.rglob(name):
-            if candidate.is_file():
+            if not candidate.is_file():
+                continue
+            # Stale copies (e.g. leftovers captured into Overwrite) can deploy
+            # alongside the real install; without res/xrc next to the exe,
+            # BodySlide dies with "Failed to load Setup.xrc file!".
+            if (candidate.parent / "res" / "xrc").is_dir():
                 return candidate
-    return None
+            if fallback is None:
+                fallback = candidate
+    return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +113,7 @@ class _BodySlideBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
         self._on_close_cb = on_close or (lambda: None)
         self._game        = game
         self._log         = log_fn or (lambda msg: None)
+        self._output_mod_default = self._output_mod_name
 
         # The prefix is anchored to the staged exe (prefix_* dirs in staging
         # are excluded from filemap scans); the deployed copy is what runs.
@@ -160,6 +169,15 @@ class _BodySlideBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
         if not s.startswith("\\"):
             s = "\\" + s
         return "Z:" + s + "\\"
+
+    def _capture_output_mod_name(self):
+        """Read the Step 1 entry; blank or invalid falls back to the default."""
+        try:
+            raw = self._output_name_entry.get()
+        except Exception:
+            return
+        name = re.sub(r'[\\/:*?"<>|]', "", raw).strip(" .")
+        self._output_mod_name = name or self._output_mod_default
 
     def _ensure_output_mod(self) -> Path:
         staging = self._game.get_effective_mod_staging_path()
@@ -349,6 +367,20 @@ class _BodySlideBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
             font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=460,
         ).pack(pady=(0, 20))
 
+        name_frame = ctk.CTkFrame(self._body, fg_color="transparent")
+        name_frame.pack(pady=(0, 16))
+        ctk.CTkLabel(
+            name_frame, text="Output mod name:",
+            font=FONT_NORMAL, text_color=TEXT_DIM,
+        ).pack(side="left", padx=(0, 8))
+        self._output_name_entry = ctk.CTkEntry(
+            name_frame, width=220, font=FONT_NORMAL,
+            placeholder_text=self._output_mod_default,
+        )
+        self._output_name_entry.pack(side="left")
+        if self._output_mod_name != self._output_mod_default:
+            self._output_name_entry.insert(0, self._output_mod_name)
+
         self._deploy_status = ctk.CTkLabel(
             self._body, text="",
             font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=460,
@@ -362,7 +394,7 @@ class _BodySlideBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
             btn_frame, text="Skip", width=100, height=36,
             font=FONT_BOLD,
             fg_color=BG_HEADER, hover_color="#3d3d3d", text_color=TEXT_DIM,
-            command=self._show_step_proton,
+            command=self._skip_deploy,
         ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
@@ -372,7 +404,12 @@ class _BodySlideBaseWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
             command=self._start_deploy,
         ).pack(side="left")
 
+    def _skip_deploy(self):
+        self._capture_output_mod_name()
+        self._show_step_proton()
+
     def _start_deploy(self):
+        self._capture_output_mod_name()
         from gui.dialogs import confirm_deploy_appdata
         if not confirm_deploy_appdata(self.winfo_toplevel(), self._game):
             self._set_label("_deploy_status", "Deploy cancelled — AppData folder missing.", color="#e06c6c")

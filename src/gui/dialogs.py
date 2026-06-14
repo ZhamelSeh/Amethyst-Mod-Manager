@@ -195,6 +195,17 @@ def confirm_deploy_appdata(parent, game) -> bool:
     appdata_sub = getattr(game, "_APPDATA_SUBPATH", None)
     if appdata_sub is None:
         return True
+    # The warning is only meaningful for games that symlink plugins.txt into
+    # the prefix. Games with no plugins.txt (e.g. Fallout 76, which loads mods
+    # purely via sResourceArchive2List) have nothing for the missing AppData
+    # folder to break — skip the prompt.
+    targets_fn = getattr(game, "_plugins_txt_targets", None)
+    if callable(targets_fn):
+        try:
+            if not targets_fn():
+                return True
+        except Exception:
+            pass
     prefix = None
     try:
         prefix = game.get_prefix_path()
@@ -1936,7 +1947,7 @@ class OverwritesPanel(ctk.CTkFrame):
             rows=files_no_conflict,
         )
 
-        footer = tk.Frame(self, bg=BG_PANEL, height=44)
+        footer = tk.Frame(self, bg=BG_PANEL, height=scaled(44))
         footer.pack(fill="x")
         footer.pack_propagate(False)
         tk.Frame(footer, bg=BORDER, height=1).pack(side="top", fill="x")
@@ -4310,7 +4321,7 @@ class SepColorPanel(ctk.CTkFrame):
         )
 
         # Preview swatch
-        self._swatch = tk.Frame(col, height=32, bg=BG_DEEP, relief="flat", bd=0,
+        self._swatch = tk.Frame(col, height=scaled(32), bg=BG_DEEP, relief="flat", bd=0,
                                 highlightthickness=1, highlightbackground=BORDER)
         self._swatch.pack(fill="x", pady=(0, 10))
 
@@ -5086,10 +5097,11 @@ class MissingReqsPanel(ctk.CTkFrame):
             self._canvas.bind("<Button-4>", lambda e: (self._canvas.yview_scroll(-3, "units"), "break")[-1])
             self._canvas.bind("<Button-5>", lambda e: (self._canvas.yview_scroll( 3, "units"), "break")[-1])
 
-        # Footer
-        footer = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0, height=44)
+        # Footer — let it size to its contents so the checkbox/button row is
+        # never clipped at higher UI scales (a fixed height does not grow with
+        # the scaled font + padding inside).
+        footer = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=0)
         footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
         ctk.CTkFrame(footer, fg_color=BORDER, height=1, corner_radius=0).pack(side="top", fill="x")
         self._ignore_var = tk.BooleanVar(value=mod_name in ignored_set)
         ctk.CTkCheckBox(
@@ -5103,7 +5115,7 @@ class MissingReqsPanel(ctk.CTkFrame):
             footer, text="Close", width=80, height=28,
             fg_color=ACCENT, hover_color=ACCENT_HOV,
             command=self._close,
-        ).pack(side="right", padx=12, pady=8)
+        ).pack(side="right", padx=scaled(12), pady=scaled(8))
 
         threading.Thread(target=self._worker, daemon=True).start()
 
@@ -5335,7 +5347,7 @@ class CollectionInstallModeDialog(tk.Frame):
         row = 0
 
         # Header bar
-        header = tk.Frame(card, bg=BG_HEADER, height=42)
+        header = tk.Frame(card, bg=BG_HEADER, height=scaled(42))
         header.grid(row=row, column=0, sticky="ew")
         header.grid_propagate(False)
         tk.Label(
@@ -5420,7 +5432,7 @@ class CollectionInstallModeDialog(tk.Frame):
         row += 1
 
         # Button bar
-        bar = tk.Frame(card, bg=BG_HEADER, height=44)
+        bar = tk.Frame(card, bg=BG_HEADER, height=scaled(44))
         bar.grid(row=row, column=0, sticky="ew")
         bar.grid_propagate(False)
         ctk.CTkButton(
@@ -5490,7 +5502,7 @@ class CollectionContinueInstallDialog(tk.Frame):
         row = 0
 
         # Header bar
-        header = tk.Frame(card, bg=BG_HEADER, height=42)
+        header = tk.Frame(card, bg=BG_HEADER, height=scaled(42))
         header.grid(row=row, column=0, sticky="ew")
         header.grid_propagate(False)
         tk.Label(
@@ -5519,7 +5531,7 @@ class CollectionContinueInstallDialog(tk.Frame):
         row += 1
 
         # Button bar
-        bar = tk.Frame(card, bg=BG_HEADER, height=44)
+        bar = tk.Frame(card, bg=BG_HEADER, height=scaled(44))
         bar.grid(row=row, column=0, sticky="ew")
         bar.grid_propagate(False)
         ctk.CTkButton(
@@ -5601,7 +5613,7 @@ class CollectionUpdateDialog(tk.Frame):
 
         row = 0
 
-        header = tk.Frame(card, bg=BG_HEADER, height=42)
+        header = tk.Frame(card, bg=BG_HEADER, height=scaled(42))
         header.grid(row=row, column=0, sticky="ew")
         header.grid_propagate(False)
         tk.Label(
@@ -5738,7 +5750,7 @@ class CollectionUpdateDialog(tk.Frame):
         tk.Frame(card, bg=BORDER, height=1).grid(row=row, column=0, sticky="ew")
         row += 1
 
-        bar = tk.Frame(card, bg=BG_HEADER, height=44)
+        bar = tk.Frame(card, bg=BG_HEADER, height=scaled(44))
         bar.grid(row=row, column=0, sticky="ew")
         bar.grid_propagate(False)
         ctk.CTkButton(

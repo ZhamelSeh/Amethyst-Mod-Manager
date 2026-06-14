@@ -1354,6 +1354,13 @@ class Fallout_NV(Fallout_3):
         return "22380"
 
     @property
+    def alt_steam_ids(self) -> list[str]:
+        # 22490 is the Polish/Czech/Russian localized edition of FNV, which is
+        # a separate Steam app sharing the same install/prefix layout. Owners of
+        # that edition must launch through 22490, not 22380.
+        return ["22490"]
+
+    @property
     def nexus_game_domain(self) -> str:
         return "newvegas"
 

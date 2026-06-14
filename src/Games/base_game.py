@@ -652,6 +652,30 @@ class BaseGame(ABC):
         """
         return []
 
+    def effective_steam_id(self) -> str:
+        """Return the Steam App ID that is actually installed for this game.
+
+        Some games ship under more than one App ID (e.g. localized editions or
+        GOTY bundles) that share the same install layout but require launching
+        through the App ID the user actually owns.  ``steam_id`` is the primary
+        ID; :meth:`alt_steam_ids` lists the alternates.
+
+        The configured Proton prefix lives under
+        ``compatdata/<app_id>/pfx``, so when a prefix is set we read the App ID
+        straight out of that path and use it if it matches one of this game's
+        known IDs.  Falls back to the primary ``steam_id`` otherwise.
+        """
+        known = [self.steam_id, *self.alt_steam_ids]
+        known = [str(s) for s in known if s]
+        prefix = self.get_prefix_path()
+        if prefix is not None:
+            # prefix is .../compatdata/<app_id>/pfx (or the compatdata/<app_id>
+            # dir itself); walk up looking for a part that matches a known ID.
+            for part in prefix.parts[::-1]:
+                if part in known:
+                    return part
+        return self.steam_id
+
     @property
     def heroic_app_names(self) -> list[str]: # Legacy, App names are now detected automatically
         """

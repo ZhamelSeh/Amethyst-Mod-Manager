@@ -512,7 +512,10 @@ class ProfileSettingsOverlay(tk.Frame):
         """Show a dialog with the CLI + Steam launch command for this profile."""
         game = _gh._GAMES.get(self._game_name)
         game_id = getattr(game, "game_id", self._game_name) if game else self._game_name
-        steam_id = getattr(game, "steam_id", "") if game else ""
+        steam_id = ""
+        if game:
+            resolver = getattr(game, "effective_steam_id", None)
+            steam_id = (resolver() if callable(resolver) else getattr(game, "steam_id", "")) or ""
 
         appimage_path = os.environ.get("APPIMAGE", "")
         flatpak_id = os.environ.get("FLATPAK_ID", "")

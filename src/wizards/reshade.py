@@ -456,7 +456,8 @@ class ReShadeWizard(ctk.CTkFrame):
             font=FONT_BOLD, text_color=TEXT_MAIN,
         ).pack(pady=(0, 12))
 
-        steam_id = str(getattr(self._game, "steam_id", "") or "")
+        from Utils.steam_finder import game_steam_id
+        steam_id = game_steam_id(self._game)
         prefix_path = getattr(self._game, "_prefix_path", None)
         has_prefix = bool(prefix_path) and Path(prefix_path).is_dir()
         has_steam_id = bool(steam_id)
@@ -523,7 +524,8 @@ class ReShadeWizard(ctk.CTkFrame):
 
     def _do_install_d3dcompiler(self):
         self._d3d_install_btn.configure(state="disabled", text="Installing\u2026")
-        steam_id = str(getattr(self._game, "steam_id", "") or "")
+        from Utils.steam_finder import game_steam_id
+        steam_id = game_steam_id(self._game)
 
         prefix = getattr(self._game, "_prefix_path", None)
 

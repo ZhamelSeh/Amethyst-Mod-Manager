@@ -2450,6 +2450,21 @@ def _get_tool_prefix_env(exe_path: "Path", proton_name: str) -> "tuple[Path, Pat
             )
         except Exception:
             pass
+        # Enable "Show dotfiles" (winecfg) so tools can browse Unix dot-dirs
+        # (e.g. ~/.config, ~/.local) under the Z: drive. Mirrors the winecfg
+        # checkbox: HKCU\Software\Wine\ShowDotFiles = "Y".
+        try:
+            subprocess.run(
+                ["python3", str(proton_script), "run", "reg", "add",
+                 r"HKCU\Software\Wine", "/v", "ShowDotFiles",
+                 "/t", "REG_SZ", "/d", "Y", "/f"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except Exception:
+            pass
 
     return proton_script, prefix_dir, env
 
@@ -3471,7 +3486,9 @@ class _ReplaceModDialog(ctk.CTkToplevel):
         self._rename_entry.select_range(0, "end")
 
     def _on_rename_confirm(self):
+        from gui.mod_name_utils import sanitize_mod_folder_name
         name = self._rename_var.get().strip() if self._rename_var else ""
+        name = sanitize_mod_folder_name(name) if name else ""
         if not name or name == self._mod_name:
             return
         self.result = "rename"

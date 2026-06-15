@@ -397,6 +397,32 @@ class PluginPanelLOOTMixin:
             if lines:
                 sections.append("Incompatible with (currently active):\n" + "\n".join(lines))
 
+        # Dirty edits — CRC-filtered by libloot, so these apply to the
+        # installed version of this plugin.
+        dirty = info.get("dirty") or []
+        if dirty:
+            lines = []
+            for d in dirty:
+                parts = []
+                if d.get("itm"):
+                    parts.append(f"{d['itm']} ITM")
+                if d.get("udr"):
+                    parts.append(f"{d['udr']} UDR")
+                if d.get("nav"):
+                    parts.append(f"{d['nav']} deleted navmesh")
+                counts = ", ".join(parts) if parts else "needs cleaning"
+                line = f"  - {counts}"
+                util = d.get("utility", "")
+                if util:
+                    # Strip a [label](url) markdown wrapper to the bare label.
+                    um = re.match(r'^\[(.+?)\]\(.+?\)$', util)
+                    line += f" — clean with {um.group(1) if um else util}"
+                lines.append(line)
+                detail = d.get("detail", "")
+                if detail:
+                    lines.append(f"    {detail}")
+            sections.append("Dirty edits:\n" + "\n".join(lines))
+
         return "\n\n".join(sections)
 
     def _get_enabled_nexus_mod_ids(self) -> set[int]:
@@ -600,6 +626,15 @@ class PluginPanelLOOTMixin:
                 if fname in enabled_lower:
                     return True
         return False
+
+    def _has_dirty_edits(self, plugin_name: str) -> bool:
+        """True if the plugin has CRC-matched dirty info in the masterlist.
+
+        Drives the brush flag icon, which is shown separately from the generic
+        LOOT-info flag so dirty plugins are visually distinct.
+        """
+        info = self._loot_info.get(plugin_name.lower())
+        return bool(info and info.get("dirty"))
 
     def _load_loot_messages(self) -> None:
         """Populate self._loot_info from <profile>/loot.json (if present)."""

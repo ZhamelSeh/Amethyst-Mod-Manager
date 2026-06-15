@@ -328,7 +328,10 @@ class SortResult:
     #   "requirements":    list[{"name","display_name","detail"}],
     #   "incompatibilities": list[{"name","display_name","detail"}],
     #   "locations":       list[{"name","url"}],
+    #   "dirty":           list[{"crc","itm","udr","nav","utility","detail"}],
+    #   "clean":           list[{"crc","itm","udr","nav","utility","detail"}],
     # }
+    # dirty/clean are CRC-filtered by libloot when conditions are evaluated.
     # Populated from evaluated masterlist/userlist metadata (conditions applied).
     plugin_info: dict[str, dict] = field(default_factory=dict)
     # General (masterlist-wide) messages: list[{"type","text"}].
@@ -424,6 +427,38 @@ def _render_locations(locs) -> list[dict]:
     return out
 
 
+def _render_cleaning_data(entries, language: str = "en") -> list[dict]:
+    """Render a libloot PluginCleaningData list (dirty / clean info).
+
+    When metadata is fetched with evaluate_conditions=True, libloot already
+    filters these against the installed plugin's CRC, so every entry here
+    applies to the plugin's actual on-disk version.
+    """
+    out: list[dict] = []
+    for d in entries or []:
+        # detail is a list[MessageContent] — pick best-match language.
+        detail_text = ""
+        detail_msgs = getattr(d, "detail", None)
+        if detail_msgs:
+            try:
+                picked = loot.select_message_content(list(detail_msgs), language)
+            except Exception:
+                picked = None
+            if picked is None:
+                picked = list(detail_msgs)[0]
+            if picked is not None:
+                detail_text = getattr(picked, "text", "") or ""
+        out.append({
+            "crc": getattr(d, "crc", 0),
+            "itm": getattr(d, "itm_count", 0),
+            "udr": getattr(d, "deleted_reference_count", 0),
+            "nav": getattr(d, "deleted_navmesh_count", 0),
+            "utility": getattr(d, "cleaning_utility", "") or "",
+            "detail": detail_text,
+        })
+    return out
+
+
 def _collect_plugin_info(
     db,
     plugin_names: list[str],
@@ -447,8 +482,13 @@ def _collect_plugin_info(
         requirements = _render_file_list(meta.requirements)
         incompatibilities = _render_file_list(meta.incompatibilities)
         locations = _render_locations(meta.locations)
+        # dirty_info / clean_info are CRC-filtered by libloot when conditions
+        # are evaluated, so they reflect the plugin's installed version.
+        dirty = _render_cleaning_data(meta.dirty_info, language)
+        clean = _render_cleaning_data(meta.clean_info, language)
 
-        if not (messages or requirements or incompatibilities or locations):
+        if not (messages or requirements or incompatibilities or locations
+                or dirty or clean):
             continue
 
         info: dict = {}
@@ -460,6 +500,10 @@ def _collect_plugin_info(
             info["incompatibilities"] = incompatibilities
         if locations:
             info["locations"] = locations
+        if dirty:
+            info["dirty"] = dirty
+        if clean:
+            info["clean"] = clean
         out[name] = info
     return out
 
@@ -486,12 +530,14 @@ def write_loot_info(
 ) -> None:
     """Persist evaluated LOOT metadata to <profile_dir>/loot.json (atomic).
 
-    Schema v2: plugin_info values are dicts {messages, dirty, requirements,
-    incompatibilities, locations}. Fields are omitted when empty.
+    Schema v3: plugin_info values are dicts {messages, requirements,
+    incompatibilities, locations, dirty, clean}. Fields are omitted when empty.
+    dirty/clean are CRC-filtered PluginCleaningData lists (see
+    _render_cleaning_data).
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "version": 2,
+        "version": 3,
         "generated_at": int(time.time()),
         "game_id": game_id,
         "general_messages": general_messages,
@@ -795,15 +841,11 @@ def sort_plugins(
 
         _log(f"Sort complete. {moved} plugin(s) changed position.")
 
-        # CRC-based filtering of dirty_info was tried but required a full
-        # plugin-body load (game.load_plugins) that scales with total plugin
-        # size — unacceptably slow for real profiles. We now skip CRC matching
-        # and render every masterlist dirty entry; tooltips get noisier for
-        # plugins with many known CRCs but sort stays fast.
-
         # Collect evaluated metadata for every plugin. Conditions are evaluated
         # against the plugin headers we just loaded, so this reflects the live
-        # state of the current profile.
+        # state of the current profile. This includes dirty/clean info: libloot
+        # CRC-matches those entries during condition evaluation, so they're
+        # filtered to each plugin's installed version with no full-body load.
         try:
             plugin_info = _collect_plugin_info(db, sortable)
             general_msgs = _collect_general_messages(db)

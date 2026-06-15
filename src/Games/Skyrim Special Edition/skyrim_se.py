@@ -441,7 +441,8 @@ class SkyrimSE(Fallout_3):
         _log(f"  Transferred {linked_mod} mod file(s).")
 
         _log("Step 3: Filling gaps with vanilla files from Data_Core/ ...")
-        linked_core = deploy_core(data_dir, placed, mode=mode, log_fn=_log)
+        linked_core = deploy_core(data_dir, placed, mode=mode, log_fn=_log,
+                                  manifest_dir=filemap.parent)
         _log(f"  Transferred {linked_core} vanilla file(s).")
 
         _log("Step 4: Symlinking plugins.txt into Proton prefix ...")

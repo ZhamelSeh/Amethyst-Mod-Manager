@@ -177,6 +177,73 @@ def _set_winxp_compat(prefix_path: Path, exe: Path, log_fn=None) -> None:
         _log(f"Warning: could not write user.reg: {exc}")
 
 
+def _xedit_settings_ext(xedit_name: str) -> str:
+    """Derive the xEdit viewsettings extension from the build name.
+
+    xEdit names its per-game settings file ``Plugins.<mode>viewsettings``
+    where ``<mode>`` is the build name minus the trailing ``Edit``, lowercased:
+      FO4Edit  -> fo4   (Plugins.fo4viewsettings)
+      SSEEdit  -> sse   (Plugins.sseviewsettings)
+      TES4Edit -> tes4  (Plugins.tes4viewsettings)
+      SF1Edit  -> sf1   (Plugins.sf1viewsettings)
+    """
+    name = xedit_name
+    if name.lower().endswith("edit"):
+        name = name[: -len("edit")]
+    return name.lower()
+
+
+def _seed_xedit_viewsettings(game: "BaseGame", pfx: Path, xedit_name: str, log_fn=None) -> None:
+    """Pre-create the xEdit viewsettings file so the first-run messages
+    ("What's New" + developer message) never appear in a fresh tool prefix.
+
+    A fresh prefix has no ``Plugins.<mode>viewsettings`` next to the game's
+    AppData/Local data dir, so xEdit shows its nag dialogs every time the
+    prefix is recreated. Seeding the gate keys suppresses them:
+
+      [Options]          ShowTip=0            — no Tip of the Day on startup
+      [WhatsNew]         Version=<very high>  — newer than any running build
+      [DeveloperMessage] LastShownOn=<far-future Delphi date serial>
+
+    ``LastShownOn`` is a Delphi ``TDateTime`` integer (days since 1899-12-30);
+    xEdit re-shows the message when it is older than today, so we write a
+    date well in the future. Skips if a settings file already exists (the
+    user's real layout/preferences must win).
+    """
+    _log = log_fn or (lambda _: None)
+
+    subpath = getattr(game, "_APPDATA_SUBPATH", None)
+    if subpath is None:
+        return
+    data_dir = pfx / subpath
+    ext = _xedit_settings_ext(xedit_name)
+    settings_file = data_dir / f"Plugins.{ext}viewsettings"
+
+    if settings_file.exists():
+        return  # real settings already present — don't clobber
+
+    # Far-future Delphi date serial (1899-12-30 epoch) so the developer
+    # message stays dismissed: 2099-01-01 -> 72686.
+    last_shown = 72686
+    content = (
+        "[Options]\r\n"
+        "ShowTip=0\r\n"
+        "\r\n"
+        "[WhatsNew]\r\n"
+        "Version=99999999\r\n"
+        "\r\n"
+        "[DeveloperMessage]\r\n"
+        f"LastShownOn={last_shown}\r\n"
+        "Version=99999999\r\n"
+    )
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        write_atomic_text(settings_file, content)
+        _log(f"seeded {settings_file.name} to suppress first-run messages")
+    except OSError as exc:
+        _log(f"could not seed {settings_file.name}: {exc}")
+
+
 from wizards._proton_prefix import ProtonPrefixStepMixin, shutdown_prefix_wineserver
 
 
@@ -644,6 +711,13 @@ class SSEEditWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
         # fatals when My Games/<Game>/*.ini is missing.
         self._link_plugins_txt(pfx)
         self._link_mygames(pfx)
+
+        # Suppress xEdit's first-run nag dialogs (What's New + developer
+        # message) which reappear every time this tool prefix is recreated.
+        _seed_xedit_viewsettings(
+            self._game, pfx, self._xedit_name,
+            log_fn=lambda msg: self._log(f"{self._tool_display_name} Wizard: {msg}"),
+        )
 
         _set_winxp_compat(compat_data, exe, log_fn=self._log)
 

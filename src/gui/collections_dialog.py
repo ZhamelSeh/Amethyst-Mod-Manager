@@ -2465,6 +2465,105 @@ class CollectionDetailDialog(tk.Frame):
         except Exception as exc:
             self._log(f"Collection update: failed to write modlist.txt: {exc}")
 
+    def _append_reconcile_modlist(
+        self,
+        *,
+        modlist_path: Path,
+        install_order: "list[tuple[int, str]]",
+        pre_existing: "set[str]",
+    ) -> None:
+        """Re-apply the collection's before/after load order on an APPEND run.
+
+        Unlike the new-profile path, this preserves the existing modlist
+        verbatim — mods already present (``pre_existing``, lowercased folder
+        names) keep their exact position and enabled state. Only mods newly
+        installed by this run (those in ``install_order`` whose folder name is
+        NOT in ``pre_existing``) are inserted, positioned relative to their
+        collection-defined neighbours (the before/after rules are already
+        baked into the ``install_order`` sort keys via
+        _resolve_collection_priorities).
+
+        Insertion mirrors _reconcile_update_modlist: place each new mod just
+        before its nearest higher-priority neighbour present in the list, else
+        just after its nearest lower-priority neighbour, else at the top.
+        """
+        try:
+            existing = read_modlist(modlist_path) if modlist_path.is_file() else []
+        except Exception as exc:
+            self._log(f"Collection append: could not read modlist.txt: {exc}")
+            return
+
+        # New mods = install_order entries that were not already in the profile.
+        new_folders: list[tuple[int, str]] = [
+            (pos, folder) for pos, folder in install_order
+            if folder.lower() not in pre_existing
+        ]
+        if not new_folders:
+            self._log("Collection append: no newly-installed mods to reposition.")
+            return
+
+        # The installer (ensure_mod_preserving_position) has already appended the
+        # new mods somewhere in `existing`. Strip them out so we can re-insert at
+        # the correct collection-ordered slot without duplicating.
+        _new_lower = {folder.lower() for _, folder in new_folders}
+        result: list = [
+            e for e in existing
+            if e.is_separator or e.name.lower() not in _new_lower
+        ]
+
+        unplaced: list[str] = []
+        placeable: list[tuple[int, str]] = []
+        for pos, folder in new_folders:
+            (unplaced.append(folder) if pos < 0 else placeable.append((pos, folder)))
+        placeable.sort(key=lambda x: x[0])
+
+        sorted_io = sorted(install_order, key=lambda x: x[0])
+
+        def _find_result_index(folder_lower: str) -> int:
+            for i, e in enumerate(result):
+                if not e.is_separator and e.name.lower() == folder_lower:
+                    return i
+            return -1
+
+        for pos, folder in placeable:
+            insert_idx = None
+            # Right neighbour: nearest higher-priority (pos > this) folder present.
+            for npos, nfolder in sorted_io:
+                if npos <= pos or nfolder == folder:
+                    continue
+                idx = _find_result_index(nfolder.lower())
+                if idx >= 0:
+                    insert_idx = idx
+                    break
+            if insert_idx is None:
+                # Left neighbour: nearest lower-priority (pos < this) folder present.
+                left_candidates = [
+                    (npos, nfolder) for npos, nfolder in sorted_io
+                    if npos < pos and nfolder != folder
+                ]
+                for npos, nfolder in sorted(left_candidates, key=lambda x: -x[0]):
+                    idx = _find_result_index(nfolder.lower())
+                    if idx >= 0:
+                        insert_idx = idx + 1
+                        break
+            if insert_idx is None:
+                insert_idx = 0
+            result.insert(insert_idx, ModEntry(name=folder, enabled=True, locked=False))
+
+        # Unplaced (no schema position) go at the top.
+        for folder in reversed(unplaced):
+            result.insert(0, ModEntry(name=folder, enabled=True, locked=False))
+
+        try:
+            write_modlist(modlist_path, result)
+            self._log(
+                f"Collection append: re-applied load order "
+                f"({len(placeable)} placed, {len(unplaced)} unplaced at top; "
+                f"{len(pre_existing)} existing mods kept in place)"
+            )
+        except Exception as exc:
+            self._log(f"Collection append: failed to write modlist.txt: {exc}")
+
     def _run_install(self, mods, download_link_path, profile_dir, old_profile, downloader, app, total, overwrite_existing: "bool | None" = None, skipped_fids: "set[int] | None" = None, skipped_mods: "list | None" = None, skip_existing: bool = False):
         """Background thread: download then install each mod in collection-defined order.
 
@@ -2521,6 +2620,22 @@ class CollectionDetailDialog(tk.Frame):
         staging_path = self._game.get_effective_mod_staging_path()
         installed = 0
         skipped = 0
+
+        # When appending into an existing profile (overwrite_existing is not
+        # None), capture the modlist as it stands BEFORE any new mods are
+        # installed. Mods already present here must never be moved; only mods
+        # newly installed by this run are repositioned (see
+        # _append_reconcile_modlist).
+        _is_append_run = overwrite_existing is not None
+        _append_pre_existing: "set[str]" = set()
+        if _is_append_run and modlist_path.is_file():
+            try:
+                _append_pre_existing = {
+                    e.name.lower() for e in read_modlist(modlist_path)
+                    if not e.is_separator
+                }
+            except Exception:
+                _append_pre_existing = set()
 
         # ------------------------------------------------------------------
         # Step 1: Download and parse collection.json for authoritative order
@@ -3801,6 +3916,16 @@ class CollectionDetailDialog(tk.Frame):
                     self._log(f"Collection install: wrote modlist.txt with {len(final_entries)} entries")
                 except Exception as exc:
                     self._log(f"Collection install: failed to write modlist.txt: {exc}")
+        elif _is_append_run and not _col_pause.is_set():
+            # Append run: re-apply the collection's before/after load order, but
+            # only reposition mods newly installed by this run — every mod that
+            # was already in the profile keeps its position and enabled state.
+            install_order.sort(key=lambda x: x[0])
+            self._append_reconcile_modlist(
+                modlist_path=modlist_path,
+                install_order=install_order,
+                pre_existing=_append_pre_existing,
+            )
 
         # ------------------------------------------------------------------
         # Step 3b: Install bundled folders + apply binary patches from the
@@ -3849,7 +3974,9 @@ class CollectionDetailDialog(tk.Frame):
 
         # ------------------------------------------------------------------
         # Step 4: Write plugins.txt / loadorder.txt from collection.json.
-        # Also skipped when appending — existing plugin order is preserved.
+        # The full plugins.txt rewrite + LOOT resort is skipped when appending
+        # (existing plugin order is preserved); the append branch below still
+        # writes the collection's group/plugin rules to userlist.yaml.
         #
         # Strategy:
         #   1. Write all plugin rules (after/before/group) and group definitions
@@ -3948,6 +4075,15 @@ class CollectionDetailDialog(tk.Frame):
                 )
             except Exception as exc:
                 self._log(f"Collection install: failed to write plugins.txt: {exc}")
+        elif schema_plugins and _is_append_run and not _col_pause.is_set():
+            # Append run: write the collection's group/plugin (before/after)
+            # rules to userlist.yaml so the author's intent is recorded, but do
+            # NOT re-run LOOT or rewrite plugins.txt — that would reorder the
+            # user's existing plugins.
+            try:
+                _apply_collection_groups(profile_dir, collection_schema, self._log)
+            except Exception as exc:
+                self._log(f"Collection append: failed to write userlist.yaml rules: {exc}")
 
         # ------------------------------------------------------------------
         # Final reconciliation: ensure every mod in modlist.txt is enabled
@@ -3956,9 +4092,11 @@ class CollectionDetailDialog(tk.Frame):
         # Skipped on pause — reconciliation will run on Resume once all
         # mods are actually installed. Also skipped on update runs — the
         # update reconcile above already placed new mods correctly without
-        # disturbing existing mod order or separators.
+        # disturbing existing mod order or separators. Skipped on append runs —
+        # _append_reconcile_modlist already placed the new mods without moving
+        # the user's existing mods (this reconcile would shove them around).
         # ------------------------------------------------------------------
-        if install_order and modlist_path.is_file() and not _col_pause.is_set() and not _is_update_run:
+        if install_order and modlist_path.is_file() and not _col_pause.is_set() and not _is_update_run and not _is_append_run:
             try:
                 _folder_to_key: dict[str, int] = {
                     folder: key for key, folder in install_order
@@ -5016,6 +5154,19 @@ class CollectionDetailDialog(tk.Frame):
         installed = 0
         skipped = 0
 
+        # Append run: snapshot the modlist before any new mods land so we only
+        # reposition newly-installed mods (see _append_reconcile_modlist).
+        _is_append_run = overwrite_existing is not None
+        _append_pre_existing: "set[str]" = set()
+        if _is_append_run and modlist_path.is_file():
+            try:
+                _append_pre_existing = {
+                    e.name.lower() for e in read_modlist(modlist_path)
+                    if not e.is_separator
+                }
+            except Exception:
+                _append_pre_existing = set()
+
         # ------------------------------------------------------------------
         # Step 1: Parse collection.json (same as _run_install)
         # ------------------------------------------------------------------
@@ -5671,11 +5822,22 @@ class CollectionDetailDialog(tk.Frame):
                         write_separator_locks(profile_dir, _locks)
                 except Exception as exc:
                     self._log(f"Manual install: failed to write modlist.txt: {exc}")
+        elif _is_append_run:
+            # Append: reposition only newly-installed mods per the collection's
+            # before/after order; existing mods keep their position.
+            install_order.sort(key=lambda x: x[0])
+            self._append_reconcile_modlist(
+                modlist_path=modlist_path,
+                install_order=install_order,
+                pre_existing=_append_pre_existing,
+            )
 
         # ------------------------------------------------------------------
         # Step 7: Write plugins.txt / loadorder.txt from collection.json.
         # Same strategy as _run_install step 4: write userlist rules first,
         # then run LOOT so it applies them, fall back to flat list if needed.
+        # The full rewrite is skipped on append; the append branch below still
+        # writes the collection's group/plugin rules to userlist.yaml.
         # ------------------------------------------------------------------
         schema_plugins: list[dict] = collection_schema.get("plugins", [])
         if schema_plugins and overwrite_existing is None:
@@ -5760,13 +5922,22 @@ class CollectionDetailDialog(tk.Frame):
                 )
             except Exception as exc:
                 self._log(f"Manual install: failed to write plugins.txt: {exc}")
+        elif schema_plugins and _is_append_run:
+            # Append: write the collection's group/plugin rules to userlist.yaml
+            # without re-running LOOT or rewriting plugins.txt.
+            try:
+                _apply_collection_groups(profile_dir, collection_schema, self._log)
+            except Exception as exc:
+                self._log(f"Manual install (append): failed to write userlist.yaml rules: {exc}")
 
         # ------------------------------------------------------------------
         # Step 8: Final reconciliation (skipped on update runs — the update
         # reconcile already placed new mods correctly without disturbing
-        # existing mod order or separators).
+        # existing mod order or separators; skipped on append runs —
+        # _append_reconcile_modlist already handled placement without moving
+        # existing mods).
         # ------------------------------------------------------------------
-        if install_order and modlist_path.is_file() and not _is_update_run:
+        if install_order and modlist_path.is_file() and not _is_update_run and not _is_append_run:
             try:
                 _folder_to_key = {folder: key for key, folder in install_order}
                 _existing = read_modlist(modlist_path)

@@ -248,6 +248,123 @@ def restore_pak_file(pak_path: Path, backup_path: Path, log_fn=None) -> int:
         _log(f"  [WARN] PAK file not found for restore: {pak_path}")
         return 0
 
+    restored = _restore_entries_in_pak(pak_path, entries, log_fn=_log)
+
+    backup_path.unlink(missing_ok=True)
+    return restored
+
+
+# ---------------------------------------------------------------------------
+# Game-root restore manifest (failsafe)
+# ---------------------------------------------------------------------------
+#
+# A second copy of the patch backups, written into the *game root* itself
+# (next to the PAKs) so the original hash bytes survive even if the manager's
+# Profiles/ directory is deleted while mods are still deployed.  Without it, a
+# wipe-while-deployed leaves the PAKs permanently invalidated with no way back.
+#
+# Format (mirrors the per-pak pak_patches JSON, but keyed by pak filename so a
+# single file covers every patched PAK):
+#   { "v": 1,
+#     "paks": { "<pak filename>": [ {"index": <int>, "original": "<hex>"}, ... ] } }
+
+ROOT_MANIFEST_NAME = ".mm_pak_restore.json"
+
+
+def root_manifest_path(game_root: Path) -> Path:
+    return game_root / ROOT_MANIFEST_NAME
+
+
+def update_root_manifest(game_root: Path, pak_path: Path, backup_path: Path,
+                         log_fn=None) -> None:
+    """Mirror a pak's pak_patches backup into the game-root manifest.
+
+    Reads the just-written *backup_path* (the authoritative per-pak JSON) and
+    merges its entries into ``<game_root>/.mm_pak_restore.json`` under the
+    pak's filename.  Existing entries for other paks are preserved.  Written
+    atomically via ``.tmp`` → rename.
+    """
+    _log = _safe_log(log_fn)
+    try:
+        saved = json.loads(backup_path.read_text(encoding="utf-8"))
+        entries = saved.get("entries", [])
+    except (json.JSONDecodeError, KeyError, OSError):
+        return
+    if not entries:
+        return
+
+    manifest = root_manifest_path(game_root)
+    data: dict = {"v": 1, "paks": {}}
+    if manifest.exists():
+        try:
+            existing = json.loads(manifest.read_text(encoding="utf-8"))
+            if isinstance(existing.get("paks"), dict):
+                data = existing
+                data.setdefault("v", 1)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    data["paks"][pak_path.name] = entries
+    tmp = manifest.with_suffix(manifest.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(manifest)
+    except OSError as exc:
+        _log(f"  [WARN] Could not write root PAK manifest: {exc}")
+        tmp.unlink(missing_ok=True)
+
+
+def remove_root_manifest(game_root: Path) -> None:
+    """Delete the game-root restore manifest (after a clean full restore)."""
+    root_manifest_path(game_root).unlink(missing_ok=True)
+
+
+def restore_from_root_manifest(game_root: Path, log_fn=None) -> int:
+    """Restore every PAK listed in the game-root manifest.
+
+    Used as a failsafe / by the manual repair wizard when the manager's own
+    pak_patches/ backups are gone (e.g. the manager was reinstalled while mods
+    were deployed).  Only restores entries that are still zeroed on disk, so
+    re-running it is safe and so are paks that were already healed normally.
+
+    Returns the number of entries restored.  Removes the manifest on success.
+    """
+    _log = _safe_log(log_fn)
+    manifest = root_manifest_path(game_root)
+    if not manifest.exists():
+        return 0
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        paks = data.get("paks", {})
+    except (json.JSONDecodeError, OSError) as exc:
+        _log(f"  [WARN] Could not read root PAK manifest: {exc}")
+        return 0
+    if not isinstance(paks, dict):
+        return 0
+
+    total = 0
+    for pak_name, entries in paks.items():
+        pak_path = game_root / pak_name
+        if not pak_path.exists():
+            _log(f"  [WARN] PAK not found for manifest restore: {pak_name}")
+            continue
+        total += _restore_entries_in_pak(pak_path, entries, log_fn=_log)
+
+    if total:
+        remove_root_manifest(game_root)
+    return total
+
+
+def _restore_entries_in_pak(pak_path: Path, entries: list[dict], log_fn=None) -> int:
+    """Write the original hash bytes for *entries* back into *pak_path*.
+
+    Skips entries that are not currently zeroed (already restored / never
+    patched) so the operation is idempotent.  Shared by the per-pak restore
+    and the manifest restore.
+    """
+    _log = _safe_log(log_fn)
+    if not entries:
+        return 0
     restored = 0
     with pak_path.open("r+b") as fh:
         header_bytes = fh.read(_HEADER_SIZE)
@@ -257,19 +374,23 @@ def restore_pak_file(pak_path: Path, backup_path: Path, log_fn=None) -> int:
             _log(f"  [WARN] Could not read PAK header during restore {pak_path.name}: {exc}")
             return 0
         hash_off = _HASH_OFFSET_V2 if entry_size == _ENTRY_SIZE_V2 else _HASH_OFFSET_V4
-
         for e in entries:
-            idx = e["index"]
-            original_bytes = bytes.fromhex(e["original"])
+            try:
+                idx = e["index"]
+                original_bytes = bytes.fromhex(e["original"])
+            except (KeyError, ValueError):
+                continue
             file_off = _HEADER_SIZE + idx * entry_size + hash_off
+            fh.seek(file_off)
+            current = fh.read(8)
+            # Only restore entries we actually zeroed; leave anything else alone.
+            if current != b"\x00" * 8:
+                continue
             fh.seek(file_off)
             fh.write(original_bytes)
             restored += 1
-
     if restored:
         _log(f"  Restored {restored} entr{'y' if restored == 1 else 'ies'} in {pak_path.name}.")
-
-    backup_path.unlink(missing_ok=True)
     return restored
 
 

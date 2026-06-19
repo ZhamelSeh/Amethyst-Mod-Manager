@@ -151,7 +151,7 @@ from gui.nexus_browser_overlay import NexusBrowserOverlay
 from gui.changelog_overlay import ChangelogOverlay
 from Nexus.nexus_meta import ensure_installed_stamp, read_meta, write_meta
 from Utils.config_paths import get_download_cache_dir, list_all_cache_dirs
-from Utils.ui_config import load_column_widths, load_column_order, load_normalize_folder_case, load_sort_state, save_sort_state, load_column_hidden, load_show_summary_tooltips
+from Utils.ui_config import load_column_widths, load_column_order, load_normalize_folder_case, load_sort_state, save_sort_state, load_column_hidden, load_show_summary_tooltips, load_hide_bsa_conflicts
 
 
 from gui.text_utils import truncate_text as _truncate_text_for_width, clear_truncate_cache as _clear_truncate_cache
@@ -559,6 +559,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._bsa_conflict_map:  dict[str, int]      = {}
         self._bsa_overrides:     dict[str, set[str]] = {}
         self._bsa_overridden_by: dict[str, set[str]] = {}
+        # When True, skip BSA conflict parsing entirely and hide the flags.
+        self._hide_bsa_conflicts: bool = load_hide_bsa_conflicts()
         self._on_filemap_rebuilt: callable | None = None  # called after each filemap rebuild
         self._on_mod_selected_cb: callable | None = None  # called when a mod is selected
         self._filemap_pending: bool = False   # True while a background rebuild is running
@@ -4836,6 +4838,23 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         if not self._show_summary_tooltips:
             self._tooltip.hide()
 
+    def refresh_hide_bsa_conflicts(self) -> None:
+        """Re-read the hide_bsa_conflicts setting (live update).
+
+        Rebuilds the filemap when the setting changed so BSA conflict flags
+        appear/disappear (and parsing starts/stops) without an app restart.
+        """
+        new_val = load_hide_bsa_conflicts()
+        if new_val == self._hide_bsa_conflicts:
+            return
+        self._hide_bsa_conflicts = new_val
+        if new_val:
+            # Clear the existing flags immediately; the rebuild will skip parsing.
+            self._bsa_conflict_map = {}
+            self._bsa_overrides = {}
+            self._bsa_overridden_by = {}
+        self._rebuild_filemap()
+
     def _get_mod_description(self, mod_name: str) -> str:
         """Return the cached Nexus summary for *mod_name*, or "" if none.
 
@@ -8337,9 +8356,11 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             _path_remap = getattr(_captured_game, "mod_deploy_path_remap", {}) or {}
             _prertx_prefixes = [k.lower() for k in _path_remap]
         # Archive extensions for BSA conflict detection (Bethesda games only).
-        # Empty frozenset disables the BSA pipeline entirely.
+        # Empty frozenset disables the BSA pipeline entirely. The "Hide BSA
+        # conflicts" setting also empties it so the (expensive) parsing is
+        # skipped and no flags are computed.
         _archive_exts: frozenset[str] = frozenset()
-        if _captured_game is not None:
+        if _captured_game is not None and not self._hide_bsa_conflicts:
             _archive_exts = frozenset(getattr(_captured_game, "archive_extensions", frozenset()) or frozenset())
         # Plugin load order + extensions — used so BSA conflicts resolve by
         # plugin load order (the engine loads BSAs via their owning plugin),
@@ -8553,6 +8574,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         indices can be sluggish.
         """
         if self._modlist_path is None or self._filemap_path is None:
+            return
+        if self._hide_bsa_conflicts:
             return
         _captured_game = getattr(self, "_game", None)
         _archive_exts: frozenset[str] = frozenset()

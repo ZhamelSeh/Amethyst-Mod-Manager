@@ -2221,6 +2221,8 @@ class App(ctk.CTk):
             self._hide_plugin_overlay("_settings_panel")
             if hasattr(self._mod_panel, "refresh_show_summary_tooltips"):
                 self._mod_panel.refresh_show_summary_tooltips()
+            if hasattr(self._mod_panel, "refresh_hide_bsa_conflicts"):
+                self._mod_panel.refresh_hide_bsa_conflicts()
 
         self._show_plugin_overlay(
             "_settings_panel",

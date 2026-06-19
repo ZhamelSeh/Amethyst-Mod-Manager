@@ -6,6 +6,7 @@
 - Filtered prefix folders out when running the eslifer wizard to prevent an error in the application
 - The nexus browser can now be searched with a partial name match or by modid
 - Added a popout button to the fomod installer that turns it into a separate window
+- Added an option in settings to hide bsa conflicts
 
 - v1.3.10
 - Added Fallout 76 support

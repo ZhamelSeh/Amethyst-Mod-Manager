@@ -81,9 +81,19 @@ class FomodDialog(ctk.CTkFrame):
                  active_files: set[str] | None = None,
                  saved_selections: dict[str, dict[str, list[str]]] | None = None,
                  selections_path=None,
-                 on_done=None):
+                 on_done=None,
+                 on_rehost=None,
+                 is_popped_out: bool = False,
+                 initial_state: dict | None = None):
         super().__init__(parent, fg_color=BG_DEEP, corner_radius=0)
         self._on_done = on_done or (lambda r: None)
+        # Called when the user clicks the popout/dock toggle. Signature:
+        #   on_rehost(state: dict, currently_popped_out: bool)
+        # The launcher rebuilds the dialog in the other host (overlay vs.
+        # separate window), since Tk forbids reparenting a widget across
+        # toplevels — the live widgets can't move, but the state can.
+        self._on_rehost = on_rehost
+        self._is_popped_out = is_popped_out
 
         # State
         self._config        = config
@@ -97,6 +107,15 @@ class FomodDialog(ctk.CTkFrame):
         self._saved_selections = saved_selections or {}
         self._visible_steps: list[InstallStep] = []
         self._current_idx   = 0
+        # Restored when re-hosting (popout/dock) so the user stays on the same
+        # step with the same selections.
+        if initial_state:
+            self._flag_state    = dict(initial_state.get("flag_state", {}))
+            self._all_selections = {
+                k: {gk: list(gv) for gk, gv in v.items()}
+                for k, v in initial_state.get("all_selections", {}).items()
+            }
+            self._current_idx   = initial_state.get("current_idx", 0)
         # Keeps {group_name: {"vars": ..., "type": group_type, "plugins": [Plugin, ...]}}
         self._group_widgets: dict[str, dict] = {}
         # Prevent CTkImage GC
@@ -112,7 +131,10 @@ class FomodDialog(ctk.CTkFrame):
         self._build_ui()
         self._refresh_visible_steps()
         if self._visible_steps:
-            self._load_step(0)
+            # Clamp the restored index in case visibility changed.
+            start = min(max(self._current_idx, 0), len(self._visible_steps) - 1)
+            self._current_idx = start
+            self._load_step(start)
         else:
             # No steps — treat as instant finish
             self._on_finish()
@@ -179,6 +201,7 @@ class FomodDialog(ctk.CTkFrame):
         bar.grid_propagate(False)
         bar.grid_columnconfigure(0, weight=1)
         bar.grid_columnconfigure(1, weight=0)
+        bar.grid_columnconfigure(2, weight=0)
 
         self._mod_name_label = ctk.CTkLabel(
             bar, text=self._config.name,
@@ -189,7 +212,27 @@ class FomodDialog(ctk.CTkFrame):
         self._progress_label = ctk.CTkLabel(
             bar, text="", font=FONT_SMALL, text_color=TEXT_DIM, anchor="e"
         )
-        self._progress_label.grid(row=0, column=1, sticky="e", padx=12, pady=8)
+        self._progress_label.grid(row=0, column=1, sticky="e", padx=(12, 4), pady=8)
+
+        # Popout / dock toggle. Hidden when no re-host handler is wired up.
+        if self._on_rehost is not None:
+            self._popout_btn = ctk.CTkButton(
+                bar, text=("⤡" if self._is_popped_out else "⤢"),
+                width=32, height=28, font=FONT_NORMAL,
+                fg_color=BG_HEADER, hover_color=BG_HOVER,
+                text_color=TEXT_MAIN, corner_radius=4,
+                command=self._on_popout_toggle,
+            )
+            self._popout_btn.grid(row=0, column=2, sticky="e", padx=(0, 8), pady=6)
+            try:
+                from gui.ctk_tooltip import CTkToolTip
+                CTkToolTip(
+                    self._popout_btn,
+                    message="Dock back to main window" if self._is_popped_out
+                    else "Open in a separate window",
+                )
+            except Exception:
+                pass
 
     def _build_content_area(self):
         content = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
@@ -432,9 +475,38 @@ class FomodDialog(ctk.CTkFrame):
         # On Tk >= 8.7 CTkScrollableFrame already handles <MouseWheel> via its own
         # bind_all — we only need to supplement Button-4/5 for Tk 8.6.
         root = self.winfo_toplevel()
+        self._scroll_root = root
+        self._scroll_bind_ids: list[tuple[str, str]] = []
         if not LEGACY_WHEEL_REDUNDANT:
-            root.bind_all("<Button-4>", _on_scroll, add="+")
-            root.bind_all("<Button-5>", _on_scroll, add="+")
+            self._scroll_bind_ids.append(
+                ("<Button-4>", root.bind_all("<Button-4>", _on_scroll, add="+")))
+            self._scroll_bind_ids.append(
+                ("<Button-5>", root.bind_all("<Button-5>", _on_scroll, add="+")))
+            # Ensure the global handlers are torn down on every teardown path
+            # (finish, cancel, popout), not just the popout toggle.
+            self.bind("<Destroy>", self._on_self_destroy, add="+")
+
+    def _on_self_destroy(self, event):
+        # Only act on our own destruction, not child-widget destroys that
+        # bubble up through the same binding.
+        if event.widget is self:
+            self._teardown_scroll_binding()
+
+    def _teardown_scroll_binding(self):
+        """Remove the bind_all wheel handlers we installed on the root window.
+
+        Important when this dialog lives in a popout Toplevel sharing the same
+        Tk interpreter: a leftover bind_all referencing our destroyed canvas
+        would fire on every wheel notch in any window."""
+        root = getattr(self, "_scroll_root", None)
+        if root is None:
+            return
+        for seq, bind_id in getattr(self, "_scroll_bind_ids", []):
+            try:
+                root.unbind_all(seq)
+            except Exception:
+                pass
+        self._scroll_bind_ids = []
 
     def _bind_scroll_children(self):
         pass  # Handled globally by _setup_scroll_binding
@@ -1046,3 +1118,38 @@ class FomodDialog(ctk.CTkFrame):
         self.result = None
         self.destroy()
         self._on_done(None)
+
+    # ------------------------------------------------------------------
+    # Popout / dock
+    # ------------------------------------------------------------------
+
+    def _snapshot_state(self) -> dict:
+        """Capture everything needed to rebuild this dialog elsewhere."""
+        # Persist the current page's widget state before snapshotting.
+        self._save_step_selections()
+        return {
+            "flag_state": dict(self._flag_state),
+            "all_selections": {
+                k: {gk: list(gv) for gk, gv in v.items()}
+                for k, v in self._all_selections.items()
+            },
+            "current_idx": self._current_idx,
+        }
+
+    def _on_popout_toggle(self):
+        """Hand off to the launcher, which rebuilds us in the other host.
+
+        Tk can't reparent a live widget across toplevels, so we ship our state
+        and let the launcher construct a fresh FomodDialog in the new host. We
+        tear ourselves down here WITHOUT firing on_done (the install is still
+        in progress — only finish/cancel resolve it).
+        """
+        if self._on_rehost is None:
+            return
+        state = self._snapshot_state()
+        going_to_popout = not self._is_popped_out
+        # Detach our scroll bindings before destroying so they don't linger on
+        # the (possibly shared) root window.
+        self._teardown_scroll_binding()
+        self.destroy()
+        self._on_rehost(state, going_to_popout)

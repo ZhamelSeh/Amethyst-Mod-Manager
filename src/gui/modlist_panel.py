@@ -5289,7 +5289,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                 note_multi_names.append(tname)
                 if tname in self._mod_notes_map:
                     note_multi_remove_names.append(tname)
-                if tname in self._missing_reqs:
+                if (tname in self._missing_reqs
+                        and tname not in self._ignored_missing_reqs):
                     missing_reqs_multi_names.append(tname)
 
         return SimpleNamespace(

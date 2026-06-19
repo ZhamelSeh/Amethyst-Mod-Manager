@@ -218,6 +218,8 @@ from gui.dialogs import (
     _SetPrefixDialog,
     queue_rename_after_install,
 )
+import customtkinter as ctk
+from gui.theme import BG_DEEP
 from gui.fomod_dialog import FomodDialog
 from gui.bain_dialog import BainDialog
 from gui.mod_name_utils import _strip_title_metadata, _suggest_mod_names, sanitize_mod_folder_name
@@ -312,36 +314,135 @@ def _show_set_prefix_dialog_on_main(parent_window, required, file_list, mod_name
                         result_holder, done_event, result_attr="result")
 
 
-def _show_fomod_dialog_on_main(parent_window, config, mod_root,
-                               installed_files: set, active_files: set,
-                               saved_selections, selections_path,
-                               result_holder: list, done_event: threading.Event) -> None:
-    """Run on main thread. Creates a FomodDialog overlay on the mod-panel container."""
+def _launch_fomod_dialog(parent_window, config, mod_root,
+                         installed_files: set, active_files: set,
+                         saved_selections, selections_path, on_done) -> None:
+    """Create a FomodDialog overlay on the mod-panel container, with a popout
+    toggle that re-hosts it in a separate window. Must run on the main thread.
+
+    Tk can't reparent a live widget across toplevels, so the popout/dock toggle
+    tears down the current FomodDialog and builds a fresh one in the other host,
+    carrying its in-progress state. *on_done* fires exactly once (finish/cancel),
+    regardless of how many times the user pops out and docks."""
     import traceback as _tb
     try:
         container = getattr(parent_window, '_mod_panel_container', None) or parent_window
 
-        def on_done(result):
-            result_holder[0] = result
-            done_event.set()
+        # Mutable cell holding the live popout Toplevel (None when docked).
+        popout_win: list = [None]
+        _caller_on_done = on_done
 
-        panel = FomodDialog(container, config, mod_root,
-                            installed_files=installed_files,
-                            active_files=active_files,
-                            saved_selections=saved_selections,
-                            selections_path=selections_path,
-                            on_done=on_done)
-        try:
-            if panel.winfo_exists():
-                panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-                panel.lift()
-                panel.focus_set()
-        except Exception:
-            _tb.print_exc()
+        def on_done(result):
+            # Tear down a lingering popout window if the install resolved while
+            # popped out.
+            win = popout_win[0]
+            if win is not None:
+                popout_win[0] = None
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+            _caller_on_done(result)
+
+        def build(state: dict | None, popped_out: bool):
+            """(Re)create the FomodDialog in the requested host."""
+            # Always start by clearing any existing popout window — when docking,
+            # the dialog inside it has already been destroyed by the toggle.
+            win = popout_win[0]
+            if win is not None:
+                popout_win[0] = None
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            def on_rehost(new_state, going_to_popout):
+                build(new_state, going_to_popout)
+
+            common = dict(
+                installed_files=installed_files,
+                active_files=active_files,
+                saved_selections=saved_selections,
+                selections_path=selections_path,
+                on_done=on_done,
+                on_rehost=on_rehost,
+                is_popped_out=popped_out,
+                initial_state=state,
+            )
+
+            if popped_out:
+                host = ctk.CTkToplevel(parent_window, fg_color=BG_DEEP)
+                host.title(config.name or "FOMOD Installer")
+                # Size to roughly the main window so the layout matches.
+                try:
+                    root = parent_window.winfo_toplevel()
+                    root.update_idletasks()
+                    w = max(int(root.winfo_width() * 0.85), 720)
+                    h = max(int(root.winfo_height() * 0.85), 520)
+                    x = root.winfo_rootx() + (root.winfo_width() - w) // 2
+                    y = root.winfo_rooty() + (root.winfo_height() - h) // 2
+                    host.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
+                except Exception:
+                    host.geometry("960x640")
+                host.minsize(640, 480)
+                host.grid_rowconfigure(0, weight=1)
+                host.grid_columnconfigure(0, weight=1)
+                # Closing the popout window cancels the install (mirrors the
+                # overlay's Cancel button, so the worker thread doesn't hang).
+                host.protocol("WM_DELETE_WINDOW",
+                              lambda: panel_ref[0]._on_cancel()
+                              if panel_ref[0] is not None else on_done(None))
+                popout_win[0] = host
+
+                panel = FomodDialog(host, config, mod_root, **common)
+                panel.grid(row=0, column=0, sticky="nsew")
+                panel_ref[0] = panel
+                try:
+                    # Deliberately NOT transient/topmost: a transient window
+                    # stays stacked above its parent on most Linux WMs, which
+                    # makes the manager underneath unusable. We want an ordinary
+                    # independent window the user can freely raise/lower. Just
+                    # bring it to the front once on open.
+                    host.attributes("-topmost", False)
+                    host.lift()
+                    host.focus_force()
+                    panel.focus_set()
+                except Exception:
+                    _tb.print_exc()
+            else:
+                panel = FomodDialog(container, config, mod_root, **common)
+                panel_ref[0] = panel
+                try:
+                    if panel.winfo_exists():
+                        panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+                        panel.lift()
+                        panel.focus_set()
+                except Exception:
+                    _tb.print_exc()
+
+        # Holds the currently-live FomodDialog so the popout window's close
+        # button can route through its cancel path.
+        panel_ref: list = [None]
+
+        build(None, popped_out=False)
     except Exception:
         _tb.print_exc()
-        result_holder[0] = None
+        on_done(None)
+
+
+def _show_fomod_dialog_on_main(parent_window, config, mod_root,
+                               installed_files: set, active_files: set,
+                               saved_selections, selections_path,
+                               result_holder: list, done_event: threading.Event) -> None:
+    """Worker-thread entry point: marshal the FOMOD dialog onto the main thread
+    and resolve the worker's done_event when the user finishes/cancels."""
+    def _on_done(result):
+        result_holder[0] = result
         done_event.set()
+
+    _launch_fomod_dialog(parent_window, config, mod_root,
+                         installed_files, active_files,
+                         saved_selections, selections_path, _on_done)
 
 
 def _show_bain_dialog_on_main(parent_window, subpackages, mod_root,
@@ -1688,7 +1789,6 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                 try:
                     if threading.current_thread() is threading.main_thread():
                         import tkinter as tk
-                        container = getattr(parent_window, '_mod_panel_container', None) or parent_window
                         _done_var = tk.BooleanVar(value=False)
                         _result_holder: list = [None]
 
@@ -1696,18 +1796,11 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                             _result_holder[0] = result
                             _done_var.set(True)
 
-                        panel = FomodDialog(container, config, mod_root,
-                                            installed_files=installed_files,
-                                            active_files=active_files,
-                                            saved_selections=saved_selections,
-                                            selections_path=sel_path,
-                                            on_done=_on_done)
+                        _launch_fomod_dialog(parent_window, config, mod_root,
+                                             installed_files, active_files,
+                                             saved_selections, sel_path, _on_done)
                         try:
-                            if panel.winfo_exists():
-                                panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-                                panel.lift()
-                                panel.focus_set()
-                                parent_window.wait_variable(_done_var)
+                            parent_window.wait_variable(_done_var)
                         except Exception:
                             import traceback as _tb; _tb.print_exc()
                         dialog_result = _result_holder[0]

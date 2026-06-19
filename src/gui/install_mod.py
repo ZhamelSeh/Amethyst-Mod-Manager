@@ -225,7 +225,7 @@ from gui.bain_dialog import BainDialog
 from gui.mod_name_utils import _strip_title_metadata, _suggest_mod_names, sanitize_mod_folder_name
 from Utils.fomod_parser import detect_fomod, parse_module_config, parse_mod_info
 from Utils.fomod_installer import resolve_files, check_module_dependencies
-from Utils.bain_installer import detect_bain, resolve_bain_files
+from Utils.bain_installer import detect_bain, resolve_bain_files, bain_unwrap_single_folder
 from Utils.ui_config import load_dev_mode, load_rename_mod_after_install
 from Utils.config_paths import get_fomod_selections_path, get_bain_selections_path
 from Utils.plugins import read_plugins, append_plugin, read_loadorder, write_loadorder, PluginEntry
@@ -1882,10 +1882,10 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                     kind = "[dir]" if is_folder else "[file]"
                     log_fn(f"[FOMOD DEV]   {kind} {src!r} → {dst!r}")
         elif getattr(game, "supports_bain", True) and (bain_subpkgs := detect_bain(
-                _unwrap_single_folder(extract_dir),
+                bain_unwrap_single_folder(extract_dir),
                 extra_exts=getattr(game, "plugin_extensions", None))):
             # --- BAIN (Wrye Bash bundled archive) install ---
-            extract_dir = _unwrap_single_folder(extract_dir)
+            extract_dir = bain_unwrap_single_folder(extract_dir)
             mod_root = extract_dir
             log_fn(f"BAIN package detected — {len(bain_subpkgs)} sub-package(s).")
 

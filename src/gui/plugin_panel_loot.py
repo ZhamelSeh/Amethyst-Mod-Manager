@@ -294,7 +294,23 @@ class PluginPanelLOOTMixin:
                 if i >= len(_before) or _before[i] != n
             )
 
+            # Whether the *full* order (vanilla included) changed. LOOT pins
+            # vanilla masters to canonical positions, so a re-sort can leave
+            # every mod in place (visible_moved == 0) while still repositioning
+            # vanilla plugins. We still want to commit that so the panel shows
+            # the canonical vanilla order rather than a stale interleaving.
+            _full_changed = [e.name for e in self._plugin_entries] != [
+                e.name for e in new_entries
+            ]
+
             if visible_moved == 0 and not locked_indices:
+                # No mod the user manages moved — report "already sorted", but
+                # still persist if only vanilla plugins shifted (cosmetic).
+                if _full_changed:
+                    self._plugin_entries = new_entries
+                    write_loadorder(
+                        self._plugins_path.parent / "loadorder.txt", new_entries,
+                    )
                 self._log("Load order is already sorted.")
                 self._refresh_plugins_tab()
                 _done_notif = CTkNotification(

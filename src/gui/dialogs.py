@@ -4376,7 +4376,7 @@ class BundleOptionsPanel(ctk.CTkFrame):
 
 _CUSTOM_HANDLERS_SUBFOLDER_TEMPLATE = (
     "https://api.github.com/repos/ChrisDKN/Amethyst-Mod-Manager/contents/"
-    "Custom%20Handlers/{folder}?ref=main"
+    "Custom%20Handlers/{folder}?ref=Resources"
 )
 
 

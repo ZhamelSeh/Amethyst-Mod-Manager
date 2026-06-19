@@ -2340,7 +2340,7 @@ class App(ctk.CTk):
 
         _PLUGINS_API_URL = (
             "https://api.github.com/repos/ChrisDKN/Amethyst-Mod-Manager/contents/"
-            "Plugins?ref=main"
+            "Plugins?ref=Resources"
         )
 
         def _do():

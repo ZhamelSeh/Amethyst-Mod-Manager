@@ -7,6 +7,8 @@
 - The nexus browser can now be searched with a partial name match or by modid
 - Added a popout button to the fomod installer that turns it into a separate window
 - Added an option in settings to hide bsa conflicts
+- Added a use profile specfic saves option (Limited to bethesda games for now)
+- Profile specfic ini files are now taken from the ini files folder in the profile and are also symlinked so edits persist
 
 - v1.3.10
 - Added Fallout 76 support

@@ -316,7 +316,8 @@ def _show_set_prefix_dialog_on_main(parent_window, required, file_list, mod_name
 
 def _launch_fomod_dialog(parent_window, config, mod_root,
                          installed_files: set, active_files: set,
-                         saved_selections, selections_path, on_done) -> None:
+                         saved_selections, selections_path, on_done,
+                         loose_files: set | None = None) -> None:
     """Create a FomodDialog overlay on the mod-panel container, with a popout
     toggle that re-hosts it in a separate window. Must run on the main thread.
 
@@ -362,6 +363,7 @@ def _launch_fomod_dialog(parent_window, config, mod_root,
             common = dict(
                 installed_files=installed_files,
                 active_files=active_files,
+                loose_files=loose_files,
                 saved_selections=saved_selections,
                 selections_path=selections_path,
                 on_done=on_done,
@@ -433,7 +435,8 @@ def _launch_fomod_dialog(parent_window, config, mod_root,
 def _show_fomod_dialog_on_main(parent_window, config, mod_root,
                                installed_files: set, active_files: set,
                                saved_selections, selections_path,
-                               result_holder: list, done_event: threading.Event) -> None:
+                               result_holder: list, done_event: threading.Event,
+                               loose_files: set | None = None) -> None:
     """Worker-thread entry point: marshal the FOMOD dialog onto the main thread
     and resolve the worker's done_event when the user finishes/cancels."""
     def _on_done(result):
@@ -442,7 +445,8 @@ def _show_fomod_dialog_on_main(parent_window, config, mod_root,
 
     _launch_fomod_dialog(parent_window, config, mod_root,
                          installed_files, active_files,
-                         saved_selections, selections_path, _on_done)
+                         saved_selections, selections_path, _on_done,
+                         loose_files=loose_files)
 
 
 def _show_bain_dialog_on_main(parent_window, subpackages, mod_root,
@@ -1713,6 +1717,24 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                 # Also add anything in loadorder.txt not already captured
                 for name in read_loadorder(loadorder_path):
                     installed_files.add(name.lower())
+            # Build the loose-file set from the current filemap (deployed mod
+            # files). FOMOD <fileDependency> nodes may reference an arbitrary
+            # asset path (e.g. "textures/foo.dds") rather than a plugin name;
+            # MO2 evaluates those against the whole virtual file tree. The
+            # filemap is "<rel_str>\t<mod_name>" per line, sitting next to
+            # plugins.txt. Keys are lower-cased, forward-slash separated.
+            loose_files: set[str] = set()
+            if _plugins_dir is not None:
+                _filemap_path = _plugins_dir / "filemap.txt"
+                try:
+                    with open(_filemap_path, "r", encoding="utf-8") as _fmf:
+                        for _line in _fmf:
+                            _rel = _line.split("\t", 1)[0].strip()
+                            if _rel:
+                                loose_files.add(_rel.replace("\\", "/").lower())
+                except OSError:
+                    pass
+
             # Add vanilla/DLC plugins. Engine loads these implicitly so they
             # never appear in plugins.txt. Use _vanilla_plugins_for_game which
             # prefers Data_Core/ (pristine backup) over Data/ (may contain
@@ -1731,7 +1753,7 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
             # let the install proceed (the user may be installing prerequisites
             # out of order and will resolve it by enabling/installing other mods).
             _modgate_ok, _modgate_msg = check_module_dependencies(
-                config, installed_files, active_files
+                config, installed_files, active_files, loose_files
             )
             if not _modgate_ok:
                 log_fn("WARNING: this mod's <moduleDependencies> gate is not "
@@ -1798,7 +1820,8 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
 
                         _launch_fomod_dialog(parent_window, config, mod_root,
                                              installed_files, active_files,
-                                             saved_selections, sel_path, _on_done)
+                                             saved_selections, sel_path, _on_done,
+                                             loose_files=loose_files)
                         try:
                             parent_window.wait_variable(_done_var)
                         except Exception:
@@ -1815,6 +1838,7 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
                                     installed_files, active_files,
                                     saved_selections, sel_path,
                                     result_holder, done_event,
+                                    loose_files=loose_files,
                                 ),
                             )
                             done_event.wait()
@@ -1837,7 +1861,8 @@ def install_mod_from_archive(archive_path: str, parent_window, log_fn,
 
                 final_selections = dialog_result
 
-            file_list = resolve_files(config, final_selections, installed_files, active_files)
+            file_list = resolve_files(config, final_selections, installed_files,
+                                      active_files, loose_files)
             is_fomod_install = True
             log_fn(f"FOMOD complete — {len(file_list)} file(s) to install.")
 

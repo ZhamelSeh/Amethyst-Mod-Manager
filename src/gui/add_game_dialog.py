@@ -117,6 +117,7 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._auto_deploy_var = tk.BooleanVar(value=False)
         self._archive_invalidation_var = tk.BooleanVar(value=True)
         self._profile_ini_files_var = tk.BooleanVar(value=False)
+        self._profile_saves_var = tk.BooleanVar(value=False)
         self._patch_version_var = tk.StringVar(value="8")
         self._flatpak_symlink_warned = False
 
@@ -153,6 +154,8 @@ class ReconfigureGamePanel(ctk.CTkFrame):
             self._archive_invalidation_var.set(game.archive_invalidation)
             if hasattr(game, "profile_ini_files"):
                 self._profile_ini_files_var.set(game.profile_ini_files)
+            if hasattr(game, "profile_saves"):
+                self._profile_saves_var.set(game.profile_saves)
             if hasattr(game, "get_patch_version"):
                 self._patch_version_var.set(str(game.get_patch_version()))
         else:
@@ -414,17 +417,25 @@ class ReconfigureGamePanel(ctk.CTkFrame):
 
         if hasattr(self._game, "profile_ini_files"):
             ctk.CTkCheckBox(
-                body, text="Use profile-specific INI files (placed in profile folder, symlinked to My Games on deploy)",
+                body, text="Use profile-specific INI files (placed in the profile's 'ini files' folder, symlinked to My Games on deploy)",
                 variable=self._profile_ini_files_var,
                 font=FONT_NORMAL, text_color=TEXT_MAIN,
                 fg_color=ACCENT, hover_color=ACCENT_HOV,
             ).grid(row=20, column=0, sticky="w", padx=16, pady=(0, 8))
 
+        if hasattr(self._game, "profile_saves") and getattr(self._game, "supports_profile_saves", True):
+            ctk.CTkCheckBox(
+                body, text="Use profile-specific saves (Saves folder in the profiles folder)",
+                variable=self._profile_saves_var,
+                font=FONT_NORMAL, text_color=TEXT_MAIN,
+                fg_color=ACCENT, hover_color=ACCENT_HOV,
+            ).grid(row=21, column=0, sticky="w", padx=16, pady=(0, 8))
+
         if hasattr(self._game, "get_patch_version"):
             ctk.CTkLabel(
                 body, text="Game Patch Version",
                 font=FONT_BOLD, text_color=TEXT_SEP, anchor="w"
-            ).grid(row=21, column=0, sticky="ew", padx=16, pady=(6, 2))
+            ).grid(row=22, column=0, sticky="ew", padx=16, pady=(6, 2))
             ctk.CTkLabel(
                 body,
                 text=("Select the patch level your game is running. "
@@ -433,9 +444,9 @@ class ReconfigureGamePanel(ctk.CTkFrame):
                       "Patch 6 = legacy ModOrder schema)."),
                 font=FONT_SMALL, text_color=TEXT_DIM, wraplength=560,
                 anchor="w", justify="left",
-            ).grid(row=22, column=0, sticky="ew", padx=16, pady=(0, 4))
+            ).grid(row=23, column=0, sticky="ew", padx=16, pady=(0, 4))
             _patch_row = ctk.CTkFrame(body, fg_color="transparent")
-            _patch_row.grid(row=23, column=0, sticky="w", padx=16, pady=(0, 10))
+            _patch_row.grid(row=24, column=0, sticky="w", padx=16, pady=(0, 10))
             for label, value in (("Patch 8", "8"), ("Patch 7", "7"), ("Patch 6", "6")):
                 ctk.CTkRadioButton(
                     _patch_row, text=label,
@@ -1377,6 +1388,8 @@ class ReconfigureGamePanel(ctk.CTkFrame):
         self._game.archive_invalidation = self._archive_invalidation_var.get()
         if hasattr(self._game, "set_profile_ini_files"):
             self._game.set_profile_ini_files(self._profile_ini_files_var.get())
+        if hasattr(self._game, "set_profile_saves"):
+            self._game.set_profile_saves(self._profile_saves_var.get())
         if hasattr(self._game, "set_patch_version"):
             try:
                 self._game.set_patch_version(int(self._patch_version_var.get()))

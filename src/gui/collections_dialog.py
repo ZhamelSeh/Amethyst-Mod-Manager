@@ -6762,6 +6762,11 @@ class CollectionDetailDialog(tk.Frame):
                     final_loadorder = vanilla_prefix + loadorder_lines
                     loadorder_path.write_text("\n".join(final_loadorder) + "\n", encoding="utf-8")
                     self._log(f"Reset load order: wrote loadorder.txt with {len(final_loadorder)} plugins ({len(vanilla_prefix)} vanilla)")
+                    # Direct writes bypass write_plugins/write_loadorder — drop
+                    # the read cache so the next read re-parses (Utils/plugins).
+                    from Utils.plugins import invalidate_plugins_cache
+                    invalidate_plugins_cache(plugins_path)
+                    invalidate_plugins_cache(loadorder_path)
                 except Exception as exc:
                     self._log(f"Reset load order: failed to write plugins.txt: {exc}")
 

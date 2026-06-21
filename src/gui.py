@@ -1346,6 +1346,10 @@ class App(ctk.CTk):
                     data_dir=prune_data_dir,
                     disabled_plugins=disabled_map,
                     star_prefix=self._plugin_panel._plugins_star_prefix,
+                    # Reuse the panel's shared mtime-cached filemap parse so the
+                    # ~74k-line file isn't re-read here on every toggle.
+                    filemap_entries=self._plugin_panel._get_parsed_filemap(
+                        Path(filemap_path_str)),
                 )
                 if removed:
                     self._status.log(f"plugins.txt: removed {removed} plugin(s).")

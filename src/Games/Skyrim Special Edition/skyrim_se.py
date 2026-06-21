@@ -181,7 +181,27 @@ class SkyrimSE(Fallout_3):
     def wizard_tools(self) -> list[WizardTool]:
         from wizards.pandora import find_pandora_exe
         from wizards.bodyslide import find_mod_exe
+        from wizards.sse_display_tweaks import is_installed as sdt_installed
+        from wizards.engine_fixes import is_installed as ef_installed
         pandora_tools = []
+        if sdt_installed(self):
+            pandora_tools.append(WizardTool(
+                id="sse_display_tweaks_skyrimse",
+                label="SSE Display Tweaks Config",
+                description="Create or edit SSEDisplayTweaks.ini with per-setting toggles and descriptions.",
+                dialog_class_path="wizards.sse_display_tweaks.SSEDisplayTweaksWizard",
+                category="INI Tweaks",
+                extra={"_full_width_overlay": True},
+            ))
+        if ef_installed(self):
+            pandora_tools.append(WizardTool(
+                id="engine_fixes_skyrimse",
+                label="Engine Fixes Config",
+                description="Create or edit EngineFixes.toml with per-setting toggles and descriptions.",
+                dialog_class_path="wizards.engine_fixes.EngineFixesWizard",
+                category="INI Tweaks",
+                extra={"_full_width_overlay": True},
+            ))
         if find_pandora_exe(self) is not None:
             pandora_tools.append(WizardTool(
                 id="run_pandora_skyrimse",

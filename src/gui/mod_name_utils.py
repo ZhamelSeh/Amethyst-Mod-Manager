@@ -40,6 +40,73 @@ def sanitize_mod_folder_name(name: str) -> str:
     return s if s else "Mod"
 
 
+# New Nexus download format (rolled out 2026-06-11):
+#   "<mod name>_<version>_<slug>"      e.g. "FDE_Senna_1.0.1_xDLPwGTYs"
+#                                           "Canidae_-_A_Wolf_Replacer_1.3_587RqT2ex"
+#                                           "Skyrim_Sewers_PL_1_FpnkHZi8m"  (version "1")
+# Spaces in the title are encoded as underscores; <version> is a number that may
+# be a plain integer ("1", "79"), dotted ("2.0.2"), or carry a trailing tag
+# ("2.0.2BETA"); <slug> is a random base62 token Nexus appends per upload.
+# Nexus has signalled they intend to drop the slug in a later change, leaving:
+#   "<mod name>_<version>"             e.g. "FDE_Senna_1.0.1"
+#
+# Two anchors, because the version alone is too weak a signal:
+#   * _WITH_SLUG: the trailing token IS a random slug (see ``_slug_like``), so we
+#     trust the segment before it as the version and accept even a bare integer.
+#     This is the live format and matches every real download.
+#   * _NO_SLUG (future slug-less format): no random token to anchor on, so the
+#     trailing "_<version>" is taken as the version even when it is a bare
+#     integer ("Domain_Expansion_Release_V1_1" -> "Domain Expansion Release V1").
+#     This can occasionally eat a real title number, so the un-stripped
+#     ``filename_stem`` is still offered as a fallback candidate in the rename
+#     dialog (see ``_suggest_mod_names``).
+_NEXUS_SLUG = r"[A-Za-z0-9]{6,16}"
+_NEW_NEXUS_WITH_SLUG_RE = re.compile(
+    rf"^(?P<name>.+?)_(?P<ver>\d+(?:\.\d+)*[A-Za-z]*)_(?P<slug>{_NEXUS_SLUG})$"
+)
+_NEW_NEXUS_NO_SLUG_RE = re.compile(
+    r"^(?P<name>.+?)_(?P<ver>\d+(?:\.\d+)*[A-Za-z]*)$"
+)
+
+
+def _slug_like(token: str) -> bool:
+    """True if *token* resembles a random Nexus upload slug (base62 noise)
+    rather than a meaningful word an uploader might append after a version."""
+    if not (6 <= len(token) <= 16):
+        return False
+    has_digit = any(c.isdigit() for c in token)
+    has_alpha = any(c.isalpha() for c in token)
+    has_upper = any(c.isupper() for c in token)
+    has_lower = any(c.islower() for c in token)
+    return (has_digit and has_alpha) or (has_upper and has_lower)
+
+
+def _strip_nexus_new_format(stem: str) -> str | None:
+    """If *stem* matches the post-2026-06-11 Nexus download format
+    ``<mod name>_<version>[_<slug>]``, return the decoded mod name (underscores
+    → spaces).  Returns ``None`` when *stem* does not match, so callers can fall
+    back to the legacy parsing untouched.
+    """
+    # Prefer the slug-anchored form: when the trailing token is a random Nexus
+    # slug we can trust the segment before it as the version even if it is a
+    # bare integer ("..._1_<slug>").
+    m = _NEW_NEXUS_WITH_SLUG_RE.match(stem)
+    if m and _slug_like(m.group("slug")):
+        name = m.group("name").replace("_", " ").strip()
+        return name or None
+
+    # Future slug-less form ("<name>_<version>"): no random token to anchor on,
+    # so the trailing "_<version>" is stripped even when it is a bare integer.
+    # This may occasionally remove a real title number; the caller still offers
+    # the un-stripped stem as a fallback candidate.
+    m = _NEW_NEXUS_NO_SLUG_RE.match(stem)
+    if m:
+        name = m.group("name").replace("_", " ").strip()
+        return name or None
+
+    return None
+
+
 def _strip_title_metadata(name: str) -> str:
     """
     Remove common metadata from a mod name: parenthesized/bracketed tags,
@@ -107,7 +174,29 @@ def _suggest_mod_names(filename_stem: str) -> list[str]:
     # Step 1: strip duplicate-download suffix added by browsers/OS (e.g. " (1)", " (2)")
     stem = re.sub(r"\s*\(\d+\)\s*$", "", filename_stem).strip()
 
-    # Step 2: strip the Nexus tail (-nexusid-version-timestamp).  Each segment is
+    # Step 2: handle the post-2026-06-11 Nexus underscore format
+    #   "<mod name>_<version>[_<slug>]".  When it matches, the decoded name is
+    # the least-destructive (default) candidate.  Old-format downloads don't
+    # match and fall through to the legacy dash-tail handling below unchanged.
+    new_format = _strip_nexus_new_format(stem)
+    if new_format:
+        # Skip the dash-tail strip: the underscore format has no Nexus dash tail,
+        # and the decoded name may legitimately contain dashes ("A - B").
+        nexus_clean = new_format
+        title_clean = _strip_title_metadata(nexus_clean)
+        # The version was stripped to form the default.  Offer the
+        # number-preserved name (underscores decoded) as a fallback so a real
+        # title number eaten by the slug-less integer strip can be recovered.
+        kept_number = stem.replace("_", " ").strip()
+        seen = set()
+        result = []
+        for candidate in (nexus_clean, title_clean, kept_number, filename_stem):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                result.append(candidate)
+        return result
+
+    # Step 3: strip the legacy Nexus tail (-nexusid-version-timestamp).  Each segment is
     # a dash followed by digits and optional trailing letters (e.g. "-4a", "-2SE"
     # that Nexus appends for versioned uploads).  We require at least two such
     # segments so a single "-2" inside a real title (e.g. "Mod-2") is left alone.

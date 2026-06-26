@@ -991,6 +991,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         self._canvas.bind("<Control-ButtonPress-1>", self._on_mouse_press)
         self._canvas.bind("<B1-Motion>",             self._on_mouse_drag)
         self._canvas.bind("<ButtonRelease-1>",       self._on_mouse_release)
+        self._canvas.bind("<Double-Button-1>",       self._on_double_click)
         self._canvas.bind("<ButtonRelease-3>", self._on_right_click)
         self._canvas.bind("<ButtonRelease-2>", self._on_middle_click)
         self._canvas.bind("<Motion>",         self._on_mouse_motion)
@@ -5206,6 +5207,52 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             self._hover_idx = -1
             self._repaint_hover_rows(old_hover)
 
+    def _resolve_entry_folder(self, idx: int) -> Path | None:
+        """Resolve the on-disk folder for the entry at *idx*.
+
+        Handles regular mods (staging/<name>) plus the synthetic Overwrite and
+        Root_Folder separators.  Returns None when no folder applies (real
+        separators) or the modlist is not loaded.
+        """
+        if self._modlist_path is None or not (0 <= idx < len(self._entries)):
+            return None
+        entry = self._entries[idx]
+        staging_root = self._staging_root
+        if not entry.is_separator:
+            return staging_root / entry.name
+        if entry.name == OVERWRITE_NAME:
+            return staging_root.parent / "overwrite"
+        if entry.name == ROOT_FOLDER_NAME:
+            return (
+                self._game.get_effective_root_folder_path()
+                if self._game is not None
+                else staging_root.parent / "Root_Folder"
+            )
+        return None
+
+    def _on_double_click(self, event):
+        """Double-click a row to open its folder in the file manager.
+
+        Covers regular mods and the synthetic Overwrite / Root_Folder
+        separators; real user separators have no folder and are ignored.
+        """
+        if not self._entries:
+            return
+        cy = self._event_canvas_y(event)
+        idx = self._canvas_y_to_index(cy)
+        if not (0 <= idx < len(self._entries)):
+            return
+        if self._entries[idx].name == BOUNDARY_NAME:
+            return
+        # Ignore double-clicks that land in the checkbox column — those are
+        # enable/disable toggles (the second press would have flipped state
+        # back), not a request to open the folder.
+        if event.x <= self._COL_X[1] - 4:
+            return
+        folder = self._resolve_entry_folder(idx)
+        if folder is not None:
+            self._open_folder(folder)
+
     def _on_right_click(self, event):
         if not self._entries:
             return
@@ -5222,13 +5269,12 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
 
         # Find .ini files in this mod's staging folder (only for non-separators)
         ini_files: list[Path] = []
-        mod_folder: Path | None = None
+        mod_folder: Path | None = self._resolve_entry_folder(idx)
         plugin_files: list[str] = []
         if self._modlist_path is not None:
             staging_root = self._staging_root
             if not is_sep:
                 mod_dir = staging_root / entry.name
-                mod_folder = mod_dir
                 if mod_dir.is_dir():
                     ini_files = [p for p in sorted(mod_dir.rglob("*.ini"))
                                  if p.name.lower() != "meta.ini"]
@@ -5245,14 +5291,6 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                             except PermissionError:
                                 pass
                         plugin_files.sort()
-            elif entry.name == OVERWRITE_NAME:
-                mod_folder = staging_root.parent / "overwrite"
-            elif entry.name == ROOT_FOLDER_NAME:
-                mod_folder = (
-                    self._game.get_effective_root_folder_path()
-                    if self._game is not None
-                    else staging_root.parent / "Root_Folder"
-                )
 
         self._show_context_menu(event.x_root, event.y_root, idx, is_sep, ini_files,
                                 mod_folder=mod_folder, plugin_files=plugin_files)

@@ -3934,6 +3934,18 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                                 return
                             break
 
+            # Conflicts icon hit-test: clicking any conflict flag opens the
+            # Show Conflicts dialog (mirrors the conflicts-column tooltip logic).
+            conf_slot = self._col_pos.get(4, 4)
+            _CONF_X = self._COL_X[conf_slot]
+            _CONF_W = self._COL_W[conf_slot]
+            if _CONF_X <= event.x < _CONF_X + _CONF_W and not entry.locked:
+                loose = self._conflict_map.get(entry.name, CONFLICT_NONE)
+                bsa   = self._bsa_conflict_map.get(entry.name, CONFLICT_NONE)
+                if loose != CONFLICT_NONE or bsa != CONFLICT_NONE:
+                    self._show_overwrites_dialog(entry.name)
+                    return
+
         if self._entries[idx].is_separator:
             if self._entries[idx].name in (OVERWRITE_NAME, ROOT_FOLDER_NAME):
                 # Synthetic rows are selectable (shows conflict highlights) but not draggable

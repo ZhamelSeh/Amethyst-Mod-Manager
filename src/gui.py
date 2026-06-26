@@ -268,6 +268,35 @@ class App(ctk.CTk):
         # everything here is in DESIGN units; screen caps are converted from
         # physical pixels by dividing by the UI scale.
         _s = get_ui_scale()
+        # Size against the ACTUAL monitor the window opens on, NOT
+        # winfo_screenwidth/height — on a multi-monitor desktop those return
+        # the combined virtual-desktop size (e.g. 3600x3625 for stacked
+        # displays), so caps computed from them never engage and the window is
+        # sized/placed for a space far larger than the real monitor. We reuse
+        # the per-monitor rects already used for splash placement; fall back to
+        # a single sane monitor size (NOT the virtual desktop) when the query
+        # fails (bare WMs without xrandr, etc.).
+        def _current_monitor_size() -> tuple[int, int]:
+            try:
+                from Utils.ui_config import get_monitor_rects
+                rects = get_monitor_rects()
+                if rects:
+                    _px = self.winfo_pointerx()
+                    _py = self.winfo_pointery()
+                    for _mx, _my, _mw, _mh in rects:
+                        if _mx <= _px < _mx + _mw and _my <= _py < _my + _mh:
+                            return _mw, _mh
+                    # Pointer not over any reported monitor — use the smallest,
+                    # so caps stay conservative and the window always fits.
+                    return min(rects, key=lambda r: r[2] * r[3])[2:]
+            except Exception:
+                pass
+            # No per-monitor data: avoid the virtual-desktop trap. Assume a
+            # common single-monitor size capped at the reported screen.
+            return (min(1920, self.winfo_screenwidth()),
+                    min(1080, self.winfo_screenheight()))
+
+        _mon_w, _mon_h = _current_monitor_size()
         # Restore saved window size/position, or use default
         saved_geom = load_window_geometry()
         if saved_geom:
@@ -277,8 +306,8 @@ class App(ctk.CTk):
                 import re
                 m = re.match(r"(\d+)x(\d+)", saved_geom)
                 if m:
-                    sw = self.winfo_screenwidth() / _s
-                    sh = self.winfo_screenheight() / _s
+                    sw = _mon_w / _s
+                    sh = _mon_h / _s
                     w, h = int(m.group(1)), int(m.group(2))
                     if w <= sw and h <= sh:
                         self.geometry(saved_geom)
@@ -291,9 +320,9 @@ class App(ctk.CTk):
         else:
             self.geometry("1280x720")
         # Keep the window from shrinking below the toolbar, but cap the
-        # minimum to the screen so it always fits on smaller/HiDPI monitors.
-        _min_w = min(1280, int((self.winfo_screenwidth() - 50) / _s))
-        _min_h = min(720, int((self.winfo_screenheight() - 100) / _s))
+        # minimum to the monitor so it always fits on smaller monitors.
+        _min_w = min(1280, int((_mon_w - 50) / _s))
+        _min_h = min(720, int((_mon_h - 100) / _s))
         self.minsize(_min_w, _min_h)
         self.bind("<Configure>", self._on_window_configure)
         self._geom_save_id: str | None = None
@@ -2424,10 +2453,16 @@ class App(ctk.CTk):
         threading.Thread(target=_do, daemon=True).start()
 
     def _startup_log(self):
-        from Utils.ui_config import get_ui_scale, get_screen_info
+        from Utils.ui_config import get_ui_scale, get_screen_info, get_monitor_rects
         w, h, detected = get_screen_info()
+        # w x h is the combined virtual desktop on multi-monitor setups; also
+        # log each real monitor so a "window sized for the wrong screen" bug
+        # (custom mode / second display) is visible in the diagnostic.
+        rects = get_monitor_rects()
+        mons = ", ".join(f"{r[2]}x{r[3]}+{r[0]}+{r[1]}" for r in rects) or "unknown"
         self._status.log(
-            f"Display: {w}x{h}, HiDPI detected={detected}, scale={get_ui_scale()}"
+            f"Display: virtual {w}x{h}, monitors=[{mons}], "
+            f"HiDPI detected={detected}, scale={get_ui_scale()}"
         )
         configured = sum(1 for g in _GAMES.values() if g.is_configured())
         total = len(_GAMES)

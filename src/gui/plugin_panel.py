@@ -668,6 +668,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         self._loot_info: dict[str, dict] = {}
         self._esl_flagged_plugins: set[str] = set()  # lowercase plugin names with ESL flag set
         self._master_flag_plugins: set[str] = set()  # lowercase .esp names with the master header bit
+        self._master_flags_resolved: bool = True      # False until header flags are known (filemap built)
         self._esl_safe_plugins: set[str] = set()    # lowercase plugin names eligible for ESL flag
         self._esl_unsafe_plugins: set[str] = set()  # lowercase plugin names ineligible for ESL flag
         # Cache for ESL eligibility results.
@@ -3428,6 +3429,13 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
         """
         if not self._master_block_enabled() or not self._plugin_entries:
             return False
+        # Don't reorder while master header flags are unknown (filemap not built
+        # yet — e.g. a freshly-imported profile). With flags unresolved, every
+        # master-flagged .esp looks like a normal plugin and would be wrongly
+        # demoted below the master block, corrupting loadorder.txt on save. Leave
+        # the order untouched until a refresh has read the real flags.
+        if not getattr(self, "_master_flags_resolved", True):
+            return False
         masters: list[PluginEntry] = []
         others: list[PluginEntry] = []
         for e in self._plugin_entries:
@@ -4087,6 +4095,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             self._version_mismatch_masters = {}
             self._plugin_mod_map = {}
             self._master_flag_plugins = set()
+            self._master_flags_resolved = True
             self._masters_cache_key = None
             return
 
@@ -4309,23 +4318,36 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
     # ------------------------------------------------------------------
 
     def _load_master_flags(self, plugin_paths: "dict[str, Path]") -> None:
-        """Populate _master_flag_plugins (master header bit on non-.esm/.esl files)."""
+        """Populate _master_flag_plugins (master header bit on non-.esm/.esl files).
+
+        Also records ``_master_flags_resolved``: whether every non-.esm/.esl
+        plugin could be resolved to a file on disk so its header flag is known.
+        When the filemap hasn't been built yet (e.g. a freshly-imported profile)
+        ``plugin_paths`` is empty and the flags are unknown — the master-block
+        enforcement must NOT run in that state, or master-flagged .esp plugins
+        would be wrongly demoted and the load order corrupted on save.
+        """
         if not self._master_block_enabled():
             self._master_flag_plugins = set()
+            self._master_flags_resolved = True
             return
         flagged: set[str] = set()
         cache: dict = getattr(self, "_master_flag_cache", {})
         self._master_flag_cache = cache
+        resolved = True
         for entry in self._plugin_entries:
             name_lower = entry.name.lower()
             if name_lower.endswith((".esm", ".esl")):
                 continue  # master by extension — no header read needed
             path = plugin_paths.get(name_lower)
-            if path is None:
+            if path is None or not Path(path).is_file():
+                # Header flag unknown for this plugin (filemap not built yet).
+                resolved = False
                 continue
             try:
                 st = os.stat(str(path))
             except OSError:
+                resolved = False
                 continue
             stat_key = (str(path), st.st_mtime_ns, st.st_size)
             flag_val = cache.get(stat_key)
@@ -4338,6 +4360,7 @@ class PluginPanel(PluginPanelExeLauncherMixin, PluginPanelLOOTMixin,
             if flag_val:
                 flagged.add(name_lower)
         self._master_flag_plugins = flagged
+        self._master_flags_resolved = resolved
 
     def _load_esl_flags(self, plugin_paths: "dict[str, Path]") -> None:
         """Populate _esl_flagged_plugins / _esl_safe_plugins / _esl_unsafe_plugins

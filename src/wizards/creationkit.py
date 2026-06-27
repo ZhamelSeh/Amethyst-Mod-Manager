@@ -113,6 +113,17 @@ class CreationKitWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
     def _proton_next_step(self):
         self._show_step_run()
 
+    def _isolated_prefix_dir(self, proton_name: str):
+        """Put the isolated CK prefix in the app config's wine_prefixes/ folder.
+
+        CreationKit.exe lives in the game *root*, so the mixin default
+        (prefix_<name>/ next to the exe) would create a ~1 GB Wine prefix inside
+        the game install. Relocate it next to the shared prefixes instead — out
+        of both the game folder and the mod staging.
+        """
+        from Utils.config_paths import get_wine_prefixes_dir
+        return get_wine_prefixes_dir() / f"creationkit_{proton_name}"
+
     def __init__(self, parent, game: "BaseGame", log_fn=None, *, on_close=None, **_kwargs):
         super().__init__(parent, fg_color=BG_DEEP, corner_radius=0)
         self._on_close_cb = on_close or (lambda: None)
@@ -455,6 +466,19 @@ class CreationKitWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
         )
         self._run_status.pack(pady=(0, 12))
 
+        ctk.CTkLabel(
+            self._body,
+            text=(
+                "Note: on a brand-new prefix the first launch may open the plain "
+                "Creation Kit without Creation Kit Platform Extended (CKPE). If you "
+                "need CKPE, close the Creation Kit and run the wizard again — CKPE "
+                "loads on the second launch once the prefix is initialised.\n\n"
+                "The Creation Kit can also occasionally crash on startup under Proton "
+                "(a known Wine timing issue). If it closes immediately, just relaunch."
+            ),
+            font=FONT_NORMAL, text_color=TEXT_DIM, justify="center", wraplength=460,
+        ).pack(pady=(0, 12))
+
         self._done_btn = ctk.CTkButton(
             self._body, text="Done", width=120, height=36,
             font=FONT_BOLD,
@@ -520,10 +544,26 @@ class CreationKitWizard(ProtonPrefixStepMixin, ctk.CTkFrame):
         self._link_mygames(pfx)
 
         # Creation Kit Platform Extended ships a winhttp.dll loader; the prefix
-        # must prefer the native DLL or the loader never runs.
+        # must prefer the native DLL or the loader never runs (vanilla CK opens
+        # instead).
+        #
+        # The bug this avoids: apply_wine_dll_overrides edits user.reg on disk,
+        # but the wineserver booted above (by _get_tool_env / dep installs) is
+        # still running and only reads the registry from disk on a *cold* start.
+        # So on a fresh prefix the override was written but the still-live server
+        # launched CK with builtin winhttp → vanilla CK on first run, CKPE only
+        # after a relaunch (when the server had exited and re-read the file).
+        #
+        # Fix: write the override to user.reg, then explicitly shut the
+        # wineserver down so the CK launch below always starts cold and reads the
+        # override from disk. Deterministic — no first-run/second-run difference.
         apply_wine_dll_overrides(
             compat_data, {"winhttp": "native,builtin"},
             log_fn=lambda msg: self._log(f"Creation Kit Wizard: {msg}"),
+        )
+        shutdown_prefix_wineserver(
+            proton_script, compat_data,
+            log_fn=lambda m: self._log(f"Creation Kit Wizard: {m}"),
         )
 
         # CKPE crashes on startup (null-deref) if its CKPEPlugins/ folder is

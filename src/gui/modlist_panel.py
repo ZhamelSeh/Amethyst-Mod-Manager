@@ -3993,17 +3993,32 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                                 return
                             break
 
-            # Conflicts icon hit-test: clicking any conflict flag opens the
-            # Show Conflicts dialog (mirrors the conflicts-column tooltip logic).
+            # Conflicts icon hit-test: clicking a conflict flag icon opens the
+            # Show Conflicts dialog. Only fire when the click lands on an actual
+            # icon, not anywhere in the column (geometry mirrors
+            # _render_conflict_cell).
             conf_slot = self._col_pos.get(4, 4)
             _CONF_X = self._COL_X[conf_slot]
             _CONF_W = self._COL_W[conf_slot]
             if _CONF_X <= event.x < _CONF_X + _CONF_W and not entry.locked:
                 loose = self._conflict_map.get(entry.name, CONFLICT_NONE)
                 bsa   = self._bsa_conflict_map.get(entry.name, CONFLICT_NONE)
-                if loose != CONFLICT_NONE or bsa != CONFLICT_NONE:
-                    self._show_overwrites_dialog(entry.name)
-                    return
+                has_loose = loose != CONFLICT_NONE
+                has_bsa   = bsa != CONFLICT_NONE
+                if has_loose or has_bsa:
+                    cx_center = _CONF_X + _CONF_W // 2
+                    icon_half = scaled(12)
+                    if has_loose and has_bsa:
+                        gap = scaled(6)
+                        loose_cx = cx_center - gap - icon_half
+                        bsa_cx   = cx_center + gap + icon_half
+                    else:
+                        loose_cx = bsa_cx = cx_center
+                    on_loose = has_loose and abs(event.x - loose_cx) <= icon_half
+                    on_bsa   = has_bsa   and abs(event.x - bsa_cx)   <= icon_half
+                    if on_loose or on_bsa:
+                        self._show_overwrites_dialog(entry.name)
+                        return
 
         if self._entries[idx].is_separator:
             if self._entries[idx].name in (OVERWRITE_NAME, ROOT_FOLDER_NAME):

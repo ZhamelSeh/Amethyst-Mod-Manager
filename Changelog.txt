@@ -3,6 +3,8 @@
 - Added a right click option to the overwrite separator to display a log of files that entered the overwrite folder
 - Added a right click option to move a mod to another profile
 - Reworked the dtkit patcher wizard as it was using an outdated version
+- Fixed separators moving position when a new one is added with reverse priority sorting
+- The quick auto clean wizards now display dirty plugins.
 
 - v1.3.12
 ## Additions

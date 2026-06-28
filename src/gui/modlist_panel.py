@@ -5844,6 +5844,23 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                             mn, profs, parent_dismiss=menu._withdraw, parent_popup=menu),
                 )
 
+        # Move to profile — copies to the target profile, then removes from this one.
+        if c.other_profiles:
+            if c.is_multi and c.copy_mod_names:
+                menu.add_submenu(
+                    f"Move to profile ({len(c.copy_mod_names)})",
+                    lambda profs=c.other_profiles, mns=c.copy_mod_names:
+                        self._show_move_to_profile_picker_multi(
+                            mns, profs, parent_dismiss=menu._withdraw, parent_popup=menu),
+                )
+            elif not c.is_multi and c.copy_mod_name:
+                menu.add_submenu(
+                    "Move to profile",
+                    lambda profs=c.other_profiles, mn=c.copy_mod_name:
+                        self._show_move_to_profile_picker(
+                            mn, profs, parent_dismiss=menu._withdraw, parent_popup=menu),
+                )
+
         # Disable / Enable selected (n)
         if c.toggleable:
             count = len(c.toggleable)
@@ -7037,11 +7054,13 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             parent_dismiss=parent_dismiss, parent_popup=parent_popup,
         )
 
-    def _make_copy_progress_popup(self, target_profile: str, total: int) -> CTkProgressPopup:
-        """Create a progress popup for a copy-to-profile operation."""
+    def _make_copy_progress_popup(self, target_profile: str, total: int,
+                                  move: bool = False) -> CTkProgressPopup:
+        """Create a progress popup for a copy-/move-to-profile operation."""
+        verb = "Moving" if move else "Copying"
         popup = CTkProgressPopup(
             self.winfo_toplevel(),
-            title=f"Copying to '{target_profile}'",
+            title=f"{verb} to '{target_profile}'",
             label="Starting…",
             message=f"0 / {total}",
         )
@@ -7051,12 +7070,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         return popup
 
     def _finish_copy_popup(self, popup: CTkProgressPopup, copied: int, skipped: int,
-                           target_profile: str, copied_names: list[str]) -> None:
-        """Log result and close the copy progress popup."""
+                           target_profile: str, copied_names: list[str],
+                           move: bool = False) -> None:
+        """Log result and close the copy/move progress popup.
+
+        When *move* is True the successfully-copied mods in *copied_names* are
+        removed from the current profile before the popup closes."""
+        verb = "Moved" if move else "Copied"
         self._log(
-            f"Copied {copied} mod(s) → profile '{target_profile}'"
+            f"{verb} {copied} mod(s) → profile '{target_profile}'"
             + (f" ({skipped} skipped)" if skipped else "")
         )
+        if move and copied_names:
+            indices = [i for i, e in enumerate(self._entries)
+                       if e.name in set(copied_names) and not e.is_separator]
+            if indices:
+                self._remove_selected_mods(indices, skip_confirm=True)
         if popup.winfo_exists():
             popup.destroy()
 
@@ -7070,8 +7099,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             parent_dismiss=parent_dismiss, parent_popup=parent_popup,
         )
 
-    def _copy_mod_to_profile(self, mod_name: str, target_profile: str) -> None:
-        """Copy a mod's staging folder to another profile's staging folder."""
+    def _show_move_to_profile_picker(self, mod_name: str, profiles: list[str],
+                                     parent_dismiss=None,
+                                     parent_popup=None) -> tk.Toplevel:
+        """Show a popup listing other profiles; clicking one moves the mod there."""
+        return self._show_picker_popup(
+            profiles, profiles,
+            on_pick=lambda profile: self._copy_mod_to_profile(mod_name, profile, move=True),
+            parent_dismiss=parent_dismiss, parent_popup=parent_popup,
+        )
+
+    def _copy_mod_to_profile(self, mod_name: str, target_profile: str,
+                             move: bool = False) -> None:
+        """Copy a mod's staging folder to another profile's staging folder.
+
+        When *move* is True the mod is removed from this profile once the copy
+        to *target_profile* succeeds."""
         if self._game is None or self._modlist_path is None:
             return
         src_folder = self._staging_root / mod_name
@@ -7116,20 +7159,35 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                 shutil.rmtree(dest_folder, onexc=_force_remove)
 
         src_profile_dir = self._modlist_path.parent
-        popup = self._make_copy_progress_popup(target_profile, total=1)
+        # Preserve the mod's enabled state so a moved mod keeps it in the target.
+        _entry_map = {e.name: e for e in self._entries}
+        src_enabled = _entry_map[mod_name].enabled if mod_name in _entry_map else True
+        dest_name = dest_folder.name
+        popup = self._make_copy_progress_popup(target_profile, total=1, move=move)
         popup.update_label(mod_name)
         popup.update_message(f"0 / 1")
+        verb_past = "move" if move else "copy"
 
         def _do_copy():
             try:
                 shutil.copytree(str(src_folder), str(dest_folder))
                 _copy_fomod_choice(src_profile_dir, target_profile_dir, mod_name)
+                # Register the mod in the target profile's modlist so it shows up
+                # there (prepend = highest priority, matching the multi path).
+                target_modlist = target_profile_dir / "modlist.txt"
+                from Utils.modlist import read_modlist, write_modlist, ModEntry
+                entries = read_modlist(target_modlist) if target_modlist.exists() else []
+                if dest_name not in {e.name for e in entries}:
+                    entries = [ModEntry(name=dest_name, enabled=src_enabled,
+                                        locked=False)] + entries
+                    write_modlist(target_modlist, entries)
                 self.after(0, lambda: self._finish_copy_popup(
-                    popup, 1, 0, target_profile, [mod_name]))
+                    popup, 1, 0, target_profile, [mod_name], move=move))
             except Exception as exc:
                 self.after(0, lambda e=exc: (
                     self._finish_copy_popup(popup, 0, 0, target_profile, []),
-                    show_error("Copy Failed", f"Failed to copy mod:\n{e}",
+                    show_error(f"{verb_past.capitalize()} Failed",
+                               f"Failed to {verb_past} mod:\n{e}",
                                parent=self.winfo_toplevel()),
                 ))
 
@@ -7145,8 +7203,22 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
             parent_dismiss=parent_dismiss, parent_popup=parent_popup,
         )
 
-    def _copy_mods_to_profile(self, mod_names: list[str], target_profile: str) -> None:
-        """Copy multiple mods' staging folders to another profile's staging folder."""
+    def _show_move_to_profile_picker_multi(self, mod_names: list[str], profiles: list[str],
+                                           parent_dismiss=None,
+                                           parent_popup=None) -> tk.Toplevel:
+        """Show a popup listing other profiles; clicking one moves all mods there."""
+        return self._show_picker_popup(
+            profiles, profiles,
+            on_pick=lambda profile: self._copy_mods_to_profile(mod_names, profile, move=True),
+            parent_dismiss=parent_dismiss, parent_popup=parent_popup,
+        )
+
+    def _copy_mods_to_profile(self, mod_names: list[str], target_profile: str,
+                              move: bool = False) -> None:
+        """Copy multiple mods' staging folders to another profile's staging folder.
+
+        When *move* is True the successfully-copied mods are removed from the
+        current profile once the copy completes."""
         if self._game is None or self._modlist_path is None:
             return
         game = self._game
@@ -7180,7 +7252,8 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
         src_profile_dir = self._modlist_path.parent
         src_staging_root = self._staging_root
         total = len(_ordered_mods)
-        popup = self._make_copy_progress_popup(target_profile, total=total)
+        popup = self._make_copy_progress_popup(target_profile, total=total, move=move)
+        verb = "move" if move else "copy"
 
         def _update_popup(done: int, current: str):
             if not popup.winfo_exists() or popup.cancelled:
@@ -7215,10 +7288,13 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     copied += 1
                     copied_mods.append((mod_name, enabled))
                 except Exception as exc:
+                    # On a partial failure don't remove the source mods even if
+                    # this was a move — leave the copied-so-far in place only.
                     self.after(0, lambda e=exc, n=mod_name: (
                         self._finish_copy_popup(popup, copied, skipped,
                                                 target_profile, [m for m, _ in copied_mods]),
-                        show_error("Copy Failed", f"Failed to copy '{n}':\n{e}",
+                        show_error(f"{verb.capitalize()} Failed",
+                                   f"Failed to {verb} '{n}':\n{e}",
                                    parent=self.winfo_toplevel()),
                     ))
                     return
@@ -7241,7 +7317,7 @@ class ModListPanel(ModListFilterPanelMixin, ModListDownloadBarMixin,
                     write_modlist(target_modlist, entries)
 
             self.after(0, lambda c=copied, s=skipped: self._finish_copy_popup(
-                popup, c, s, target_profile, [m for m, _ in copied_mods]))
+                popup, c, s, target_profile, [m for m, _ in copied_mods], move=move))
 
         threading.Thread(target=_do_copy, daemon=True).start()
 

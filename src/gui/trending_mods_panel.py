@@ -173,7 +173,7 @@ class TrendingModsPanel(_NexusModListPanel):
                 self._parent.after(0, _done)
 
             except Exception as exc:
-                def _err():
+                def _err(exc=exc):
                     self._hide_loader()
                     self._loading = False
                     self._refresh_btn.configure(state="normal")

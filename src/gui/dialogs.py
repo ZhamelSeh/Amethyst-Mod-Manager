@@ -4704,7 +4704,7 @@ class DownloadCustomHandlerPanel(ctk.CTkFrame):
                     h["_display_name"] = h.get("name", "").removesuffix(".json").replace("_", " ")
             self.after(0, lambda: self._on_handlers_loaded(handlers))
         except Exception as e:
-            self.after(0, lambda: self._on_fetch_error(str(e)))
+            self.after(0, lambda e=e: self._on_fetch_error(str(e)))
 
     def _on_handlers_loaded(self, handlers: list):
         self._handlers = handlers
@@ -4748,7 +4748,7 @@ class DownloadCustomHandlerPanel(ctk.CTkFrame):
                 dest.write_text(data, encoding="utf-8")
                 self.after(0, lambda: self._on_download_done(filename, None))
             except Exception as e:
-                self.after(0, lambda: self._on_download_done(filename, str(e)))
+                self.after(0, lambda e=e: self._on_download_done(filename, str(e)))
 
         self._status_var.set(f"Downloading {filename} …")
         threading.Thread(target=_do, daemon=True).start()

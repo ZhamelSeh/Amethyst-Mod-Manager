@@ -1687,7 +1687,7 @@ class CollectionDetailDialog(tk.Frame):
         except Exception as exc:
             self._log(f"CollectionDetail error: {exc}")
             try:
-                self.after(0, lambda: self._status_var.set(f"Error: {exc}"))
+                self.after(0, lambda exc=exc: self._status_var.set(f"Error: {exc}"))
             except Exception:
                 pass
 
@@ -6881,7 +6881,7 @@ class CollectionDetailDialog(tk.Frame):
 
         except Exception as exc:
             self._log(f"Reset load order failed: {exc}")
-            self.after(0, lambda: self._status_var.set(f"Reset failed: {exc}"))
+            self.after(0, lambda exc=exc: self._status_var.set(f"Reset failed: {exc}"))
 
     def _schedule_loot_after_filemap(self):
         """Wrap the filemap-rebuilt callback so LOOT sort runs once after the

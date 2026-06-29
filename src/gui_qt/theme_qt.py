@@ -118,7 +118,7 @@ def build_qss(pal: dict | None = None) -> str:
     /* Slim modern scrollbars — applied globally (modlist, plugins, log, …) */
     QScrollBar:vertical {{
         background: transparent;
-        width: 12px;
+        width: 14px;
         margin: 0;
     }}
     QScrollBar:horizontal {{

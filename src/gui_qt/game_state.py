@@ -8,11 +8,27 @@ active modlist.txt + staging dir.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from gui.game_helpers import (
     _load_games, _profiles_for_game, _load_last_game, _save_last_game, _GAMES,
 )
+
+
+@dataclass
+class ConflictData:
+    """Everything the modlist/plugins panels need to draw conflicts + cross-panel
+    highlights. All maps key on mod name. *_codes are 1 win / -1 lose / 2 mixed.
+    *_overrides[mod] = mods this mod beats; *_overridden_by[mod] = mods that beat
+    it. plugin_owner maps a plugin filename (lower) → the mod that deploys it."""
+    loose_codes: dict[str, int] = field(default_factory=dict)
+    bsa_codes: dict[str, int] = field(default_factory=dict)
+    overrides: dict[str, set] = field(default_factory=dict)
+    overridden_by: dict[str, set] = field(default_factory=dict)
+    bsa_overrides: dict[str, set] = field(default_factory=dict)
+    bsa_overridden_by: dict[str, set] = field(default_factory=dict)
+    plugin_owner: dict[str, str] = field(default_factory=dict)
 
 
 class GameState:
@@ -84,21 +100,121 @@ class GameState:
         except Exception:
             return None
 
-    def build_conflicts(self, log_fn=None) -> dict[str, int]:
-        """Build the filemap for the active game/profile and return per-mod
-        conflict codes (1 win / -1 lose / 2 mixed). Expensive — run off-thread.
-        Returns {} if no game/profile or on failure."""
+    def bsa_index_path(self) -> Path | None:
+        """Location of bsa_index.bin (next to filemap.txt), or None."""
+        staging = self.staging_dir()
+        if staging is None:
+            return None
+        p = staging.parent / "bsa_index.bin"
+        return p if p.is_file() else None
+
+    def build_conflicts(self, log_fn=None) -> "ConflictData":
+        """Build the filemap for the active game/profile and return a ConflictData
+        with loose + BSA conflict codes, the override maps (for highlights), and a
+        plugin→owner map. Expensive — run off-thread. Empty on failure."""
         g = self.game
         if g is None or not self.profile:
-            return {}
+            return ConflictData()
         from Utils.deploy_pipeline import _build_filemap_for_game
         from gui_qt.modlist_data import conflicts_from_filemap
         log = log_fn or (lambda _m: None)
         result = _build_filemap_for_game(g, self.profile, log_fn=log)
         if not result:
-            return {}
+            return ConflictData()
         _count, _conflict_map, overrides, overridden_by = result
-        return conflicts_from_filemap(overrides, overridden_by)
+        data = ConflictData(
+            loose_codes=conflicts_from_filemap(overrides, overridden_by),
+            overrides={k: set(v) for k, v in (overrides or {}).items()},
+            overridden_by={k: set(v) for k, v in (overridden_by or {}).items()},
+        )
+        (data.bsa_codes, data.bsa_overrides,
+         data.bsa_overridden_by) = self._build_bsa_conflicts(g, log)
+        data.plugin_owner = self._build_plugin_owner(g)
+        return data
+
+    def _build_plugin_owner(self, g) -> dict[str, str]:
+        """Map plugin filename (lower) → the mod that wins it, from filemap.txt.
+        Used for plugin↔mod cross-panel highlighting."""
+        staging = self.staging_dir()
+        if staging is None:
+            return {}
+        fm = staging.parent / "filemap.txt"
+        if not fm.is_file():
+            return {}
+        exts = tuple(e.lower() for e in (getattr(g, "plugin_extensions", []) or []))
+        if not exts:
+            exts = (".esp", ".esm", ".esl")
+        owner: dict[str, str] = {}
+        try:
+            for line in fm.read_text(encoding="utf-8").splitlines():
+                if "\t" not in line:
+                    continue
+                rel_key, mod = line.split("\t", 1)
+                base = rel_key.rsplit("/", 1)[-1].lower()
+                if base.endswith(exts):
+                    owner[base] = mod
+        except Exception:
+            return {}
+        return owner
+
+    def _build_bsa_conflicts(self, g, log):
+        """Compute BSA/BA2 archive conflicts. Returns (codes, overrides,
+        overridden_by) — codes as 1 win / -1 lose / 2 mixed; the two maps key
+        mod → set(mods). Empty triple for non-archive games or on failure."""
+        empty = ({}, {}, {})
+        exts = frozenset(getattr(g, "archive_extensions", frozenset()) or frozenset())
+        if not exts:
+            return empty
+        staging = self.staging_dir()
+        ml = self.modlist_path()
+        if staging is None or ml is None or not ml.is_file():
+            return empty
+        try:
+            from Utils.bsa_filemap import build_bsa_conflicts, rebuild_bsa_index
+            from Utils.plugins import read_loadorder
+        except Exception:
+            return empty
+        out_dir = staging.parent
+        bsa_index = out_dir / "bsa_index.bin"
+        try:
+            if not bsa_index.is_file():
+                rebuild_bsa_index(bsa_index, staging, exts, log_fn=log)
+            pdir = self.profile_dir()
+            plugin_order = (read_loadorder(pdir / "loadorder.txt")
+                            if pdir is not None else None)
+            plugin_exts = frozenset(getattr(g, "plugin_extensions", []) or [])
+            (bsa_map, bsa_over, bsa_overby, lob, bol) = build_bsa_conflicts(
+                ml, bsa_index, exts,
+                loose_index_path=out_dir / "modindex.bin",
+                plugin_order=plugin_order or None,
+                plugin_extensions=plugin_exts or None,
+                log_fn=log,
+            )
+        except Exception as exc:
+            log(f"BSA conflict build failed: {exc}")
+            return empty
+        # build_bsa_conflicts returns CONFLICT_* codes; normalise to our scheme
+        # (1 win / -1 lose / 2 mixed) matching conflicts_from_filemap.
+        from Utils.filemap import (
+            CONFLICT_WINS, CONFLICT_LOSES, CONFLICT_PARTIAL, CONFLICT_FULL,
+        )
+        codes: dict[str, int] = {}
+        for name, c in bsa_map.items():
+            if c == CONFLICT_WINS:
+                codes[name] = 1
+            elif c == CONFLICT_LOSES:
+                codes[name] = -1
+            elif c in (CONFLICT_PARTIAL, CONFLICT_FULL):
+                codes[name] = 2
+        # Fold loose↔BSA cross relationships so highlights match the engine's
+        # "loose beats BSA" rule (lob: loose_mod→{bsa_mod}, bol: bsa_mod→{loose}).
+        over = {k: set(v) for k, v in (bsa_over or {}).items()}
+        overby = {k: set(v) for k, v in (bsa_overby or {}).items()}
+        for loose_mod, bsa_mods in (lob or {}).items():
+            over.setdefault(loose_mod, set()).update(bsa_mods)
+        for bsa_mod, loose_mods in (bol or {}).items():
+            overby.setdefault(bsa_mod, set()).update(loose_mods)
+        return codes, over, overby
 
     # -- internals ----------------------------------------------------------
     def _select_default_profile(self) -> None:

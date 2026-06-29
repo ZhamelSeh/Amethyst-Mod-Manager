@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from Utils.plugins import read_plugins, read_loadorder, write_plugins, PluginEntry
+from Utils.plugins import (
+    read_plugins, read_loadorder, write_plugins, write_loadorder, PluginEntry,
+)
 
 # Flag bits for the plugin Flags column (drawn left→right in this order).
 PF_MISSING = 1 << 0    # missing masters (red warning)
@@ -174,10 +176,24 @@ def _apply_loot_flags(rows: list[PluginRow], profile_dir: Path) -> None:
 
 
 def save_plugins(game, profile: str, rows: list[PluginRow]) -> None:
-    """Write enable/disable state back to plugins.txt (order preserved)."""
+    """Write the plugin order + enable state back to disk.
+
+    plugins.txt — mod plugins only (vanilla excluded unless the game includes
+    them); loadorder.txt — the FULL order incl. vanilla so LOOT-sorted positions
+    survive a refresh. Mirrors plugin_panel._save_plugins (Tk parity)."""
     p = plugins_path(game, profile)
     if p is None:
         return
     star = getattr(game, "plugins_use_star_prefix", True)
-    entries = [PluginEntry(r.name, r.enabled) for r in rows]
-    write_plugins(p, entries, star_prefix=star)
+    include_vanilla = bool(getattr(game, "plugins_include_vanilla", False))
+    mod_entries = [PluginEntry(r.name, r.enabled) for r in rows
+                   if include_vanilla or not r.vanilla]
+    write_plugins(p, mod_entries, star_prefix=star)
+    full = [PluginEntry(r.name, True) for r in rows]
+    write_loadorder(p.parent / "loadorder.txt", full)
+    # Timestamp-ordered games (Oblivion/FO3/FNV) need deployed mtimes re-stamped.
+    if game is not None and hasattr(game, "stamp_plugin_load_order"):
+        try:
+            game.stamp_plugin_load_order(profile)
+        except Exception as exc:
+            print(f"[gui_qt] stamp_plugin_load_order failed: {exc}", flush=True)

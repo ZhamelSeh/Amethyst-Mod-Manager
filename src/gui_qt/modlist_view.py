@@ -6,13 +6,15 @@ TkStyleHeader owns column resizing; column state persists via column_state.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtGui import QPainter, QColor, QPen
 from PySide6.QtWidgets import QTreeView, QAbstractItemView, QHeaderView
 
 from gui_qt.modlist_model import (
     ModListModel, COLUMNS, COL_NAME, COL_PRIORITY, COL_FLAGS, COL_CONFLICTS,
-    COL_INSTALLED, COL_VERSION,
+    COL_INSTALLED, COL_VERSION, HighlightRole,
 )
+from PySide6.QtWidgets import QWidget
 from gui_qt.modlist_delegate import ModRowDelegate
 from gui_qt import column_state
 from gui_qt.modlist_header import TkStyleHeader
@@ -45,12 +47,27 @@ class ModListView(QTreeView):
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
 
-        # Internal drag-reorder.
-        self.setDragDropMode(QAbstractItemView.InternalMove)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDefaultDropAction(Qt.MoveAction)
+        # Custom drag-reorder (NOT Qt InternalMove): we drive the reorder by
+        # hand so separators (spanned rows) drag correctly and autoscroll near
+        # the edges is fast/continuous like the Tk app. See _press/_move/_release.
+        self.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.setDragEnabled(False)
+        self.setAcceptDrops(False)
+
+        # Drag state.
+        self._drag_rows: list[int] = []   # source rows being carried (block)
+        self._drag_active = False
+        self._press_row = -1
+        self._press_pos = None
+        self._drop_slot = -1              # insertion row for the drop indicator
+        self._DRAG_THRESHOLD = 6          # px before a press becomes a drag
+
+        # Continuous autoscroll while dragging near an edge (Tk cadence).
+        self._scroll_zone = 40            # px from edge that triggers scroll
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setInterval(16)   # ~60fps, smooth + fast
+        self._scroll_timer.timeout.connect(self._autoscroll_tick)
+        self._last_mouse_y = 0
 
         # Right-click context menu.
         self.staging_dir = None   # set by the window for Open-folder
@@ -76,6 +93,16 @@ class ModListView(QTreeView):
         # only moves + sort-indicator need a direct save hook here.
         h.sectionMoved.connect(lambda *a: self._schedule_save())
         h.sortIndicatorChanged.connect(lambda *a: self._schedule_save())
+
+        # Marker strip: a coloured-tick gutter beside the scrollbar showing
+        # highlighted/conflicting rows (Tk parity). Shared with the plugins panel.
+        from gui_qt.marker_strip import install_marker_strip
+        install_marker_strip(self, HighlightRole)
+        self._reposition_marker_strip()
+
+    def _reposition_marker_strip(self):
+        from gui_qt.marker_strip import reposition_marker_strip
+        reposition_marker_strip(self)
 
     def _configure_header(self):
         # Custom Tk-style header: owns all resizing (boundary drag moves the
@@ -159,6 +186,8 @@ class ModListView(QTreeView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_name_to_width()
+        if hasattr(self, "_marker_strip"):
+            self._reposition_marker_strip()
 
     def _fit_name_to_width(self):
         """Keep the table exactly filling the viewport on window resize.
@@ -193,6 +222,247 @@ class ModListView(QTreeView):
             take = min(room, deficit)
             h.resizeSection(c, self.columnWidth(c) - take)
             deficit -= take
+
+    # ---- cross-panel highlights ------------------------------------------
+    def set_conflict_maps(self, overrides, overridden_by,
+                          bsa_overrides, bsa_overridden_by):
+        """Store the loose + BSA override maps so a mod selection can resolve
+        which mods it beats (higher/green) and which beat it (lower/red)."""
+        self._overrides = {k: set(v) for k, v in (overrides or {}).items()}
+        self._overridden_by = {k: set(v) for k, v in (overridden_by or {}).items()}
+        self._bsa_overrides = {k: set(v) for k, v in (bsa_overrides or {}).items()}
+        self._bsa_overridden_by = {k: set(v)
+                                   for k, v in (bsa_overridden_by or {}).items()}
+        # Re-apply any active highlight against the fresh maps.
+        self._refresh_self_highlights()
+
+    def selected_mod_names(self) -> set[str]:
+        """Names of the selected mods. A selected separator contributes all the
+        mods in its block (Tk parity)."""
+        m = self.model()
+        names: set[str] = set()
+        from gui_qt.modlist_model import _BOUNDARY_NAMES
+        for idx in self.selectionModel().selectedRows():
+            e = m.entry(idx.row())
+            if e.is_separator:
+                if e.name in _BOUNDARY_NAMES:
+                    continue
+                for r in m.sep_block_rows(idx.row()):
+                    names.add(m.entry(r).name)
+            else:
+                names.add(e.name)
+        return names
+
+    def conflict_partners(self, names: set[str]) -> tuple[set[str], set[str]]:
+        """For a set of mod names, return (higher, lower): the mods they beat
+        (loose+BSA) and the mods that beat them, excluding the selection."""
+        ov = getattr(self, "_overrides", {})
+        ob = getattr(self, "_overridden_by", {})
+        bov = getattr(self, "_bsa_overrides", {})
+        bob = getattr(self, "_bsa_overridden_by", {})
+        higher: set[str] = set()
+        lower: set[str] = set()
+        for n in names:
+            higher |= ov.get(n, set()) | bov.get(n, set())
+            lower |= ob.get(n, set()) | bob.get(n, set())
+        higher -= names
+        lower -= names
+        return higher, lower
+
+    def bsa_conflict_partners(self, names: set[str]) -> tuple[set[str], set[str]]:
+        """Like conflict_partners but BSA-only — used to colour plugins (Tk only
+        tints plugins for BSA conflicts, never loose-file ones)."""
+        bov = getattr(self, "_bsa_overrides", {})
+        bob = getattr(self, "_bsa_overridden_by", {})
+        higher: set[str] = set()
+        lower: set[str] = set()
+        for n in names:
+            higher |= bov.get(n, set())
+            lower |= bob.get(n, set())
+        higher -= names
+        lower -= names
+        return higher, lower
+
+    def _refresh_self_highlights(self):
+        """Recompute green/red tints from the current mod selection."""
+        names = self.selected_mod_names()
+        if not names:
+            return
+        higher, lower = self.conflict_partners(names)
+        self.model().set_highlights(higher=higher, lower=lower)
+
+    def set_highlighted_mods(self, mods: set[str] | None):
+        """Highlight (orange) the mods owning a plugin selected in the Plugins
+        panel; clears the green/red conflict tint."""
+        self.model().set_highlights(anchor=mods or set())
+        # Scroll the first highlighted mod into view (Tk parity).
+        if mods:
+            m = self.model()
+            for r in range(m.rowCount()):
+                if not m.entry(r).is_separator and m.entry(r).name in mods:
+                    self.scrollTo(m.index(r, 0),
+                                  QAbstractItemView.PositionAtCenter)
+                    break
+
+    # ---- custom drag-reorder ---------------------------------------------
+    def _visible_rows(self) -> list[int]:
+        """Rows currently visible (not hidden under a collapsed separator)."""
+        m = self.model()
+        return [r for r in range(m.rowCount())
+                if not self.isRowHidden(r, self.rootIndex())]
+
+    def _drag_block_for(self, row: int) -> list[int] | None:
+        """The rows to carry when a drag starts on *row*, or None if *row* is
+        un-draggable (boundary separator / locked mod). A locked separator
+        carries its whole block; everything else carries the selected rows (or
+        just itself)."""
+        m = self.model()
+        e = m.entry(row)
+        from gui_qt.modlist_model import _BOUNDARY_NAMES
+        if e.name in _BOUNDARY_NAMES:
+            return None
+        if not e.is_separator and e.locked:
+            return None
+        # A collapsed or locked separator carries its whole block (its mods are
+        # hidden / pinned to it), so the group moves together. An expanded
+        # separator moves alone — it just re-marks where a group begins.
+        if e.is_separator and (m.is_sep_locked(e.display_name)
+                               or m.is_collapsed(e.display_name)):
+            return [row] + list(m.sep_block_rows(row))
+        # Multi-select: carry every selected, draggable row if this row is part
+        # of the selection; otherwise just this row.
+        sel = sorted({i.row() for i in self.selectionModel().selectedRows()})
+        if row in sel and len(sel) > 1:
+            carry = [r for r in sel
+                     if m.entry(r).name not in _BOUNDARY_NAMES
+                     and not (not m.entry(r).is_separator and m.entry(r).locked)]
+            return carry or [row]
+        return [row]
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self.indexAt(event.position().toPoint())
+            self._press_row = idx.row() if idx.isValid() else -1
+            self._press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton) or self._press_row < 0:
+            super().mouseMoveEvent(event)
+            return
+        if not self._drag_active:
+            if self._press_pos is None:
+                return
+            if (event.position().toPoint() - self._press_pos).manhattanLength() \
+                    < self._DRAG_THRESHOLD:
+                return
+            block = self._drag_block_for(self._press_row)
+            if block is None:
+                self._press_row = -1
+                return
+            self._drag_active = True
+            self._drag_rows = block
+            self.setCursor(Qt.ClosedHandCursor)
+        # Live drag: track cursor, compute drop slot, run autoscroll.
+        self._last_mouse_y = event.position().toPoint().y()
+        self._update_drop_slot(self._last_mouse_y)
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start()
+        self.viewport().update()
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_active:
+            self._scroll_timer.stop()
+            self._commit_drop()
+            self._drag_active = False
+            self._drag_rows = []
+            self._drop_slot = -1
+            self.unsetCursor()
+            self.viewport().update()
+            self._press_row = -1
+            return
+        self._press_row = -1
+        super().mouseReleaseEvent(event)
+
+    def _update_drop_slot(self, y: int):
+        """Compute the model row the block would insert *before*, from cursor Y.
+        Snaps to the gap nearest the cursor among visible rows."""
+        m = self.model()
+        n = m.rowCount()
+        vis = self._visible_rows()
+        if not vis:
+            self._drop_slot = 0
+            return
+        # Find the visible row under the cursor; drop before/after by half-row.
+        for r in vis:
+            rect = self.visualRect(m.index(r, 0))
+            if rect.top() <= y < rect.bottom():
+                self._drop_slot = r if y < rect.center().y() else r + 1
+                return
+        # Above the first / below the last visible row.
+        first_rect = self.visualRect(m.index(vis[0], 0))
+        if y < first_rect.top():
+            self._drop_slot = vis[0]
+        else:
+            self._drop_slot = vis[-1] + 1
+        self._drop_slot = max(0, min(self._drop_slot, n))
+
+    def _commit_drop(self):
+        if not self._drag_rows or self._drop_slot < 0:
+            return
+        dest = self._drop_slot
+        src = self._drag_rows
+        m = self.model()
+        # A LONE separator drops exactly where released (like a mod) — it just
+        # marks where a new group begins. Only a separator carrying a whole
+        # block (locked sep) snaps to a block boundary so it stays self-contained.
+        carrying_block = (len(src) > 1 and m.entry(src[0]).is_separator)
+        if carrying_block:
+            dest = m._resolve_drop_dest(dest, separator_drag=True)
+        m.move_block(src, dest)
+        # After a structural change, re-apply spanning + collapse hiding.
+        self._apply_separator_spanning()
+        self.apply_collapse()
+
+    # ---- continuous autoscroll (Tk cadence: fast, proportional to depth) ---
+    def _autoscroll_tick(self):
+        if not self._drag_active:
+            self._scroll_timer.stop()
+            return
+        h = self.viewport().height()
+        y = self._last_mouse_y
+        zone = self._scroll_zone
+        bar = self.verticalScrollBar()
+        step = 0
+        if y < zone:
+            depth = (zone - y) / zone               # 0..1
+            step = -int(2 + depth * 22)             # up to ~24 px/tick
+        elif y > h - zone:
+            depth = (y - (h - zone)) / zone
+            step = int(2 + depth * 22)
+        if step:
+            bar.setValue(bar.value() + step)
+            self._update_drop_slot(y)
+            self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._drag_active or self._drop_slot < 0:
+            return
+        m = self.model()
+        n = m.rowCount()
+        if self._drop_slot >= n:
+            ref = self.visualRect(m.index(n - 1, 0))
+            y = ref.bottom()
+        else:
+            ref = self.visualRect(m.index(self._drop_slot, 0))
+            y = ref.top()
+        p = QPainter(self.viewport())
+        pen = QPen(QColor("#5aa9ff"))
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.drawLine(0, y, self.viewport().width(), y)
+        p.end()
 
     # ---- context menu -----------------------------------------------------
     def _on_context_menu(self, pos):
@@ -237,3 +507,4 @@ class ModListView(QTreeView):
             order = Qt.AscendingOrder if st["ascending"] else Qt.DescendingOrder
             # Set the indicator only (live sort not enabled yet).
             self.header().setSortIndicator(name_to_col[st["sort_col"]], order)
+

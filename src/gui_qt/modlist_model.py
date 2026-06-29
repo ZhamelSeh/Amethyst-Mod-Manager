@@ -32,9 +32,12 @@ COLUMNS = ["Mod Name", "Flags", "Conflicts", "Installed", "Version", "Priority"]
 
 # Custom roles for the delegate.
 EntryRole = Qt.UserRole + 1        # the ModEntry
-ConflictRole = Qt.UserRole + 2     # int: 0 none, 1 wins, -1 loses, 2 mixed
+ConflictRole = Qt.UserRole + 2     # int: 0 none, 1 wins, -1 loses, 2 mixed (loose)
 PriorityRole = Qt.UserRole + 3     # int display priority
 FlagsRole = Qt.UserRole + 4        # int bitmask (gui_qt.modlist_data.FLAG_*)
+BsaConflictRole = Qt.UserRole + 5  # int: BSA/BA2 archive conflict code
+HighlightRole = Qt.UserRole + 6    # int: 0 none, 1 higher(green), -1 lower(red),
+                                   #      2 anchor(orange, plugin-selected mod)
 
 _MIME = "application/x-amethyst-modrows"
 
@@ -49,7 +52,14 @@ class ModListModel(QAbstractTableModel):
         self._versions = versions or {}
         self._installed = installed or {}
         self._conflicts = conflicts or {}
+        self._bsa_conflicts: dict[str, int] = {}
         self._flags: dict[str, int] = {}
+        # Highlight state: mod names tinted green (wins over selection) / red
+        # (loses to selection), and a set of "anchor" mods (orange) — the mod a
+        # selected plugin belongs to. Driven by the view's cross-panel wiring.
+        self._hl_higher: set[str] = set()
+        self._hl_lower: set[str] = set()
+        self._hl_anchor: set[str] = set()
         # When set, toggle/reorder edits are written back here.
         self.modlist_path = None
         # Optional callback invoked after a save (e.g. to rebuild conflicts).
@@ -86,12 +96,60 @@ class ModListModel(QAbstractTableModel):
                                   self.index(len(self._entries) - 1, COL_FLAGS),
                                   [FlagsRole, Qt.DisplayRole])
 
-    def set_conflicts(self, conflicts: dict[str, int]) -> None:
+    def set_conflicts(self, conflicts: dict[str, int],
+                      bsa_conflicts: dict[str, int] | None = None) -> None:
         self._conflicts = conflicts or {}
+        if bsa_conflicts is not None:
+            self._bsa_conflicts = bsa_conflicts or {}
         if self._entries:
             self.dataChanged.emit(self.index(0, COL_NAME),
                                   self.index(len(self._entries) - 1, COL_CONFLICTS),
-                                  [ConflictRole, Qt.DisplayRole])
+                                  [ConflictRole, BsaConflictRole, Qt.DisplayRole])
+
+    def _separator_highlight(self, row: int, e) -> int:
+        """A separator is tinted ONLY when collapsed AND one of its child mods is
+        a highlight partner (Tk parity — an expanded block tints the child mod
+        directly instead). anchor(2) > higher(1) > lower(-1)."""
+        # [Overwrite] is a boundary separator but DOES light up (green) when it
+        # wins over the selection — same as Tk. Root Folder never highlights.
+        if e.name == OVERWRITE_NAME:
+            if e.name in self._hl_anchor:
+                return 2
+            if e.name in self._hl_higher:
+                return 1
+            if e.name in self._hl_lower:
+                return -1
+            return 0
+        if e.name in _BOUNDARY_NAMES:
+            return 0
+        if e.display_name not in self._collapsed:
+            return 0
+        anchor = higher = lower = False
+        for r in self.sep_block_rows(row):
+            name = self._entries[r].name
+            if name in self._hl_anchor:
+                anchor = True
+            elif name in self._hl_higher:
+                higher = True
+            elif name in self._hl_lower:
+                lower = True
+        if anchor:
+            return 2
+        if higher:
+            return 1
+        if lower:
+            return -1
+        return 0
+
+    def set_highlights(self, higher=None, lower=None, anchor=None) -> None:
+        """Update conflict/anchor highlight sets and repaint the whole list."""
+        self._hl_higher = set(higher or ())
+        self._hl_lower = set(lower or ())
+        self._hl_anchor = set(anchor or ())
+        if self._entries:
+            self.dataChanged.emit(self.index(0, 0),
+                                  self.index(len(self._entries) - 1, COL_PRIORITY),
+                                  [HighlightRole])
 
     # ---- Qt model interface ----------------------------------------------
     def rowCount(self, parent=QModelIndex()):
@@ -124,6 +182,18 @@ class ModListModel(QAbstractTableModel):
             return e
         if role == ConflictRole:
             return 0 if e.is_separator else self._conflicts.get(e.name, 0)
+        if role == BsaConflictRole:
+            return 0 if e.is_separator else self._bsa_conflicts.get(e.name, 0)
+        if role == HighlightRole:
+            if e.is_separator:
+                return self._separator_highlight(index.row(), e)
+            if e.name in self._hl_anchor:
+                return 2
+            if e.name in self._hl_higher:
+                return 1
+            if e.name in self._hl_lower:
+                return -1
+            return 0
         if role == FlagsRole:
             return 0 if e.is_separator else self._flags.get(e.name, 0)
         if role == PriorityRole:
@@ -377,11 +447,15 @@ class ModListModel(QAbstractTableModel):
         lo, hi = self._movable_span()
         if first < lo or last >= hi or not (lo <= dest <= hi):
             return False
-        # Locked-separator confinement applies only when moving MODS (not when
-        # relocating a whole locked separator+block as a unit).
-        moving_locked_sep = self._entries[first].is_separator and \
-            self.is_sep_locked(self._entries[first].display_name)
-        if not moving_locked_sep:
+        # Block confinement applies only when moving MODS, not when relocating a
+        # whole separator+block as a unit (a locked OR collapsed separator that
+        # carries its mods — first row is the separator, the rest are its block).
+        moving_sep_block = (
+            self._entries[first].is_separator
+            and last in self.sep_block_rows(first)
+            and all(not self._entries[r].is_separator
+                    for r in range(first + 1, last + 1)))
+        if not moving_sep_block:
             src_block = self._locked_block_of(first)
             if src_block is not None:
                 if (last not in src_block or dest < src_block.start

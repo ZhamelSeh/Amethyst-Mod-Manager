@@ -8,8 +8,8 @@ toggle (persists to plugins.txt).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QRect, QSize, QEvent
-from PySide6.QtGui import QColor, QFont, QPen, QBrush
+from PySide6.QtCore import Qt, QRect, QSize, QEvent, QTimer
+from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter
 from PySide6.QtWidgets import (
     QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView, QHeaderView,
 )
@@ -18,7 +18,8 @@ from gui_qt.theme_qt import active_palette, _c
 from gui_qt.icons import icon
 from gui_qt.modlist_header import TkStyleHeader
 from gui_qt.plugin_model import (
-    PluginModel, RowRole, PFlagsRole, COL_NAME, COL_FLAGS, COL_LOCK, COL_INDEX,
+    PluginModel, RowRole, PFlagsRole, PHighlightRole,
+    COL_NAME, COL_FLAGS, COL_LOCK, COL_INDEX,
 )
 from gui_qt.plugin_state import (
     PF_MISSING, PF_LATE, PF_VMM, PF_ESL, PF_LOOT, PF_DIRTY, PF_TAGS, PF_MASTER,
@@ -62,6 +63,10 @@ class PluginDelegate(QStyledItemDelegate):
         self.c_check_off = QColor(_c(p, "BG_DEEP"))
         self.c_esl = QColor(_c(p, "TONE_BLUE_SOFT"))
         self.c_master = QColor(_c(p, "TEXT_WARN"))
+        # Cross-panel highlight tints (exact Tk conflict colours).
+        self.c_hl_higher = QColor("#108d00")
+        self.c_hl_lower = QColor("#9a0e0e")
+        self.c_hl_anchor = QColor("#A45500")
 
     def sizeHint(self, opt, index):
         return QSize(opt.rect.width(), ROW_H)
@@ -73,8 +78,16 @@ class PluginDelegate(QStyledItemDelegate):
         p.setRenderHint(p.RenderHint.Antialiasing, False)
 
         selected = bool(opt.state & QStyle.State_Selected)
+        hl = index.data(PHighlightRole) or 0
+        highlighted = False
         if selected:
             p.fillRect(r, self.c_sel)
+        elif hl == 2:
+            p.fillRect(r, self.c_hl_anchor); highlighted = True
+        elif hl == 1:
+            p.fillRect(r, self.c_hl_higher); highlighted = True
+        elif hl == -1:
+            p.fillRect(r, self.c_hl_lower); highlighted = True
         elif opt.state & QStyle.State_MouseOver:
             p.fillRect(r, self.c_hover)
         else:
@@ -83,7 +96,7 @@ class PluginDelegate(QStyledItemDelegate):
         enabled = bool(row and row.enabled)
         vanilla = bool(row and row.vanilla)
         # Vanilla plugins are greyed (dim) regardless of enabled state.
-        text_color = self.c_text_on_sel if selected else (
+        text_color = self.c_text_on_sel if (selected or highlighted) else (
             self.c_text_dim if (vanilla or not enabled) else self.c_text)
         col = index.column()
 
@@ -199,6 +212,20 @@ class PluginView(QTreeView):
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
 
+        self._plugin_owner: dict = {}
+        # Custom drag-reorder (vanilla pinned at top, locked rows immovable).
+        self._drag_rows: list[int] = []
+        self._drag_active = False
+        self._press_row = -1
+        self._press_pos = None
+        self._drop_slot = -1
+        self._DRAG_THRESHOLD = 6
+        self._scroll_zone = 40
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setInterval(16)
+        self._scroll_timer.timeout.connect(self._autoscroll_tick)
+        self._last_mouse_y = 0
+
         # Same Tk-style column resize as the modlist (boundary drag, fill-width,
         # no overflow). Plugin Name (col 0) is the fill column.
         h = TkStyleHeader(self, COL_MINS, COL_DEFAULTS)
@@ -208,13 +235,207 @@ class PluginView(QTreeView):
         for col, w in COL_DEFAULTS.items():
             self.setColumnWidth(col, w)
 
+        # Marker strip (coloured-tick gutter beside the scrollbar) — same as the
+        # modlist, driven by PHighlightRole.
+        from gui_qt.marker_strip import install_marker_strip
+        install_marker_strip(self, PHighlightRole)
+        self._reposition_marker_strip()
+
+    def _reposition_marker_strip(self):
+        from gui_qt.marker_strip import reposition_marker_strip
+        reposition_marker_strip(self)
+
+    # ---- cross-panel highlights ------------------------------------------
+    def set_plugin_owner(self, owner: dict):
+        """owner maps plugin filename (lower) → owning mod name."""
+        self._plugin_owner = dict(owner or {})
+
+    def selected_owner_mods(self, owner: dict) -> set:
+        """The mods that own the currently-selected plugins."""
+        m = self.model()
+        mods: set = set()
+        for idx in self.selectionModel().selectedRows():
+            r = m.row(idx.row())
+            mod = (owner or {}).get(r.name.lower())
+            if mod:
+                mods.add(mod)
+        return mods
+
+    def set_highlight_from_mods(self, mod_names: set, bsa_higher: set,
+                                bsa_lower: set, owner: dict,
+                                bsa_index_path=None):
+        """Highlight plugins from a modlist selection (Tk parity):
+          - orange (anchor): plugins of the selected mod(s) — unconditional.
+          - green/red: plugins of mods in a *BSA* conflict with the selection,
+            and ONLY plugins that actually own a BSA. Loose-file conflicts do
+            NOT colour plugins (a standalone plugin loads no archive contents).
+        owner maps plugin filename(lower) → mod name."""
+        # Invert owner → mod → [plugin names(lower)].
+        mod_to_plugins: dict[str, list[str]] = {}
+        for plugin, mod in (owner or {}).items():
+            mod_to_plugins.setdefault(mod, []).append(plugin)
+
+        bsa_filter = self._bsa_owning_plugins(
+            (bsa_higher or set()) | (bsa_lower or set()),
+            mod_to_plugins, bsa_index_path)
+
+        hl: dict[str, int] = {}
+        for mod in (bsa_lower or set()):
+            for pl in mod_to_plugins.get(mod, []):
+                if pl in bsa_filter:
+                    hl[pl] = -1
+        for mod in (bsa_higher or set()):
+            for pl in mod_to_plugins.get(mod, []):
+                if pl in bsa_filter:
+                    hl[pl] = 1
+        for mod in (mod_names or set()):
+            for pl in mod_to_plugins.get(mod, []):
+                hl[pl] = 2   # anchor wins over conflict tint
+        self.model().set_highlights(hl)
+        self.viewport().update()
+
+    def _bsa_owning_plugins(self, mods: set, mod_to_plugins: dict,
+                            bsa_index_path) -> set:
+        """{plugin filename(lower)} for plugins in *mods* that own a BSA via
+        basename match — reuses the backend's _bsa_owning_plugin (Tk parity)."""
+        if not mods or bsa_index_path is None:
+            return set()
+        try:
+            from Utils.bsa_filemap import read_bsa_index, _bsa_owning_plugin
+        except Exception:
+            return set()
+        idx = read_bsa_index(bsa_index_path) or {}
+        result: set = set()
+        for mod in mods:
+            archives = idx.get(mod)
+            if not archives:
+                continue
+            plugins = mod_to_plugins.get(mod, [])
+            stems = {p.rsplit(".", 1)[0].lower(): p for p in plugins}
+            if not stems:
+                continue
+            for bsa_name, _mt, _paths in archives:
+                bsa_stem = bsa_name.rsplit(".", 1)[0]
+                owning = _bsa_owning_plugin(bsa_stem, set(stems.keys()))
+                if owning is not None and owning in stems:
+                    result.add(stems[owning])
+        return result
+
+    # ---- custom drag-reorder ---------------------------------------------
+    def _drag_block_for(self, row: int) -> list[int] | None:
+        m = self.model()
+        if not m.is_movable(row):
+            return None
+        sel = sorted({i.row() for i in self.selectionModel().selectedRows()})
+        if row in sel and len(sel) > 1:
+            carry = [r for r in sel if m.is_movable(r)]
+            # Contiguous only (model.move_rows requires it).
+            if carry and carry[-1] - carry[0] == len(carry) - 1:
+                return carry
+        return [row]
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self.indexAt(event.position().toPoint())
+            self._press_row = idx.row() if idx.isValid() else -1
+            self._press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton) or self._press_row < 0:
+            super().mouseMoveEvent(event)
+            return
+        if not self._drag_active:
+            if self._press_pos is None or (
+                    event.position().toPoint() - self._press_pos
+            ).manhattanLength() < self._DRAG_THRESHOLD:
+                return
+            block = self._drag_block_for(self._press_row)
+            if block is None:
+                self._press_row = -1
+                return
+            self._drag_active = True
+            self._drag_rows = block
+            self.setCursor(Qt.ClosedHandCursor)
+        self._last_mouse_y = event.position().toPoint().y()
+        self._update_drop_slot(self._last_mouse_y)
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start()
+        self.viewport().update()
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_active:
+            self._scroll_timer.stop()
+            if self._drag_rows and self._drop_slot >= 0:
+                self.model().move_rows(self._drag_rows, self._drop_slot)
+            self._drag_active = False
+            self._drag_rows = []
+            self._drop_slot = -1
+            self.unsetCursor()
+            self.viewport().update()
+            self._press_row = -1
+            return
+        self._press_row = -1
+        super().mouseReleaseEvent(event)
+
+    def _update_drop_slot(self, y: int):
+        m = self.model()
+        n = m.rowCount()
+        for r in range(n):
+            rect = self.visualRect(m.index(r, 0))
+            if rect.top() <= y < rect.bottom():
+                self._drop_slot = r if y < rect.center().y() else r + 1
+                return
+        first = self.visualRect(m.index(0, 0)) if n else None
+        if first is not None and y < first.top():
+            self._drop_slot = 0
+        else:
+            self._drop_slot = n
+        self._drop_slot = max(0, min(self._drop_slot, n))
+
+    def _autoscroll_tick(self):
+        if not self._drag_active:
+            self._scroll_timer.stop()
+            return
+        h = self.viewport().height()
+        y = self._last_mouse_y
+        zone = self._scroll_zone
+        bar = self.verticalScrollBar()
+        step = 0
+        if y < zone:
+            step = -int(2 + (zone - y) / zone * 22)
+        elif y > h - zone:
+            step = int(2 + (y - (h - zone)) / zone * 22)
+        if step:
+            bar.setValue(bar.value() + step)
+            self._update_drop_slot(y)
+            self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._drag_active or self._drop_slot < 0:
+            return
+        m = self.model()
+        n = m.rowCount()
+        if self._drop_slot >= n:
+            y = self.visualRect(m.index(n - 1, 0)).bottom()
+        else:
+            y = self.visualRect(m.index(self._drop_slot, 0)).top()
+        p = QPainter(self.viewport())
+        pen = QPen(QColor("#5aa9ff")); pen.setWidth(2); p.setPen(pen)
+        p.drawLine(0, y, self.viewport().width(), y)
+        p.end()
+
     def showEvent(self, event):
         super().showEvent(event)
         self._fit_name_to_width()
+        self._reposition_marker_strip()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_name_to_width()
+        if hasattr(self, "_marker_strip"):
+            self._reposition_marker_strip()
 
     def _fit_name_to_width(self):
         vp = self.viewport().width()

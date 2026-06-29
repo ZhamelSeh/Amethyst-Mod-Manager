@@ -27,9 +27,9 @@ from gui_qt import glue
 
 
 class MainWindow(QMainWindow):
-    # Carries (generation, conflict_codes) from a worker thread to the UI thread
+    # Carries (generation, ConflictData) from a worker thread to the UI thread
     # (queued connection — thread-safe). See _rebuild_conflicts_async.
-    _conflicts_ready = Signal(int, dict)
+    _conflicts_ready = Signal(int, object)
 
     _PLAY_BAR_W = 380       # play-bar (header right) fixed width
     _FOOTER_RIGHT_W = 400   # narrower than play bar so the 7 mod-tool buttons fit
@@ -140,7 +140,68 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(1, 4)
         split.setSizes([620, 480])
         self._body_split = split
+        self._wire_cross_panel()
         return split
+
+    def _wire_cross_panel(self):
+        """Connect modlist ↔ plugins selection so picking a mod highlights its
+        plugins (+ conflict-tinted ones) and picking a plugin highlights its
+        owning mod (Tk parity)."""
+        self._conflict_data = None
+        mv, pv = self._modlist_view, self._plugin_view
+        mv.selectionModel().selectionChanged.connect(
+            lambda *_: self._on_mod_selection_changed())
+        pv.selectionModel().selectionChanged.connect(
+            lambda *_: self._on_plugin_selection_changed())
+
+    def _suppress_xpanel(self) -> bool:
+        return getattr(self, "_xpanel_busy", False)
+
+    def _on_mod_selection_changed(self):
+        if self._suppress_xpanel():
+            return
+        self._xpanel_busy = True
+        try:
+            mv, pv = self._modlist_view, self._plugin_view
+            names = mv.selected_mod_names()
+            # Modlist rows: green/red tint on ALL conflict partners (loose+BSA).
+            higher, lower = mv.conflict_partners(names)
+            # Tk quirk: the [Overwrite] band lights GREEN when it wins over the
+            # selection (so the user sees Overwrite is active), even though a
+            # normal winning mod would be red. Flip it from lower→higher.
+            from Utils.filemap import OVERWRITE_NAME
+            if OVERWRITE_NAME in lower:
+                lower = lower - {OVERWRITE_NAME}
+                higher = higher | {OVERWRITE_NAME}
+            mv.model().set_highlights(higher=higher, lower=lower)
+            # Plugins panel: orange the selected mods' plugins. Green/red is
+            # applied ONLY for BSA conflicts (Tk parity) — loose-file conflicts
+            # do NOT colour plugins — and only to plugins that own a BSA.
+            cd = self._conflict_data
+            owner = cd.plugin_owner if cd else {}
+            bsa_higher, bsa_lower = mv.bsa_conflict_partners(names)
+            pv.set_highlight_from_mods(
+                names, bsa_higher, bsa_lower, owner,
+                bsa_index_path=self._gs.bsa_index_path())
+            # Picking a mod clears any plugin selection (mutual exclusivity).
+            pv.clearSelection()
+        finally:
+            self._xpanel_busy = False
+
+    def _on_plugin_selection_changed(self):
+        if self._suppress_xpanel():
+            return
+        self._xpanel_busy = True
+        try:
+            mv, pv = self._modlist_view, self._plugin_view
+            owner = (self._conflict_data.plugin_owner
+                     if self._conflict_data else {})
+            mods = pv.selected_owner_mods(owner)
+            # Plugin selected → orange its owning mod, clear mod conflict tint.
+            mv.set_highlighted_mods(mods)
+            mv.clearSelection()
+        finally:
+            self._xpanel_busy = False
 
     # ---------------------------------------------------------- footer row
     def _build_footer_row(self) -> QWidget:
@@ -349,7 +410,7 @@ class MainWindow(QMainWindow):
         self._modlist_model._versions = versions
         self._modlist_model._installed = installed
         self._modlist_model.set_flags(flags)
-        self._modlist_model.set_conflicts({})   # clear stale; recomputed async
+        self._modlist_model.set_conflicts({}, {})   # clear stale; recomputed async
         # Persist edits back to this modlist; rebuild conflicts after each save.
         self._modlist_model.modlist_path = ml_path
         self._modlist_model.on_saved = self._rebuild_conflicts_async
@@ -380,15 +441,22 @@ class MainWindow(QMainWindow):
 
         def worker():
             # log to stderr (not the widget) — we're off the UI thread.
-            codes = self._gs.build_conflicts(
+            data = self._gs.build_conflicts(
                 log_fn=lambda m: print(f"[filemap] {m}", flush=True))
-            self._conflicts_ready.emit(gen, codes)
+            self._conflicts_ready.emit(gen, data)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_conflicts_ready(self, gen: int, codes: dict):
-        if gen == self._conflict_gen:
-            self._modlist_model.set_conflicts(codes)
+    def _on_conflicts_ready(self, gen: int, data):
+        if gen != self._conflict_gen:
+            return
+        self._conflict_data = data
+        self._modlist_model.set_conflicts(data.loose_codes, data.bsa_codes)
+        # Cross-panel highlighting needs the override + owner maps.
+        self._modlist_view.set_conflict_maps(
+            data.overrides, data.overridden_by,
+            data.bsa_overrides, data.bsa_overridden_by)
+        self._plugin_view.set_plugin_owner(data.plugin_owner)
 
     # ----------------------------------------------------------------- right
     def _build_plugins(self) -> QWidget:

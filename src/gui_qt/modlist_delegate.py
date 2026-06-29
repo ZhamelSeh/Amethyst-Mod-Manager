@@ -17,7 +17,8 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.icons import icon
 from gui_qt.modlist_model import (
-    EntryRole, ConflictRole, FlagsRole, COL_NAME, COL_FLAGS, COL_CONFLICTS,
+    EntryRole, ConflictRole, BsaConflictRole, FlagsRole, HighlightRole,
+    COL_NAME, COL_FLAGS, COL_CONFLICTS,
 )
 from gui_qt.modlist_data import FLAG_UPDATE, FLAG_ENDORSED, FLAG_ROOT
 
@@ -33,6 +34,13 @@ _CONFLICT_ICONS = {
     1: "conflict-winner.png",
     -1: "conflict-loser.png",
     2: "conflict-mixed.png",
+}
+
+# BSA/BA2 archive conflict gets its own icon set (drawn right of the loose one).
+_BSA_CONFLICT_ICONS = {
+    1: "archive-conflict-winner.png",
+    -1: "archive-conflict-loser.png",
+    2: "archive-conflict-mixed.png",
 }
 
 # Row metrics — ~10% larger than the Tk baseline (30px) for readability.
@@ -64,6 +72,10 @@ class ModRowDelegate(QStyledItemDelegate):
         self.c_check_off = QColor(_c(p, "BG_DEEP"))   # checkbox fill when disabled
         self.c_overwrite_bg = QColor(_c(p, "BG_DARK_GREEN"))  # Overwrite band
         self.c_root_bg = QColor(_c(p, "BG_DARK_BLUE"))        # Root Folder band
+        # Cross-panel highlight row tints (exact Tk conflict colours).
+        self.c_hl_higher = QColor("#108d00")   # selection beats this mod (green)
+        self.c_hl_lower = QColor("#9a0e0e")    # this mod beats selection (red)
+        self.c_hl_anchor = QColor("#A45500")   # plugin-selected mod (orange)
         self.c_root_text = QColor(_c(p, "TONE_BLUE_SOFT"))
         self.c_overwrite_text = QColor(_c(p, "TEXT_OK_BRIGHT"))
 
@@ -82,10 +94,21 @@ class ModRowDelegate(QStyledItemDelegate):
         p.setRenderHint(p.RenderHint.Antialiasing, False)
 
         # Separator: paint a full band only on the name column; blank elsewhere
-        # so the band reads as one strip across the row.
+        # so the band reads as one strip across the row. A collapsed separator
+        # whose child mod is a conflict partner is tinted green/red/orange.
         if e.is_separator:
             from gui_qt.modlist_model import OVERWRITE_NAME, ROOT_FOLDER_NAME
-            if e.name == OVERWRITE_NAME:
+            sep_hl = index.data(HighlightRole) or 0
+            selected = bool(opt.state & QStyle.State_Selected)
+            if selected:
+                p.fillRect(r, self.c_sel)
+            elif sep_hl == 2:
+                p.fillRect(r, self.c_hl_anchor)
+            elif sep_hl == 1:
+                p.fillRect(r, self.c_hl_higher)
+            elif sep_hl == -1:
+                p.fillRect(r, self.c_hl_lower)
+            elif e.name == OVERWRITE_NAME:
                 p.fillRect(r, self.c_overwrite_bg)
             elif e.name == ROOT_FOLDER_NAME:
                 p.fillRect(r, self.c_root_bg)
@@ -96,25 +119,34 @@ class ModRowDelegate(QStyledItemDelegate):
             p.restore()
             return
 
-        # Row background.
+        # Row background. Selection wins, then cross-panel highlight tint
+        # (green/red/orange), then hover, then the zebra base.
         selected = bool(opt.state & QStyle.State_Selected)
+        hl = index.data(HighlightRole) or 0
+        highlighted = False
         if selected:
             p.fillRect(r, self.c_sel)
+        elif hl == 2:
+            p.fillRect(r, self.c_hl_anchor); highlighted = True
+        elif hl == 1:
+            p.fillRect(r, self.c_hl_higher); highlighted = True
+        elif hl == -1:
+            p.fillRect(r, self.c_hl_lower); highlighted = True
         elif opt.state & QStyle.State_MouseOver:
             p.fillRect(r, self.c_hover)
         else:
             p.fillRect(r, self.c_row_alt if index.row() % 2 else self.c_row)
 
-        text_color = self.c_text_on_sel if selected else (
-            self.c_text if e.enabled else self.c_text_dim)
+        text_color = (self.c_text_on_sel if (selected or highlighted)
+                      else (self.c_text if e.enabled else self.c_text_dim))
 
         if index.column() == COL_NAME:
             self._paint_name(p, r, e, index, text_color)
         elif index.column() == COL_FLAGS:
             self._paint_icons(p, r, self._flag_icons(index.data(FlagsRole) or 0))
         elif index.column() == COL_CONFLICTS:
-            ico = _CONFLICT_ICONS.get(index.data(ConflictRole) or 0)
-            self._paint_icons(p, r, [ico] if ico else [])
+            self._paint_conflicts(p, r, index.data(ConflictRole) or 0,
+                                  index.data(BsaConflictRole) or 0)
         else:
             # Plain columns (Installed/Version/Priority): centred to match the
             # centred headers + the icon columns.
@@ -224,21 +256,28 @@ class ModRowDelegate(QStyledItemDelegate):
         each kept under the relevant header."""
         bits = 0
         conflicts = set()
+        bsa_conflicts = set()
         for row in block:
             bits |= model.data(model.index(row, COL_FLAGS), FlagsRole) or 0
             cc = model.data(model.index(row, COL_CONFLICTS), ConflictRole) or 0
             if cc:
                 conflicts.add(cc)
-        # A block with both winners and losers (or any mixed) collapses to a
-        # single mixed icon — otherwise the lone winner/loser icon (Tk parity).
-        if 2 in conflicts or (1 in conflicts and -1 in conflicts):
-            conflict_icons = [_CONFLICT_ICONS[2]]
-        elif 1 in conflicts:
-            conflict_icons = [_CONFLICT_ICONS[1]]
-        elif -1 in conflicts:
-            conflict_icons = [_CONFLICT_ICONS[-1]]
-        else:
-            conflict_icons = []
+            bc = model.data(model.index(row, COL_CONFLICTS), BsaConflictRole) or 0
+            if bc:
+                bsa_conflicts.add(bc)
+
+        def _summarise(codes, icons):
+            # Both winners + losers (or any mixed) → one mixed icon, else lone.
+            if 2 in codes or (1 in codes and -1 in codes):
+                return [icons[2]]
+            if 1 in codes:
+                return [icons[1]]
+            if -1 in codes:
+                return [icons[-1]]
+            return []
+
+        conflict_icons = (_summarise(conflicts, _CONFLICT_ICONS)
+                          + _summarise(bsa_conflicts, _BSA_CONFLICT_ICONS))
         self._paint_icons(p, self._col_rect(COL_FLAGS, r), self._flag_icons(bits))
         self._paint_icons(p, self._col_rect(COL_CONFLICTS, r), conflict_icons)
 
@@ -276,6 +315,16 @@ class ModRowDelegate(QStyledItemDelegate):
         elided = opt_fm(p).elidedText(e.display_name, Qt.ElideRight,
                                       name_rect.width())
         p.drawText(name_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+
+    def _paint_conflicts(self, p, r, loose, bsa):
+        """Conflicts cell: loose-file conflict icon on the left, BSA/BA2 archive
+        conflict icon on the right (Tk parity). Either may be absent; a lone icon
+        is centred, both pair up around the cell centre."""
+        loose_ico = _CONFLICT_ICONS.get(loose)
+        bsa_ico = _BSA_CONFLICT_ICONS.get(bsa)
+        names = [n for n in (loose_ico, bsa_ico) if n]
+        if names:
+            self._paint_icons(p, r, names)
 
     def _flag_icons(self, bits):
         return [name for bit, name in _FLAG_ICONS if bits & bit]

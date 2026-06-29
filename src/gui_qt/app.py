@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QToolButton, QWidget, QSplitter,
@@ -21,10 +21,15 @@ from gui_qt.icons import icon
 from gui_qt.modlist_model import ModListModel
 from gui_qt.modlist_view import ModListView
 from gui_qt.selector_button import SelectorButton
+from gui_qt.game_state import GameState
 from gui_qt import glue
 
 
 class MainWindow(QMainWindow):
+    # Carries (generation, conflict_codes) from a worker thread to the UI thread
+    # (queued connection — thread-safe). See _rebuild_conflicts_async.
+    _conflicts_ready = Signal(int, dict)
+
     _PLAY_BAR_W = 380       # play-bar (header right) fixed width
     _FOOTER_RIGHT_W = 400   # narrower than play bar so the 7 mod-tool buttons fit
     _BTN_H = 42          # consistent height for all header buttons (~30% bigger)
@@ -36,6 +41,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._app = app
         self._pal = active_palette()
+        self._gs = GameState()
+        self._gs.load()
+        self._conflicts_ready.connect(self._on_conflicts_ready)
         self.setWindowTitle("Amethyst Mod Manager")
         self.setMinimumSize(1280, 800)   # Steam Deck is the floor
         self.resize(1280, 800)
@@ -84,6 +92,21 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._init_action_mode)
         QTimer.singleShot(0, lambda: (self._vsplit.setSizes(
             [self._vsplit.height(), 0]), self._sync_log_controls()))
+
+        # Populate selectors from discovered games and load the active modlist.
+        self._populate_selectors()
+        self._reload_modlist()
+
+    def _populate_selectors(self):
+        """Fill the game/profile selectors from the current GameState."""
+        gs = self._gs
+        if gs.game_name:
+            self._game_selector.set_items(gs.game_names, current=gs.game_name)
+        self._play_game_selector.set_items(
+            gs.game_names or ["—"], current=gs.game_name or "—")
+        profs = gs.profiles()
+        if profs:
+            self._profile_selector.set_items(profs, current=gs.profile)
 
     # ---------------------------------------------------------- header row
     def _build_header_row(self) -> QWidget:
@@ -284,77 +307,88 @@ class MainWindow(QMainWindow):
                 b.setMinimumWidth(0)
                 b.setMaximumWidth(16777215)
 
-    # ---- selector handlers (real wiring lands with game/profile load) -----
+    # ---- selector handlers -------------------------------------------------
     def _on_game_changed(self, name):
-        self.statusBar().showMessage(f"Game → {name}", 3000)
-
-    def _on_game_action(self, which):
-        self.statusBar().showMessage(f"[game] {which} (not wired yet)", 3000)
+        if name == self._gs.game_name:
+            return
+        self._gs.set_game(name)
+        # Reflect the new game's profiles + keep both game selectors in sync.
+        profs = self._gs.profiles()
+        if profs:
+            self._profile_selector.set_items(profs, current=self._gs.profile)
+        self._game_selector.set_current(name)
+        self._play_game_selector.set_current(name)
+        self._reload_modlist()
 
     def _on_profile_changed(self, name):
-        self.statusBar().showMessage(f"Profile → {name}", 3000)
+        if name == self._gs.profile:
+            return
+        self._gs.set_profile(name)
+        self._profile_selector.set_current(name)
+        self._reload_modlist()
+
+    def _on_game_action(self, which):
+        self._append_log(f"[game] {which} (not wired yet)")
 
     def _on_profile_action(self, which):
-        self.statusBar().showMessage(f"[profile] {which} (not wired yet)", 3000)
+        self._append_log(f"[profile] {which} (not wired yet)")
 
     def _on_play_action(self, which):
-        self.statusBar().showMessage(f"[play] {which} (not wired yet)", 3000)
+        self._append_log(f"[play] {which} (not wired yet)")
 
     def _build_modlist(self) -> QWidget:
-        entries, staging = self._load_demo_entries()
-        versions, installed, flags = {}, {}, {}
-        if staging is not None:
-            # Real metadata from each mod's meta.ini (backend, GUI-free).
-            from gui_qt.modlist_data import read_meta_for_entries
-            versions, installed, flags = read_meta_for_entries(entries, staging)
-        self._modlist_model = ModListModel(
-            entries, versions=versions, installed=installed)
-        self._modlist_model.set_flags(flags)
-        # Conflict data needs a built filemap (game-load flow not wired yet);
-        # the model already accepts it via set_conflicts when that lands.
+        self._modlist_model = ModListModel([])
         self._modlist_view = ModListView(self._modlist_model)
-        self._modlist_view.staging_dir = staging
         return self._modlist_view
 
-    def _load_demo_entries(self):
-        """Real read_modlist + its staging dir if a profile exists, else demo.
+    def _reload_modlist(self):
+        """Load the active game/profile's modlist + metadata into the model."""
+        from Utils.modlist import read_modlist
+        from gui_qt.modlist_data import read_meta_for_entries
 
-        Returns (entries, staging_dir | None).
-        """
-        from Utils.modlist import ModEntry, read_modlist
-        try:
-            from Utils.config_paths import get_profiles_dir
-            base = get_profiles_dir()
-            best = None
-            for ml in base.glob("*/profiles/*/modlist.txt"):
-                ents = read_modlist(ml)
-                if len(ents) >= 5:
-                    best = (ml, ents)
-                    break
-            if best:
-                ml, ents = best
-                # Staging dir: shared mods/ under the game profile root, or the
-                # profile-specific mods/ if present.
-                game_root = ml.parents[2]   # <game>/profiles/<profile>/modlist.txt
-                staging = game_root / "mods"
-                prof_mods = ml.parent / "mods"
-                if prof_mods.is_dir():
-                    staging = prof_mods
-                print(f"[gui_qt] modlist: {ml} ({len(ents)} entries); "
-                      f"staging={staging if staging.is_dir() else 'n/a'}")
-                return ents, (staging if staging.is_dir() else None)
-        except Exception as e:
-            print("[gui_qt] modlist load fallback:", e)
-        # Synthetic fallback (no real staging dir).
-        demo = [ModEntry("Overwrite", True, False, True)]
-        for i in range(40):
-            if i % 12 == 0:
-                demo.append(ModEntry(f"Category {i//12}_separator",
-                                     True, False, True))
-            demo.append(ModEntry(f"Demo Mod {i:02d} — example name",
-                                  enabled=(i % 4 != 0), locked=(i % 20 == 0)))
-        demo.append(ModEntry("Root Folder", True, False, True))
-        return demo, None
+        ml_path = self._gs.modlist_path()
+        staging = self._gs.staging_dir()
+        entries = read_modlist(ml_path) if (ml_path and ml_path.is_file()) else []
+
+        versions = installed = flags = {}
+        if entries and staging is not None:
+            versions, installed, flags = read_meta_for_entries(entries, staging)
+
+        self._modlist_model.set_entries(entries)
+        self._modlist_model._versions = versions
+        self._modlist_model._installed = installed
+        self._modlist_model.set_flags(flags)
+        self._modlist_model.set_conflicts({})   # clear stale; recomputed async
+        # Persist edits back to this modlist; rebuild conflicts after each save.
+        self._modlist_model.modlist_path = ml_path
+        self._modlist_model.on_saved = self._rebuild_conflicts_async
+        self._modlist_view.staging_dir = staging
+        self._modlist_view.profile_dir = self._gs.profile_dir()
+        self._modlist_view.load_separator_state()
+        print(f"[gui_qt] modlist: {ml_path} ({len(entries)} entries)")
+
+        if entries:
+            self._rebuild_conflicts_async()
+
+    def _rebuild_conflicts_async(self):
+        """Build the filemap off-thread; the worker emits _conflicts_ready
+        (queued → UI thread). A generation counter drops results from a
+        superseded reload (user switched game before the build finished)."""
+        import threading
+        gen = getattr(self, "_conflict_gen", 0) + 1
+        self._conflict_gen = gen
+
+        def worker():
+            # log to stderr (not the widget) — we're off the UI thread.
+            codes = self._gs.build_conflicts(
+                log_fn=lambda m: print(f"[filemap] {m}", flush=True))
+            self._conflicts_ready.emit(gen, codes)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_conflicts_ready(self, gen: int, codes: dict):
+        if gen == self._conflict_gen:
+            self._modlist_model.set_conflicts(codes)
 
     # ----------------------------------------------------------------- right
     def _build_plugins(self) -> QWidget:

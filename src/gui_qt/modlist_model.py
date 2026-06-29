@@ -14,6 +14,11 @@ from PySide6.QtCore import (
 )
 
 from Utils.modlist import ModEntry, read_modlist
+from Utils.filemap import OVERWRITE_NAME, ROOT_FOLDER_NAME
+
+# UI-only boundary separators: pinned + locked, never written to modlist.txt.
+# Overwrite floats at the top, Root Folder at the bottom (Tk parity).
+_BOUNDARY_NAMES = (OVERWRITE_NAME, ROOT_FOLDER_NAME)
 
 
 # Column indices.
@@ -45,15 +50,33 @@ class ModListModel(QAbstractTableModel):
         self._installed = installed or {}
         self._conflicts = conflicts or {}
         self._flags: dict[str, int] = {}
+        # When set, toggle/reorder edits are written back here.
+        self.modlist_path = None
+        # Optional callback invoked after a save (e.g. to rebuild conflicts).
+        self.on_saved = None
+        # Separator state (keyed by separator display name), persisted per
+        # profile. collapsed → its mods are hidden; locked → its block can't be
+        # dragged. Set via set_separator_state(); persistence lives in the view.
+        self._collapsed: set[str] = set()
+        self._sep_locks: dict[str, bool] = {}
 
     # ---- loading ----------------------------------------------------------
     @classmethod
     def from_modlist(cls, modlist_path, **kw) -> "ModListModel":
         return cls(read_modlist(modlist_path), **kw)
 
+    @staticmethod
+    def _with_boundaries(entries: list[ModEntry]) -> list[ModEntry]:
+        """Wrap raw entries with the pinned Overwrite (top) + Root Folder
+        (bottom) boundary separators. They're locked + UI-only."""
+        body = [e for e in entries if e.name not in _BOUNDARY_NAMES]
+        top = ModEntry(OVERWRITE_NAME, True, True, True)
+        bot = ModEntry(ROOT_FOLDER_NAME, True, True, True)
+        return [top] + body + [bot]
+
     def set_entries(self, entries: list[ModEntry]) -> None:
         self.beginResetModel()
-        self._entries = entries
+        self._entries = self._with_boundaries(entries)
         self.endResetModel()
 
     def set_flags(self, flags: dict[str, int]) -> None:
@@ -126,9 +149,10 @@ class ModListModel(QAbstractTableModel):
             return Qt.ItemIsDropEnabled
         e = self._entries[index.row()]
         f = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        # Locked rows (e.g. Overwrite / Root Folder boundary separators, and
-        # locked mods) cannot be dragged. Bundle/locked mods remain selectable.
-        if not e.locked:
+        # Draggable unless pinned: boundary separators + locked MODS can't be
+        # dragged (a regular separator reads as locked=True but IS draggable).
+        pinned = e.name in _BOUNDARY_NAMES or (not e.is_separator and e.locked)
+        if not pinned:
             f |= Qt.ItemIsDragEnabled
         if not e.is_separator:
             f |= Qt.ItemIsDropEnabled
@@ -162,20 +186,103 @@ class ModListModel(QAbstractTableModel):
         e.enabled = not e.enabled
         idx = self.index(row, COL_NAME)
         self.dataChanged.emit(idx, idx, [EntryRole, Qt.DisplayRole])
+        self.save()
 
     def entry(self, row: int) -> ModEntry:
         return self._entries[row]
 
+    # ---- separators -------------------------------------------------------
+    def set_separator_state(self, collapsed: set[str], locks: dict[str, bool]):
+        self._collapsed = set(collapsed or set())
+        self._sep_locks = dict(locks or {})
+
+    def is_collapsed(self, sep_name: str) -> bool:
+        return sep_name in self._collapsed
+
+    def is_sep_locked(self, sep_name: str) -> bool:
+        return bool(self._sep_locks.get(sep_name, False))
+
+    def toggle_collapse(self, row: int) -> set[str]:
+        e = self._entries[row]
+        if not e.is_separator:
+            return self._collapsed
+        name = e.display_name
+        if name in self._collapsed:
+            self._collapsed.discard(name)
+        else:
+            self._collapsed.add(name)
+        return self._collapsed
+
+    def toggle_sep_lock(self, row: int) -> dict[str, bool]:
+        e = self._entries[row]
+        if e.is_separator:
+            name = e.display_name
+            self._sep_locks[name] = not self._sep_locks.get(name, False)
+        return self._sep_locks
+
+    def hidden_rows(self) -> set[int]:
+        """Rows to hide: mods that fall under a collapsed separator (up to the
+        next separator). Separators themselves are never hidden."""
+        hidden: set[int] = set()
+        collapsing = False
+        for i, e in enumerate(self._entries):
+            if e.is_separator:
+                collapsing = e.display_name in self._collapsed
+            elif collapsing:
+                hidden.add(i)
+        return hidden
+
+    def sep_block_rows(self, sep_row: int) -> range:
+        """Row range [sep_row+1, next-separator) — the mods a separator owns."""
+        end = sep_row + 1
+        while end < len(self._entries) and not self._entries[end].is_separator:
+            end += 1
+        return range(sep_row + 1, end)
+
+    def _locked_block_of(self, row: int) -> "range | None":
+        """If *row* sits inside a locked separator's block, return that block's
+        mod-row range, else None. (The separator row itself is not included.)"""
+        sep = None
+        for i in range(min(row, len(self._entries) - 1), -1, -1):
+            if self._entries[i].is_separator:
+                sep = i
+                break
+        if sep is None:
+            return None
+        if not self.is_sep_locked(self._entries[sep].display_name):
+            return None
+        return self.sep_block_rows(sep)
+
+    # ---- persistence ------------------------------------------------------
+    def save(self) -> None:
+        """Write the current entries back to modlist.txt (no-op if no path).
+        The Overwrite / Root Folder boundary separators are UI-only and are
+        stripped before writing. Fires on_saved() so the view can rebuild."""
+        if self.modlist_path is None:
+            return
+        from Utils.modlist import write_modlist
+        body = [e for e in self._entries if e.name not in _BOUNDARY_NAMES]
+        try:
+            write_modlist(self.modlist_path, body)
+        except Exception as exc:
+            print(f"[gui_qt] modlist save failed: {exc}", flush=True)
+            return
+        if self.on_saved:
+            self.on_saved()
+
     # ---- structural edits (context-menu actions) --------------------------
     def rename(self, row: int, new_name: str) -> None:
         e = self._entries[row]
-        if e.locked:
+        # Block only pinned boundaries + locked mods (separators read as locked
+        # but are renamable).
+        if e.name in _BOUNDARY_NAMES or (not e.is_separator and e.locked):
             return
         # Separators keep their suffix so they stay separators on write-out.
         from Utils.modlist import _SEPARATOR_SUFFIX
         e.name = (new_name + _SEPARATOR_SUFFIX) if e.is_separator else new_name
         idx = self.index(row, COL_NAME)
         self.dataChanged.emit(idx, idx, [Qt.DisplayRole, EntryRole])
+        self.save()
 
     def set_priority(self, row: int, priority: int) -> None:
         """Move a mod so its descending-priority number becomes *priority*.
@@ -197,13 +304,16 @@ class ModListModel(QAbstractTableModel):
         self.beginInsertRows(QModelIndex(), at, at)
         self._entries.insert(at, sep)
         self.endInsertRows()
+        self.save()
 
     def remove_row(self, row: int) -> None:
-        if self._entries[row].locked:
+        e = self._entries[row]
+        if e.name in _BOUNDARY_NAMES or (not e.is_separator and e.locked):
             return
         self.beginRemoveRows(QModelIndex(), row, row)
         del self._entries[row]
         self.endRemoveRows()
+        self.save()
 
     # ---- drag-reorder (beginMoveRows; selection/scroll preserved) ---------
     def supportedDropActions(self):
@@ -224,7 +334,27 @@ class ModListModel(QAbstractTableModel):
         src = [int(x) for x in bytes(data.data(_MIME)).decode().split(",")]
         dest = row if row != -1 else (parent.row() if parent.isValid()
                                       else len(self._entries))
+        # A separator drag (lone line, or a LOCKED separator carrying its block)
+        # must land at a block boundary, never inside another separator's mods.
+        dragging_sep = len(src) == 1 and self._entries[src[0]].is_separator
+        if dragging_sep and self.is_sep_locked(self._entries[src[0]].display_name):
+            src = [src[0]] + list(self.sep_block_rows(src[0]))
+        dest = self._resolve_drop_dest(dest, separator_drag=dragging_sep)
         return self.move_block(src, dest)
+
+    def _resolve_drop_dest(self, dest: int, separator_drag: bool) -> int:
+        """Tk drop rule: a separator (lone or carrying its block) lands just
+        BEFORE the next separator/boundary below the drop point — i.e. at the
+        END of whatever block it was dropped into — so it becomes a peer group
+        and never splits another separator's mods. A plain mod drops as-is."""
+        n = len(self._entries)
+        dest = max(0, min(dest, n))
+        if not separator_drag:
+            return dest
+        i = dest
+        while i < n and not self._entries[i].is_separator:
+            i += 1
+        return i
 
     def move_block(self, src_rows: list[int], dest: int) -> bool:
         """Move a contiguous block of rows to *dest* using beginMoveRows so the
@@ -233,13 +363,32 @@ class ModListModel(QAbstractTableModel):
             return False
         src_rows = sorted(src_rows)
         first, last = src_rows[0], src_rows[-1]
-        # Don't move locked rows (boundary separators, locked mods).
-        if any(self._entries[r].locked for r in src_rows):
-            return False
+        # Pinned rows never move: boundary separators (Overwrite/Root Folder)
+        # and locked MODS. NB a regular separator reads back as locked=True
+        # (the '-' prefix convention in read_modlist) yet is still movable — so
+        # the lock guard applies to mods only, plus the boundary names.
+        for r in src_rows:
+            e = self._entries[r]
+            if e.name in _BOUNDARY_NAMES:
+                return False
+            if not e.is_separator and e.locked:
+                return False
         # Keep within the movable span (below Overwrite, above Root Folder).
         lo, hi = self._movable_span()
         if first < lo or last >= hi or not (lo <= dest <= hi):
             return False
+        # Locked-separator confinement applies only when moving MODS (not when
+        # relocating a whole locked separator+block as a unit).
+        moving_locked_sep = self._entries[first].is_separator and \
+            self.is_sep_locked(self._entries[first].display_name)
+        if not moving_locked_sep:
+            src_block = self._locked_block_of(first)
+            if src_block is not None:
+                if (last not in src_block or dest < src_block.start
+                        or dest > src_block.stop):
+                    return False
+            elif self._locked_block_of(dest) is not None:
+                return False
         # Qt's beginMoveRows requires dest outside the moved range.
         if first <= dest <= last + 1:
             return False
@@ -251,4 +400,5 @@ class ModListModel(QAbstractTableModel):
         insert_at = dest if dest < first else dest - len(block)
         self._entries[insert_at:insert_at] = block
         self.endMoveRows()
+        self.save()
         return True

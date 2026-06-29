@@ -244,19 +244,24 @@ def _make_ue5_conflict_key_fn(game, index_path: Path):
     return _ck
 
 
-def _build_filemap_for_game(game, profile, *, log_fn: LogFn) -> None:
+def _build_filemap_for_game(game, profile, *, log_fn: LogFn):
     """Rebuild filemap.txt + filemap_root.txt for *profile* of *game*.
 
     Mirrors the call in top_bar._run_deploy: pulls excluded-files, root-flagged
     mods (Nexus), folder-case normalization toggle, UE5 conflict-key resolver.
     Errors are logged but not raised — partial filemap is still useful.
+
+    Returns the build_filemap result tuple
+    ``(count, conflict_map, overrides, overridden_by)`` so callers that need the
+    conflict data (e.g. the Qt modlist) can use it without re-reading filemap.txt.
+    Returns None if the modlist is missing or the build fails.
     """
     profile_root = game.get_profile_root()
     staging = game.get_effective_mod_staging_path()
     modlist_path = profile_root / "profiles" / profile / "modlist.txt"
     filemap_out = staging.parent / "filemap.txt"
     if not modlist_path.is_file():
-        return
+        return None
 
     try:
         from Nexus.nexus_meta import collect_root_flagged_mods
@@ -281,7 +286,7 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn) -> None:
             else:
                 conflict_key_fn = None
 
-        build_filemap(
+        return build_filemap(
             modlist_path, staging, filemap_out,
             strip_prefixes=game.mod_folder_strip_prefixes or None,
             per_mod_strip_prefixes=load_per_mod_strip_prefixes(modlist_path.parent),
@@ -303,6 +308,7 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn) -> None:
         )
     except Exception as fm_err:
         log_fn(f"Filemap rebuild warning: {fm_err}")
+        return None
 
 
 def run_deploy_pipeline(

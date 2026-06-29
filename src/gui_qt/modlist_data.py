@@ -11,13 +11,12 @@ from pathlib import Path
 from Utils.modlist import ModEntry
 
 
-# Flag bits for the Flags column (delegate maps these to glyphs/icons).
+# Flag bits for the Flags column — only the ones the Tk app shows there.
+# (FOMOD/BAIN are install methods, NOT flag icons; note.png = a real saved
+#  user note, not FOMOD. brush = xedit-modified — both wired in a later pass.)
 FLAG_UPDATE = 1 << 0       # has_update & not ignored
 FLAG_ENDORSED = 1 << 1
-FLAG_FOMOD = 1 << 2
-FLAG_BAIN = 1 << 3
-FLAG_ROOT = 1 << 4
-FLAG_NOTES = 1 << 5        # has user notes (placeholder; wired later)
+FLAG_ROOT = 1 << 2
 
 
 def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path):
@@ -62,10 +61,6 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path):
             bits |= FLAG_UPDATE
         if meta.endorsed:
             bits |= FLAG_ENDORSED
-        if meta.is_fomod:
-            bits |= FLAG_FOMOD
-        if meta.is_bain:
-            bits |= FLAG_BAIN
         if meta.root_folder:
             bits |= FLAG_ROOT
         if bits:

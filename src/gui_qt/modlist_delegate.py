@@ -17,25 +17,30 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.icons import icon
 from gui_qt.modlist_model import (
-    EntryRole, ConflictRole, FlagsRole, COL_NAME, COL_FLAGS,
+    EntryRole, ConflictRole, FlagsRole, COL_NAME, COL_FLAGS, COL_CONFLICTS,
 )
-from gui_qt.modlist_data import (
-    FLAG_UPDATE, FLAG_ENDORSED, FLAG_FOMOD, FLAG_BAIN, FLAG_ROOT,
-)
+from gui_qt.modlist_data import FLAG_UPDATE, FLAG_ENDORSED, FLAG_ROOT
 
 # Flag bit → icon filename, painted left-to-right in the Flags column.
 _FLAG_ICONS = [
     (FLAG_UPDATE, "update.png"),
     (FLAG_ENDORSED, "endorsed.png"),
     (FLAG_ROOT, "root.png"),
-    (FLAG_FOMOD, "note.png"),
-    (FLAG_BAIN, "tag.png"),
 ]
 
-# Match the Tk app's row height (ROW_H = 30 at scale 1.0).
-ROW_H = 30
-SEP_H = 30
-CHECK_BOX = 16
+# Conflict code → icon (lightning), painted in the Conflicts column (Tk parity).
+_CONFLICT_ICONS = {
+    1: "conflict-winner.png",
+    -1: "conflict-loser.png",
+    2: "conflict-mixed.png",
+}
+
+# Row metrics — ~10% larger than the Tk baseline (30px) for readability.
+ROW_H = 33
+SEP_H = 33
+CHECK_BOX = 17
+ICON_SZ = 20        # flag / conflict / arrow / lock icon size
+FONT_PX = 14        # row text size
 
 
 class ModRowDelegate(QStyledItemDelegate):
@@ -57,6 +62,10 @@ class ModRowDelegate(QStyledItemDelegate):
         self.c_lose = QColor(_c(p, "TEXT_ERR_BRIGHT"))
         self.c_check = QColor(_c(p, "BTN_SUCCESS"))   # checkbox fill when enabled
         self.c_check_off = QColor(_c(p, "BG_DEEP"))   # checkbox fill when disabled
+        self.c_overwrite_bg = QColor(_c(p, "BG_DARK_GREEN"))  # Overwrite band
+        self.c_root_bg = QColor(_c(p, "BG_DARK_BLUE"))        # Root Folder band
+        self.c_root_text = QColor(_c(p, "TONE_BLUE_SOFT"))
+        self.c_overwrite_text = QColor(_c(p, "TEXT_OK_BRIGHT"))
 
     def sizeHint(self, opt, index):
         e = index.data(EntryRole)
@@ -75,12 +84,15 @@ class ModRowDelegate(QStyledItemDelegate):
         # Separator: paint a full band only on the name column; blank elsewhere
         # so the band reads as one strip across the row.
         if e.is_separator:
-            p.fillRect(r, self.c_sep_bg)
+            from gui_qt.modlist_model import OVERWRITE_NAME, ROOT_FOLDER_NAME
+            if e.name == OVERWRITE_NAME:
+                p.fillRect(r, self.c_overwrite_bg)
+            elif e.name == ROOT_FOLDER_NAME:
+                p.fillRect(r, self.c_root_bg)
+            else:
+                p.fillRect(r, self.c_sep_bg)
             if index.column() == COL_NAME:
-                f = QFont(); f.setBold(True); p.setFont(f)
-                p.setPen(self.c_sep_text)
-                p.drawText(r.adjusted(10, 0, -10, 0),
-                           Qt.AlignVCenter | Qt.AlignLeft, e.display_name)
+                self._paint_separator(p, r, e, index)
             p.restore()
             return
 
@@ -99,32 +111,139 @@ class ModRowDelegate(QStyledItemDelegate):
         if index.column() == COL_NAME:
             self._paint_name(p, r, e, index, text_color)
         elif index.column() == COL_FLAGS:
-            self._paint_flags(p, r, index.data(FlagsRole) or 0)
+            self._paint_icons(p, r, self._flag_icons(index.data(FlagsRole) or 0))
+        elif index.column() == COL_CONFLICTS:
+            ico = _CONFLICT_ICONS.get(index.data(ConflictRole) or 0)
+            self._paint_icons(p, r, [ico] if ico else [])
         else:
-            # Plain columns: text from the model, dim + right-pad.
+            # Plain columns (Installed/Version/Priority): centred to match the
+            # centred headers + the icon columns.
             val = index.data(Qt.DisplayRole) or ""
             p.setPen(text_color)
-            align = Qt.AlignVCenter | (
-                Qt.AlignRight if index.column() in (4, 5) else Qt.AlignLeft)
-            pad = QRect(r.left() + 8, r.top(), r.width() - 16, r.height())
-            p.drawText(pad, align, str(val))
+            _df = QFont(); _df.setPixelSize(FONT_PX); p.setFont(_df)
+            pad = QRect(r.left() + 6, r.top(), r.width() - 12, r.height())
+            p.drawText(pad, Qt.AlignVCenter | Qt.AlignHCenter, str(val))
 
         p.restore()
 
+    # Geometry shared by paint + editorEvent so the hit areas match exactly.
+    ARROW_SZ = ICON_SZ
+    LOCK_SZ = ICON_SZ
+    PAD = 10
+
+    def _arrow_rect(self, r):
+        y = r.top() + (r.height() - self.ARROW_SZ) // 2
+        return QRect(r.left() + self.PAD, y, self.ARROW_SZ, self.ARROW_SZ)
+
+    def _lock_rect(self, r):
+        y = r.top() + (r.height() - self.LOCK_SZ) // 2
+        return QRect(r.right() - self.PAD - self.LOCK_SZ, y,
+                     self.LOCK_SZ, self.LOCK_SZ)
+
+    def _col_rect(self, col, r):
+        """Sub-rect of a (full-width, spanned) separator row aligned with a
+        given column, so separator content sits under the right header."""
+        view = self.parent()
+        try:
+            x = view.columnViewportPosition(col)
+            w = view.columnWidth(col)
+            return QRect(x, r.top(), w, r.height())
+        except Exception:
+            return r
+
+    def _paint_separator(self, p, r, e, index):
+        model = index.model()
+        # Boundary separators (Overwrite / Root Folder) are pinned + not
+        # collapsible/lockable: just a centred name + strikethrough, no controls.
+        from gui_qt.modlist_model import (_BOUNDARY_NAMES, ROOT_FOLDER_NAME,
+                                          OVERWRITE_NAME)
+        if e.name in _BOUNDARY_NAMES:
+            f = QFont(); f.setBold(True); f.setPixelSize(FONT_PX); p.setFont(f)
+            cy = r.center().y()
+            nr = self._col_rect(COL_NAME, r)
+            tw = p.fontMetrics().horizontalAdvance(e.display_name)
+            cx = nr.center().x(); gap = tw // 2 + 12
+            p.setPen(QPen(self.c_border, 1))
+            p.drawLine(r.left() + 6, cy, cx - gap, cy)
+            p.drawLine(cx + gap, cy, r.right() - 6, cy)
+            txt = (self.c_overwrite_text if e.name == OVERWRITE_NAME
+                   else self.c_root_text if e.name == ROOT_FOLDER_NAME
+                   else self.c_sep_text)
+            p.setPen(txt)
+            p.drawText(nr, Qt.AlignVCenter | Qt.AlignHCenter, e.display_name)
+            return
+
+        name = e.display_name
+        collapsed = model.is_collapsed(name)
+        locked = model.is_sep_locked(name)
+        block = model.sep_block_rows(index.row())
+
+        name_rect = self._col_rect(COL_NAME, r)
+        f = QFont(); f.setBold(True); f.setPixelSize(FONT_PX); p.setFont(f)
+        label = f"{name}   ({len(block)})"
+        tw = p.fontMetrics().horizontalAdvance(label)
+        cx = name_rect.center().x()
+        cy = r.center().y()
+
+        # Strikethrough line across the row, broken around the centred name
+        # (Tk-style — makes separators easy to distinguish).
+        p.setPen(QPen(self.c_border, 1))
+        gap = tw // 2 + 12
+        p.drawLine(r.left() + 6, cy, cx - gap, cy)
+        p.drawLine(cx + gap, cy, r.right() - 6, cy)
+
+        # Collapse arrow — right.png when collapsed, arrow.png when expanded.
+        a = self._arrow_rect(r)
+        ico = icon("right.png" if collapsed else "arrow.png", self.ARROW_SZ)
+        if not ico.isNull():
+            ico.paint(p, a)
+
+        # Centred name + "(N)" count over the Mod Name column.
+        p.setPen(self.c_sep_text)
+        p.drawText(name_rect, Qt.AlignVCenter | Qt.AlignHCenter, label)
+
+        # Grouped flags/conflicts when collapsed — each under its own column.
+        if collapsed:
+            self._paint_grouped_icons(p, r, model, block)
+
+        # Lock checkbox on the far right — always drawn so it reads as a
+        # clickable control. Empty box when unlocked; the (gold) lock.png on a
+        # neutral fill when locked (lock.png is gold, so the fill stays neutral).
+        lk = self._lock_rect(r)
+        p.setPen(QPen(self.c_border, 1))
+        p.setBrush(QBrush(self.c_check_off))
+        p.drawRoundedRect(lk, 3, 3)
+        if locked:
+            lico = icon("lock.png", self.LOCK_SZ - 2)
+            if not lico.isNull():
+                lico.paint(p, lk.adjusted(1, 1, -1, -1))
+
+    def _paint_grouped_icons(self, p, r, model, block):
+        """Collapsed-separator summary: union of the block's flag icons painted
+        in the Flags column, and its conflict icons in the Conflicts column —
+        each kept under the relevant header."""
+        bits = 0
+        conflicts = set()
+        for row in block:
+            bits |= model.data(model.index(row, COL_FLAGS), FlagsRole) or 0
+            cc = model.data(model.index(row, COL_CONFLICTS), ConflictRole) or 0
+            if cc:
+                conflicts.add(cc)
+        # A block with both winners and losers (or any mixed) collapses to a
+        # single mixed icon — otherwise the lone winner/loser icon (Tk parity).
+        if 2 in conflicts or (1 in conflicts and -1 in conflicts):
+            conflict_icons = [_CONFLICT_ICONS[2]]
+        elif 1 in conflicts:
+            conflict_icons = [_CONFLICT_ICONS[1]]
+        elif -1 in conflicts:
+            conflict_icons = [_CONFLICT_ICONS[-1]]
+        else:
+            conflict_icons = []
+        self._paint_icons(p, self._col_rect(COL_FLAGS, r), self._flag_icons(bits))
+        self._paint_icons(p, self._col_rect(COL_CONFLICTS, r), conflict_icons)
+
     def _paint_name(self, p, r, e, index, text_color):
         x = r.left()
-
-        # Conflict strip (left edge).
-        conflict = index.data(ConflictRole) or 0
-        cw = 4
-        if conflict == 1:
-            p.fillRect(QRect(x, r.top(), cw, r.height()), self.c_win)
-        elif conflict == -1:
-            p.fillRect(QRect(x, r.top(), cw, r.height()), self.c_lose)
-        elif conflict == 2:
-            half = r.height() // 2
-            p.fillRect(QRect(x, r.top(), cw, half), self.c_win)
-            p.fillRect(QRect(x, r.top() + half, cw, r.height() - half), self.c_lose)
 
         # Checkbox (accent fill + white tick when enabled; hollow when not).
         box = QRect(x + 10, r.top() + (r.height() - CHECK_BOX) // 2,
@@ -152,35 +271,60 @@ class ModRowDelegate(QStyledItemDelegate):
 
         # Name (elided).
         p.setPen(text_color)
-        p.setFont(QFont())
+        _nf = QFont(); _nf.setPixelSize(FONT_PX); p.setFont(_nf)
         name_rect = QRect(tx, r.top(), r.right() - tx - 6, r.height())
         elided = opt_fm(p).elidedText(e.display_name, Qt.ElideRight,
                                       name_rect.width())
         p.drawText(name_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
 
-    def _paint_flags(self, p, r, bits):
-        if not bits:
+    def _flag_icons(self, bits):
+        return [name for bit, name in _FLAG_ICONS if bits & bit]
+
+    def _paint_icons(self, p, r, names):
+        """Paint a horizontally-centred row of icons (Flags + Conflicts cells,
+        and the collapsed-separator summary) so they line up under the column."""
+        if not names:
             return
-        sz = 16
-        x = r.left() + 6
+        sz, gap = ICON_SZ, 3
+        total = len(names) * sz + (len(names) - 1) * gap
+        x = r.left() + max(6, (r.width() - total) // 2)
         y = r.top() + (r.height() - sz) // 2
-        for bit, name in _FLAG_ICONS:
-            if bits & bit:
-                ic = icon(name, sz)
-                if not ic.isNull():
-                    ic.paint(p, QRect(x, y, sz, sz))
-                    x += sz + 3
-                if x > r.right() - sz:
-                    break
+        for name in names:
+            ic = icon(name, sz)
+            if not ic.isNull():
+                ic.paint(p, QRect(x, y, sz, sz))
+            x += sz + gap
+            if x > r.right() - sz:
+                break
 
     def editorEvent(self, event, model, opt, index):
-        # Toggle when the checkbox area of the name column is clicked.
-        if (event.type() == QEvent.MouseButtonRelease
-                and index.column() == COL_NAME):
-            box = QRect(opt.rect.left() + 6, opt.rect.top(), 26, opt.rect.height())
-            if box.contains(event.position().toPoint()):
-                model.toggle(index.row())
+        if event.type() != QEvent.MouseButtonRelease or index.column() != COL_NAME:
+            return False
+        pos = event.position().toPoint()
+        e = model.entry(index.row())
+
+        if e.is_separator:
+            from gui_qt.modlist_model import _BOUNDARY_NAMES
+            if e.name in _BOUNDARY_NAMES:
+                return False    # boundary seps have no controls
+            # Arrow → collapse/expand; right-side box → lock. Handled by the view
+            # (it owns persistence + row hiding); the delegate only hit-tests.
+            view = self.parent()
+            if self._arrow_rect(opt.rect).contains(pos):
+                if hasattr(view, "_toggle_collapse_row"):
+                    view._toggle_collapse_row(index.row())
                 return True
+            if self._lock_rect(opt.rect).contains(pos):
+                if hasattr(view, "_toggle_lock_row"):
+                    view._toggle_lock_row(index.row())
+                return True
+            return False
+
+        # Mod row: checkbox area toggles enabled.
+        box = QRect(opt.rect.left() + 6, opt.rect.top(), 26, opt.rect.height())
+        if box.contains(pos):
+            model.toggle(index.row())
+            return True
         return False
 
 

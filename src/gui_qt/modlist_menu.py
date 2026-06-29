@@ -34,11 +34,20 @@ def show_context_menu(view, global_pos, index):
         menu.addAction(a)
         return a
 
+    from gui_qt.modlist_model import _BOUNDARY_NAMES
+    if entry.is_separator and entry.name in _BOUNDARY_NAMES:
+        return   # Overwrite / Root Folder: no context actions
+
     if entry.is_separator:
         # Separator-specific actions.
-        act("Rename separator", lambda: _rename(view, model, row),
-            enabled=not entry.locked)
+        collapsed = model.is_collapsed(entry.display_name)
+        act("Expand" if collapsed else "Collapse",
+            lambda: _toggle_collapse(view, model, row))
+        locked = model.is_sep_locked(entry.display_name)
+        act("Unlock separator" if locked else "Lock separator",
+            lambda: _toggle_sep_lock(view, model, row))
         menu.addSeparator()
+        act("Rename separator", lambda: _rename(view, model, row))
         act("Add separator above", lambda: _add_separator(view, model, row, True))
         act("Add separator below", lambda: _add_separator(view, model, row, False))
     else:
@@ -92,6 +101,14 @@ def _open_folder(view, model, row):
         xdg_open(str(path))
     except Exception:
         pass
+
+
+def _toggle_collapse(view, model, row):
+    view._toggle_collapse_row(row)
+
+
+def _toggle_sep_lock(view, model, row):
+    view._toggle_lock_row(row)
 
 
 def _rename(view, model, row):

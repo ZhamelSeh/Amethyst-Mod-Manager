@@ -57,6 +57,10 @@ class ModListView(QTreeView):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 
+        # Separator state persistence (profile dir set by the window on reload).
+        self.profile_dir = None
+        self.doubleClicked.connect(self._on_double_click)
+
         self._restoring = True
         self._configure_header()
         self._restore_column_state()
@@ -88,6 +92,64 @@ class ModListView(QTreeView):
         self._fitting = False
         h.sectionResized.connect(lambda *a: self._schedule_save())
         h.sectionMoved.connect(lambda *a: self._schedule_save())
+
+    # ---- separator collapse/expand ---------------------------------------
+    def load_separator_state(self):
+        """Read collapsed/lock state for the active profile into the model and
+        apply row hiding. Called by the window after a modlist reload."""
+        collapsed, locks = set(), {}
+        if self.profile_dir is not None:
+            try:
+                from Utils.profile_state import (
+                    read_collapsed_seps, read_separator_locks)
+                collapsed = read_collapsed_seps(self.profile_dir)
+                locks = read_separator_locks(self.profile_dir)
+            except Exception:
+                pass
+        self.model().set_separator_state(collapsed, locks)
+        self._apply_separator_spanning()
+        self.apply_collapse()
+
+    def _apply_separator_spanning(self):
+        """Separator rows span all columns so the band + centred name + the
+        right-side lock box use the full row width."""
+        m = self.model()
+        for r in range(m.rowCount()):
+            self.setFirstColumnSpanned(r, self.rootIndex(),
+                                       m.entry(r).is_separator)
+
+    def apply_collapse(self):
+        """Hide rows under collapsed separators (Qt setRowHidden)."""
+        hidden = self.model().hidden_rows()
+        for r in range(self.model().rowCount()):
+            self.setRowHidden(r, self.rootIndex(), r in hidden)
+
+    def _on_double_click(self, index):
+        if index.isValid() and self.model().entry(index.row()).is_separator:
+            self._toggle_collapse_row(index.row())
+
+    def _toggle_collapse_row(self, row):
+        self.model().toggle_collapse(row)
+        self.apply_collapse()
+        self._save_separator_state()
+        self.viewport().update()
+
+    def _toggle_lock_row(self, row):
+        self.model().toggle_sep_lock(row)
+        self._save_separator_state()
+        self.viewport().update()
+
+    def _save_separator_state(self):
+        if self.profile_dir is None:
+            return
+        try:
+            from Utils.profile_state import (
+                write_collapsed_seps, write_separator_locks)
+            m = self.model()
+            write_collapsed_seps(self.profile_dir, m._collapsed)
+            write_separator_locks(self.profile_dir, m._sep_locks)
+        except Exception as exc:
+            print(f"[gui_qt] separator state save failed: {exc}", flush=True)
 
     # ---- fill width: Name absorbs leftover on window resize ---------------
     def showEvent(self, event):

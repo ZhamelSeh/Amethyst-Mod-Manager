@@ -97,6 +97,30 @@ def build_qss(pal: dict | None = None) -> str:
         border-bottom: 1px solid {c('BORDER')};
     }}
 
+    /* Slim modern scrollbars — applied globally (modlist, plugins, log, …) */
+    QScrollBar:vertical {{
+        background: transparent;
+        width: 12px;
+        margin: 0;
+    }}
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 12px;
+        margin: 0;
+    }}
+    QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+        background: {c('BORDER_FAINT')};
+        border-radius: 5px;
+        min-height: 28px;
+        min-width: 28px;
+        margin: 2px;
+    }}
+    QScrollBar::handle:hover {{ background: {c('TEXT_DIM')}; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{
+        width: 0; height: 0; background: none; border: none;
+    }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
     /* Status bar + bottom bar */
     QStatusBar {{
         background: {c('BG_HEADER')};

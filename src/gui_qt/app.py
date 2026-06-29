@@ -1,0 +1,553 @@
+"""Qt main window — header / body / footer rows + bottom log panel.
+
+  header row : top bar (game/profile + actions) | play bar      (fixed split)
+  body row   : modlist ║ plugins                                (draggable)
+  footer row : mod tools | plugin tools                         (fixed split)
+  log panel  : drag-resizable log text area + control bar
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QMainWindow, QToolButton, QWidget, QSplitter,
+    QLabel, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
+    QFrame, QLineEdit, QPushButton,
+)
+
+from gui_qt.theme_qt import apply_theme, active_palette, _c
+from gui_qt.icons import icon
+from gui_qt.modlist_model import ModListModel
+from gui_qt.modlist_view import ModListView
+from gui_qt.selector_button import SelectorButton
+from gui_qt import glue
+
+
+class MainWindow(QMainWindow):
+    _PLAY_BAR_W = 380       # play-bar (header right) fixed width
+    _FOOTER_RIGHT_W = 400   # narrower than play bar so the 7 mod-tool buttons fit
+    _BTN_H = 42          # consistent height for all header buttons (~30% bigger)
+    _ICON_PX = 24        # header button icon size
+    _FOOT_BTN_H = 28     # compact height for footer tool buttons
+    _FOOT_ICON_PX = 16   # footer button icon size
+
+    def __init__(self, app):
+        super().__init__()
+        self._app = app
+        self._pal = active_palette()
+        self.setWindowTitle("Amethyst Mod Manager")
+        self.setMinimumSize(1280, 800)   # Steam Deck is the floor
+        self.resize(1280, 800)
+
+        # Header+body+footer go in a vertical splitter with the log text area
+        # so the log is drag-resizable; the log control bar stays fixed below.
+        main_content = QWidget()
+        mc = QVBoxLayout(main_content)
+        mc.setContentsMargins(0, 0, 0, 0)
+        mc.setSpacing(0)
+        mc.addWidget(self._build_header_row())
+        mc.addWidget(self._build_body_row(), 1)
+        mc.addWidget(self._build_footer_row())
+
+        self._log_view = QPlainTextEdit()
+        self._log_view.setReadOnly(True)
+        self._log_view.setObjectName("LogView")
+        self._log_view.setMinimumHeight(0)   # can collapse fully
+
+        self._vsplit = QSplitter(Qt.Vertical)
+        self._vsplit.addWidget(main_content)
+        self._vsplit.addWidget(self._log_view)
+        self._vsplit.setStretchFactor(0, 1)
+        self._vsplit.setStretchFactor(1, 0)
+        self._vsplit.setCollapsible(0, False)
+        self._vsplit.setCollapsible(1, True)     # log collapses to 0; handle stays
+        self._vsplit.setHandleWidth(4)
+        self._vsplit.splitterMoved.connect(lambda *_: self._sync_log_controls())
+
+        central = QWidget()
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._vsplit, 1)
+        outer.addWidget(self._build_log_bar())   # fixed control bar
+        self.setCentralWidget(central)
+
+        wired = glue.register_all(
+            app, log=self._append_log, parent_window=self,
+        )
+        print("[gui_qt] glue wired:", ", ".join(wired))
+
+        # Defer until the layout has real widths: pick the action-button mode
+        # and start with the log collapsed.
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._init_action_mode)
+        QTimer.singleShot(0, lambda: (self._vsplit.setSizes(
+            [self._vsplit.height(), 0]), self._sync_log_controls()))
+
+    # ---------------------------------------------------------- header row
+    def _build_header_row(self) -> QWidget:
+        """Top bar | play bar, fixed split (top bar takes the slack)."""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        top = self._left_header()
+        play = self._play_bar()
+        play.setFixedWidth(self._PLAY_BAR_W)
+        self._play_bar_widget = play
+        h.addWidget(top, 1)
+        h.addWidget(play, 0)
+        return row
+
+    # ---------------------------------------------------------- body row
+    def _build_body_row(self) -> QWidget:
+        split = QSplitter(Qt.Horizontal)
+        split.addWidget(self._build_modlist())
+        split.addWidget(self._build_plugins())
+        split.setStretchFactor(0, 5)
+        split.setStretchFactor(1, 4)
+        split.setSizes([620, 480])
+        self._body_split = split
+        return split
+
+    # ---------------------------------------------------------- footer row
+    def _build_footer_row(self) -> QWidget:
+        """Mod tools | plugin tools, fixed split (mirrors the header row)."""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        left = self._modlist_footer()
+        right = self._plugins_footer()
+        right.setFixedWidth(self._FOOTER_RIGHT_W)
+        self._plugins_footer_widget = right
+        h.addWidget(left, 1)
+        h.addWidget(right, 0)
+        return row
+
+    def _modlist_footer(self) -> QWidget:
+        """Buttons row + search box, under the modlist."""
+        bar = QWidget()
+        bar.setObjectName("HeaderBar")
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(6)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(4)
+        for label in ["Expand all", "Enable all", "Check Updates", "Filters",
+                      "Restore backup", "Refresh Modlist",
+                      "Generate Separators"]:
+            b = self._text_button(label, compact=True)
+            b.setFixedHeight(self._FOOT_BTN_H)
+            # Reserve the label's natural width so it never squashes at min size.
+            b.setMinimumWidth(b.sizeHint().width())
+            btns.addWidget(b)
+        btns.addStretch(1)
+        v.addLayout(btns)
+
+        search = QLineEdit()
+        search.setPlaceholderText("Search mods…")
+        search.setClearButtonEnabled(True)
+        v.addWidget(search)
+        self._modlist_search = search
+        return bar
+
+    def _plugins_footer(self) -> QWidget:
+        """Colored tool buttons + search, under the plugins."""
+        bar = QWidget()
+        bar.setObjectName("HeaderBar")
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(6)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(4)
+        for label, key in [
+            ("Sort Plugins", "BTN_SUCCESS"),
+            ("Groups", "BTN_INFO"),
+            ("Plugin Rules", "BTN_INFO"),
+            ("Filters", "BTN_INFO"),
+        ]:
+            b = self._color_button(label, _c(self._pal, key), compact=True)
+            b.setFixedHeight(self._FOOT_BTN_H)
+            btns.addWidget(b)
+        btns.addStretch(1)
+        v.addLayout(btns)
+
+        # (Plugin count / ESL status removed — to be relocated later.)
+
+        search = QLineEdit()
+        search.setPlaceholderText("Search plugins…")
+        search.setClearButtonEnabled(True)
+        v.addWidget(search)
+        self._plugins_search = search
+        return bar
+
+    def _left_header(self) -> QWidget:
+        # Single row: game/profile selectors, then the mod-action buttons.
+        header = QWidget()
+        header.setObjectName("HeaderBar")
+        h = QHBoxLayout(header)
+        h.setContentsMargins(8, 6, 8, 6)
+        h.setSpacing(6)
+
+        # Game selector — no label; the game names make it self-evident.
+        self._game_selector = SelectorButton(
+            items=["Stardew Valley", "Cyberpunk 2077", "Fallout 4",
+                   "Hogwarts Legacy"],
+            current="Stardew Valley",
+            actions=[
+                ("Add game…", lambda: self._on_game_action("add")),
+                ("Configure game…", lambda: self._on_game_action("configure")),
+                ("Define custom game…", lambda: self._on_game_action("custom")),
+            ],
+            on_select=self._on_game_changed,
+        )
+        self._game_selector.setFixedHeight(self._BTN_H)
+        h.addWidget(self._game_selector)
+
+        # Profile selector — "Profile:" prefix baked into the button text.
+        self._profile_selector = SelectorButton(
+            items=["default"],
+            current="default",
+            prefix="Profile: ",
+            min_width=150,
+            actions=[
+                ("Add new profile…", lambda: self._on_profile_action("add")),
+                ("Profile settings…", lambda: self._on_profile_action("settings")),
+            ],
+            on_select=self._on_profile_changed,
+        )
+        self._profile_selector.setFixedHeight(self._BTN_H)
+        h.addWidget(self._profile_selector)
+
+        h.addWidget(self._group_sep())
+
+        # Mod-action buttons; collapse to icon-only at narrow widths (see
+        # _update_action_button_mode). Collections merges into Nexus later.
+        self._action_buttons = []
+        for label, ico in [
+            ("Install Mod", "install.png"),
+            ("Deploy",      "deploy.png"),
+            ("Restore",     "restore.png"),
+            ("Proton",      "proton.png"),
+            ("Wizard",      "wizard.png"),
+            ("Nexus",       "nexus.png"),
+        ]:
+            b = self._action_button(label, ico)
+            b.setFixedHeight(self._BTN_H)
+            b.setToolTip(label)
+            b._full_label = label
+            self._action_buttons.append(b)
+            h.addWidget(b)
+
+        h.addStretch(1)
+        self._left_header_widget = header
+        return header
+
+    # ---- responsive header: icon-only action buttons when narrow ----------
+    # Two thresholds (a dead-band) instead of one prevent flicker at the
+    # boundary. Measured against window width (stable, not the button-affected
+    # header width). Deck width 1280 < COLLAPSE_W → icon-only there.
+    _COLLAPSE_W = 1450     # below → icon-only actions
+    _EXPAND_W = 1600       # above → text+icon actions
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_action_button_mode()
+
+    def _init_action_mode(self):
+        if getattr(self, "_action_buttons", None):
+            mid = (self._COLLAPSE_W + self._EXPAND_W) // 2
+            self._set_action_mode(self.width() < mid)
+
+    def _update_action_button_mode(self):
+        btns = getattr(self, "_action_buttons", None)
+        if not btns:
+            return
+        w = self.width()
+        icon_now = btns[0].toolButtonStyle() == Qt.ToolButtonIconOnly
+        if icon_now and w >= self._EXPAND_W:
+            self._set_action_mode(False)   # expand to text
+        elif not icon_now and w <= self._COLLAPSE_W:
+            self._set_action_mode(True)    # collapse to icon-only
+
+    def _set_action_mode(self, icon_only: bool):
+        style = Qt.ToolButtonIconOnly if icon_only else Qt.ToolButtonTextBesideIcon
+        for b in self._action_buttons:
+            b.setToolButtonStyle(style)
+            if icon_only:
+                b.setFixedWidth(self._BTN_H + 6)
+            else:
+                b.setMinimumWidth(0)
+                b.setMaximumWidth(16777215)
+
+    # ---- selector handlers (real wiring lands with game/profile load) -----
+    def _on_game_changed(self, name):
+        self.statusBar().showMessage(f"Game → {name}", 3000)
+
+    def _on_game_action(self, which):
+        self.statusBar().showMessage(f"[game] {which} (not wired yet)", 3000)
+
+    def _on_profile_changed(self, name):
+        self.statusBar().showMessage(f"Profile → {name}", 3000)
+
+    def _on_profile_action(self, which):
+        self.statusBar().showMessage(f"[profile] {which} (not wired yet)", 3000)
+
+    def _on_play_action(self, which):
+        self.statusBar().showMessage(f"[play] {which} (not wired yet)", 3000)
+
+    def _build_modlist(self) -> QWidget:
+        entries, staging = self._load_demo_entries()
+        versions, installed, flags = {}, {}, {}
+        if staging is not None:
+            # Real metadata from each mod's meta.ini (backend, GUI-free).
+            from gui_qt.modlist_data import read_meta_for_entries
+            versions, installed, flags = read_meta_for_entries(entries, staging)
+        self._modlist_model = ModListModel(
+            entries, versions=versions, installed=installed)
+        self._modlist_model.set_flags(flags)
+        # Conflict data needs a built filemap (game-load flow not wired yet);
+        # the model already accepts it via set_conflicts when that lands.
+        self._modlist_view = ModListView(self._modlist_model)
+        self._modlist_view.staging_dir = staging
+        return self._modlist_view
+
+    def _load_demo_entries(self):
+        """Real read_modlist + its staging dir if a profile exists, else demo.
+
+        Returns (entries, staging_dir | None).
+        """
+        from Utils.modlist import ModEntry, read_modlist
+        try:
+            from Utils.config_paths import get_profiles_dir
+            base = get_profiles_dir()
+            best = None
+            for ml in base.glob("*/profiles/*/modlist.txt"):
+                ents = read_modlist(ml)
+                if len(ents) >= 5:
+                    best = (ml, ents)
+                    break
+            if best:
+                ml, ents = best
+                # Staging dir: shared mods/ under the game profile root, or the
+                # profile-specific mods/ if present.
+                game_root = ml.parents[2]   # <game>/profiles/<profile>/modlist.txt
+                staging = game_root / "mods"
+                prof_mods = ml.parent / "mods"
+                if prof_mods.is_dir():
+                    staging = prof_mods
+                print(f"[gui_qt] modlist: {ml} ({len(ents)} entries); "
+                      f"staging={staging if staging.is_dir() else 'n/a'}")
+                return ents, (staging if staging.is_dir() else None)
+        except Exception as e:
+            print("[gui_qt] modlist load fallback:", e)
+        # Synthetic fallback (no real staging dir).
+        demo = [ModEntry("Overwrite", True, False, True)]
+        for i in range(40):
+            if i % 12 == 0:
+                demo.append(ModEntry(f"Category {i//12}_separator",
+                                     True, False, True))
+            demo.append(ModEntry(f"Demo Mod {i:02d} — example name",
+                                  enabled=(i % 4 != 0), locked=(i % 20 == 0)))
+        demo.append(ModEntry("Root Folder", True, False, True))
+        return demo, None
+
+    # ----------------------------------------------------------------- right
+    def _build_plugins(self) -> QWidget:
+        return self._plugins_placeholder()
+
+    def _play_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("HeaderBar")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 6, 8, 6)
+        h.setSpacing(6)
+
+        # Game context — same SelectorButton style as the top-bar dropdowns.
+        # Sizes to its content (no fixed min) so longer game names don't squash.
+        self._play_game_selector = SelectorButton(
+            items=["Stardew Valley"],
+            current="Stardew Valley",
+            min_width=0,
+            on_select=self._on_game_changed,
+        )
+        self._play_game_selector.setFixedHeight(self._BTN_H)
+        h.addWidget(self._play_game_selector, 1)   # gets the slack, can grow
+
+        # ▶ Play — plain button (no dropdown).
+        play = QPushButton("▶  Play")
+        play.setObjectName("PlayButton")
+        play.setFixedHeight(self._BTN_H)
+        play.setCursor(Qt.PointingHandCursor)
+        h.addWidget(play)
+
+        # Exe / run options — a gear ICON button; its menu holds exe choices and
+        # the settings / refresh / open-folder actions (moved off the toolbar).
+        self._exe_selector = SelectorButton(
+            items=["Default exe"],
+            current="Default exe",
+            icon=icon("settings.png", self._ICON_PX),
+            icon_px=self._ICON_PX,
+            actions=[
+                ("Select executable…", lambda: self._on_play_action("select_exe")),
+                ("Settings", lambda: self._on_play_action("settings")),
+                ("Refresh", lambda: self._on_play_action("refresh")),
+                ("Open application folder", lambda: self._on_play_action("folder")),
+            ],
+            on_select=lambda _l: None,
+        )
+        self._exe_selector.setFixedSize(self._BTN_H, self._BTN_H)
+        h.addWidget(self._exe_selector)
+        return bar
+
+    def _plugins_placeholder(self) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("PlaceholderPane")
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(8, 6, 8, 6)
+
+        # Tab strip stub (Plugins / Mod Files / Text Files / Data / Downloads).
+        tabs = QHBoxLayout()
+        for i, t in enumerate(["Plugins", "Mod Files", "Text Files",
+                               "Data", "Downloads"]):
+            lbl = QLabel(t)
+            lbl.setStyleSheet(
+                "padding:4px 8px;"
+                + ("color:#fff; border-bottom:2px solid "
+                   f"{_c(self._pal,'ACCENT')};" if i == 0 else "color:#888;"))
+            tabs.addWidget(lbl)
+        tabs.addStretch(1)
+        v.addLayout(tabs)
+
+        msg = QLabel("Plugins panel\n(coming in a later phase)")
+        msg.setAlignment(Qt.AlignCenter)
+        v.addWidget(msg, 1)
+        return frame
+
+    # --------------------------------------------------------------- widgets
+    def _action_button(self, text: str, icon_name: str,
+                       compact: bool = False) -> QToolButton:
+        """Flat toolbar-style button with icon + label (mockup look).
+        *compact* uses the smaller footer icon size."""
+        px = self._FOOT_ICON_PX if compact else self._ICON_PX
+        b = QToolButton()
+        b.setText(text)
+        b.setIcon(icon(icon_name, px))
+        b.setIconSize(QSize(px, px))
+        b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setObjectName("FooterButton" if compact else "ActionButton")
+        b.setCursor(Qt.PointingHandCursor)
+        return b
+
+    def _text_button(self, text: str, compact: bool = False) -> QToolButton:
+        """Flat text-only button (same chrome as the action buttons)."""
+        b = QToolButton()
+        b.setText(text)
+        b.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        b.setObjectName("FooterButton" if compact else "ActionButton")
+        b.setCursor(Qt.PointingHandCursor)
+        return b
+
+    def _color_button(self, text: str, color: str,
+                      compact: bool = False) -> QPushButton:
+        """Solid colored button (plugin tools, matching the Tk app)."""
+        pad = "4px 10px" if compact else "6px 14px"
+        fs = "12px" if compact else "14px"
+        b = QPushButton(text)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(
+            f"QPushButton{{background:{color}; color:#fff; border:none;"
+            f" padding:{pad}; border-radius:4px; font-size:{fs};"
+            f" font-weight:600;}}"
+            f"QPushButton:hover{{background:{color};}}")
+        return b
+
+    def _icon_button(self, icon_name: str, tip: str = "") -> QToolButton:
+        b = QToolButton()
+        b.setIcon(icon(icon_name, self._ICON_PX))
+        b.setIconSize(QSize(self._ICON_PX, self._ICON_PX))
+        b.setAutoRaise(True)
+        b.setCursor(Qt.PointingHandCursor)
+        if tip:
+            b.setToolTip(tip)
+        return b
+
+    def _group_sep(self) -> QFrame:
+        s = QFrame()
+        s.setFrameShape(QFrame.VLine)
+        s.setObjectName("GroupSep")
+        s.setFixedWidth(2)
+        return s
+
+    # ------------------------------------------------------ log control bar
+    def _build_log_bar(self) -> QWidget:
+        """Fixed full-width control bar below the log splitter. The 'Log' button
+        toggles the (drag-resizable) log text area above. Error/Warning/Clear
+        controls only appear while the log is open."""
+        bar = QWidget()
+        bar.setObjectName("LogBar")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(12)
+
+        self._log_toggle = self._text_button("Log", compact=True)
+        self._log_toggle.clicked.connect(self._toggle_log)
+        h.addWidget(self._log_toggle)
+
+        # These only show when the log is open.
+        self._errors_lbl = QLabel("● Errors")
+        self._errors_lbl.setStyleSheet(f"color:{_c(self._pal,'TEXT_ERR')};")
+        h.addWidget(self._errors_lbl)
+        self._warnings_lbl = QLabel("● Warnings")
+        self._warnings_lbl.setStyleSheet(f"color:{_c(self._pal,'TEXT_WARN')};")
+        h.addWidget(self._warnings_lbl)
+        self._clear_log_btn = self._text_button("Clear Log", compact=True)
+        self._clear_log_btn.clicked.connect(lambda: self._log_view.clear())
+        h.addWidget(self._clear_log_btn)
+
+        h.addStretch(1)
+
+        self._log_open_widgets = [self._errors_lbl, self._warnings_lbl,
+                                  self._clear_log_btn]
+        for w in self._log_open_widgets:
+            w.setVisible(False)
+        return bar
+
+    def _log_is_open(self) -> bool:
+        return len(self._vsplit.sizes()) > 1 and self._vsplit.sizes()[1] > 0
+
+    def _toggle_log(self):
+        if self._log_is_open():
+            self._vsplit.setSizes([self._vsplit.height(), 0])     # collapse
+        else:
+            total = self._vsplit.height()
+            self._vsplit.setSizes([total - 180, 180])             # open ~180px
+        self._sync_log_controls()
+
+    def _sync_log_controls(self):
+        """Error/Warning/Clear controls are visible only while the log has
+        height — whether opened by the button or dragged open/closed (Tk feel)."""
+        open_ = self._log_is_open()
+        for w in self._log_open_widgets:
+            w.setVisible(open_)
+
+    def _append_log(self, message: str):
+        """Backend log_fn target — append a line to the log text area."""
+        try:
+            self._log_view.appendPlainText(message.rstrip("\n"))
+        except Exception:
+            pass
+
+
+def run() -> int:
+    import sys
+    from PySide6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    apply_theme(app)
+    win = MainWindow(app)
+    win.show()
+    return app.exec()

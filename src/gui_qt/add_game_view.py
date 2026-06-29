@@ -132,17 +132,32 @@ class AddGameView(QWidget):
         hb.addWidget(self._search)
         outer.addWidget(header)
 
-        # Scroll area holding the grid.
+        # Scroll area holding the grid. Cards reflow to fit the width, so the
+        # horizontal scrollbar is never needed (it only appears when the grid is
+        # momentarily wider than the viewport — disable it outright).
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._grid_host = QWidget()
         self._grid = QGridLayout(self._grid_host)
         self._grid.setContentsMargins(16, 12, 16, 12)
         self._grid.setSpacing(12)
-        self._grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._grid.setAlignment(Qt.AlignTop)
         self._scroll.setWidget(self._grid_host)
+        # Reflow when the scroll area itself resizes (covers detach into a
+        # narrower/wider window, not just the outer view's resizeEvent).
+        self._scroll.installEventFilter(self)
         outer.addWidget(self._scroll, 1)
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is self._scroll and event.type() == QEvent.Resize:
+            slot = CARD_W + self._grid.spacing()
+            cols = max(1, (self._scroll.viewport().width() - 32) // slot)
+            if cols != self._cols:
+                self._relayout()
+        return super().eventFilter(obj, event)
 
     def _populate(self):
         for name in sorted(self._games, key=str.lower):
@@ -166,11 +181,13 @@ class AddGameView(QWidget):
         q = self._search.text().strip().lower() if hasattr(self, "_search") else ""
         return [c for s, c in self._cards if not q or q in s]
 
-    def _relayout(self):
-        # Reflow into as many columns as fit the viewport width.
+    def _cols_for_width(self) -> int:
         vp_w = self._scroll.viewport().width()
         slot = CARD_W + self._grid.spacing()
-        cols = max(1, (vp_w - 32) // slot)
+        return max(1, (vp_w - 32) // slot)
+
+    def _relayout(self):
+        cols = self._cols_for_width()
         # Clear the grid (without deleting the cards).
         while self._grid.count():
             self._grid.takeAt(0)
@@ -178,17 +195,27 @@ class AddGameView(QWidget):
             c[1].hide()
         visible = self._visible_cards()
         for i, card in enumerate(visible):
-            self._grid.addWidget(card, i // cols, i % cols, Qt.AlignTop)
+            self._grid.addWidget(card, i // cols, i % cols, Qt.AlignTop | Qt.AlignLeft)
             card.show()
+        # Reset column stretches, then stretch a trailing spacer column so the
+        # cards left-align and the host never exceeds the viewport width (which
+        # was forcing the horizontal scrollbar).
+        for c in range(self._grid.columnCount()):
+            self._grid.setColumnStretch(c, 0)
+        self._grid.setColumnStretch(cols, 1)
         self._cols = cols
 
     def _apply_search(self, _text=None):
         self._relayout()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Reparented (e.g. detached into a new window) → the viewport width may
+        # have changed; reflow once the geometry settles.
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._relayout)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Re-flow when the column count would change.
-        slot = CARD_W + self._grid.spacing()
-        cols = max(1, (self._scroll.viewport().width() - 32) // slot)
-        if cols != self._cols:
+        if self._cols_for_width() != self._cols:
             self._relayout()

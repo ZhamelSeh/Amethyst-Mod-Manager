@@ -68,7 +68,7 @@ class ModRowDelegate(QStyledItemDelegate):
         self.c_lock = QColor(_c(p, "TEXT_WARN"))
         self.c_win = QColor(_c(p, "TEXT_OK_BRIGHT"))
         self.c_lose = QColor(_c(p, "TEXT_ERR_BRIGHT"))
-        self.c_check = QColor(_c(p, "BTN_SUCCESS"))   # checkbox fill when enabled
+        self.c_check = QColor(_c(p, "ACCENT"))   # checkbox fill when enabled (blue)
         self.c_check_off = QColor(_c(p, "BG_DEEP"))   # checkbox fill when disabled
         self.c_overwrite_bg = QColor(_c(p, "BG_DARK_GREEN"))  # Overwrite band
         self.c_root_bg = QColor(_c(p, "BG_DARK_BLUE"))        # Root Folder band

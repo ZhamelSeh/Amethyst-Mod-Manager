@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Callable
 from PySide6.QtWidgets import QToolButton, QMenu
+from PySide6.QtGui import QActionGroup
 from PySide6.QtCore import Qt, QSize
 
 
@@ -35,7 +36,10 @@ class SelectorButton(QToolButton):
         self._icon = icon
         self._current = current or (self._items[0] if self._items else "")
         self.setObjectName("ActionButton")   # share the flat toolbar styling
-        self.setPopupMode(QToolButton.InstantPopup)
+        self.setProperty("split", True)       # gets the arrow-room padding
+        # Split button: a text section + a separate arrow section on the right
+        # (the whole thing opens the menu, like the mockup's Proton dropdown).
+        self.setPopupMode(QToolButton.MenuButtonPopup)
         self.setCursor(Qt.PointingHandCursor)
         if icon is not None:
             self.setIcon(icon)
@@ -46,7 +50,23 @@ class SelectorButton(QToolButton):
             self.setMinimumWidth(min_width)
         self._menu = QMenu(self)
         self.setMenu(self._menu)
+        # The text section (left of the split) also opens the menu — a selector
+        # has no separate primary action.
+        self.clicked.connect(self.showMenu)
+        # A dynamic `menuOpen` property (toggled while the menu is shown) drives
+        # the open-state highlight in QSS — reliable across QStyles, unlike the
+        # :pressed/:on pseudo-states for a MenuButtonPopup tool button.
+        self.setProperty("menuOpen", False)
+        self._menu.aboutToShow.connect(lambda: self._set_menu_open(True))
+        self._menu.aboutToHide.connect(lambda: self._set_menu_open(False))
+        self._group: QActionGroup | None = None
         self._rebuild()
+
+    def _set_menu_open(self, on: bool):
+        self.setProperty("menuOpen", on)
+        # Re-evaluate the stylesheet against the new property value.
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     # -- public API ---------------------------------------------------------
     def set_items(self, items, current=None):
@@ -69,12 +89,17 @@ class SelectorButton(QToolButton):
     def _rebuild(self):
         if self._icon is None:
             label = self._current or "—"
-            self.setText(f"{self._prefix}{label}  ▾")
+            # No trailing glyph — the split-button's arrow section shows it now.
+            self.setText(f"{self._prefix}{label}")
         self._menu.clear()
+        # Exclusive action group → the selectable items render as radio buttons.
+        self._group = QActionGroup(self._menu)
+        self._group.setExclusive(True)
         for label in self._items:
             a = self._menu.addAction(label)
             a.setCheckable(True)
             a.setChecked(label == self._current)
+            self._group.addAction(a)
             a.triggered.connect(lambda _=False, l=label: self._choose(l))
         if self._items and self._actions:
             self._menu.addSeparator()

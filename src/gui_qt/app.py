@@ -13,7 +13,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow, QToolButton, QWidget, QSplitter,
     QLabel, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
-    QFrame, QLineEdit, QPushButton,
+    QFrame, QLineEdit, QPushButton, QMenu,
 )
 
 from gui_qt.theme_qt import apply_theme, active_palette, _c
@@ -317,16 +317,12 @@ class MainWindow(QMainWindow):
 
         h.addWidget(self._group_sep())
 
-        # Mod-action buttons; collapse to icon-only at narrow widths (see
-        # _update_action_button_mode). Collections merges into Nexus later.
+        # Plain mod-action buttons.
         self._action_buttons = []
         for label, ico in [
             ("Install Mod", "install.png"),
             ("Deploy",      "deploy.png"),
             ("Restore",     "restore.png"),
-            ("Proton",      "proton.png"),
-            ("Wizard",      "wizard.png"),
-            ("Nexus",       "nexus.png"),
         ]:
             b = self._action_button(label, ico)
             b.setFixedHeight(self._BTN_H)
@@ -335,9 +331,59 @@ class MainWindow(QMainWindow):
             self._action_buttons.append(b)
             h.addWidget(b)
 
+        # Split menu buttons (placeholder menus — wired up in a later phase).
+        for label, ico, items in [
+            ("Proton", "proton.png", [
+                ("Run: winecfg", None),
+                ("Run: Winetricks", None),
+                ("Run an .exe in this prefix…", None),
+                None,
+                ("Open Wine registry", None),
+                ("Edit Wine DLL overrides", None),
+                None,
+                ("Install VC++ Redistributables", None),
+                ("Install .NET…", None),
+            ]),
+            ("Wizard", "wizard.png", [
+                ("Mod wizards…", None),
+                ("Tool wizards…", None),
+            ]),
+            ("Nexus", "nexus.png", [
+                ("Open Nexus Mods", None),
+                ("Collections…", None),
+                ("Check for updates", None),
+            ]),
+        ]:
+            b = self._menu_action_button(label, ico, items)
+            b.setFixedHeight(self._BTN_H)
+            b.setToolTip(label)
+            b._full_label = label
+            self._action_buttons.append(b)
+            h.addWidget(b)
+
         h.addStretch(1)
+
+        # Settings — icon-only square button on the far right (placeholder menu/
+        # dialog wired later).
+        self._settings_button = self._icon_square_button(
+            "settings.png", tooltip="Settings")
+        h.addWidget(self._settings_button)
+
         self._left_header_widget = header
         return header
+
+    def _icon_square_button(self, icon_name: str, tooltip: str = "") -> QToolButton:
+        """A compact square icon-only button (e.g. Settings) for the toolbar."""
+        b = QToolButton()
+        b.setIcon(icon(icon_name, self._ICON_PX))
+        b.setIconSize(QSize(self._ICON_PX, self._ICON_PX))
+        b.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        b.setObjectName("IconButton")
+        b.setCursor(Qt.PointingHandCursor)
+        b.setFixedSize(self._BTN_H, self._BTN_H)
+        if tooltip:
+            b.setToolTip(tooltip)
+        return b
 
     # The action buttons always show text+icon: the full-width top bar has room
     # for them even at the 1280 minimum, so the old icon-only collapse (with its
@@ -574,6 +620,35 @@ class MainWindow(QMainWindow):
         b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         b.setObjectName("FooterButton" if compact else "ActionButton")
         b.setCursor(Qt.PointingHandCursor)
+        return b
+
+    def _menu_action_button(self, text: str, icon_name: str,
+                            items: "list[tuple]") -> QToolButton:
+        """Like _action_button but a split button with a dropdown menu.
+        *items* is a list of (label, callback|None); None inserts a separator.
+        Highlights (button + arrow) while the menu is open via the `menuOpen`
+        property, mirroring SelectorButton."""
+        b = self._action_button(text, icon_name)
+        b.setProperty("split", True)
+        b.setPopupMode(QToolButton.MenuButtonPopup)
+        menu = QMenu(b)
+        for entry in items:
+            if entry is None:
+                menu.addSeparator()
+                continue
+            label, cb = entry
+            act = menu.addAction(label)
+            if cb is not None:
+                act.triggered.connect(lambda _=False, c=cb: c())
+        b.setMenu(menu)
+        b.clicked.connect(b.showMenu)   # text section also opens the menu
+
+        def _set_open(on):
+            b.setProperty("menuOpen", on)
+            b.style().unpolish(b); b.style().polish(b)
+        menu.aboutToShow.connect(lambda: _set_open(True))
+        menu.aboutToHide.connect(lambda: _set_open(False))
+        b._menu = menu
         return b
 
     def _text_button(self, text: str, compact: bool = False) -> QToolButton:

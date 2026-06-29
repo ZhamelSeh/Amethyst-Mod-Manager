@@ -17,11 +17,23 @@ from Utils.ui_config import get_appearance_mode
 _FALLBACK = "#1a1a1a"
 
 
-def active_palette() -> dict[str, str]:
-    """Return the {KEY: hex} palette for the user's current appearance mode."""
+# The Qt app defaults to the original near-black "dark" palette. (Breeze Dark
+# stays available as a selectable theme — appearance_mode = "breeze".) The blue
+# checkboxes/selection come from this palette's ACCENT (#0078d4).
+_QT_DEFAULT_THEME = "dark"
+
+
+def active_palette() -> dict:
+    """Return the {KEY: hex} palette for the Qt app. Defaults to the dark palette;
+    an explicit saved appearance_mode theme wins when present. (Values may be str
+    or (light,dark) tuples; _c() normalises them.)"""
     palettes = load_palettes()
     mode = get_appearance_mode()
-    return palettes.get(mode) or palettes.get("dark") or next(iter(palettes.values()), {})
+    if mode and mode in palettes:
+        return palettes[mode]
+    return (palettes.get(_QT_DEFAULT_THEME)
+            or palettes.get("dark")
+            or next(iter(palettes.values()), {}))
 
 
 def _c(pal: dict, key: str) -> str:
@@ -68,13 +80,27 @@ def build_qss(pal: dict | None = None) -> str:
         padding: 5px;
     }}
     QMenu::item {{
-        padding: 7px 28px 7px 14px;
+        padding: 7px 28px 7px 12px;
         border-radius: 4px;
         margin: 1px 2px;
     }}
     QMenu::item:selected {{ background: {c('BG_SELECT')}; color: {c('TEXT_ON_ACCENT')}; }}
-    QMenu::item:checked {{ font-weight: 600; }}
-    QMenu::indicator {{ width: 0px; }}  /* hide checkbox box; bold marks current */
+    /* Radio indicator for exclusive (selector) menus — a blue-filled dot when
+       checked, a hollow ring otherwise. */
+    QMenu::indicator {{
+        width: 14px; height: 14px;
+        margin-left: 4px;
+    }}
+    QMenu::indicator:exclusive:unchecked {{
+        border: 1px solid {c('BORDER_FAINT')};
+        border-radius: 7px;
+        background: {c('BG_DEEP')};
+    }}
+    QMenu::indicator:exclusive:checked {{
+        border: 1px solid {c('ACCENT')};
+        border-radius: 7px;
+        background: {c('ACCENT')};
+    }}
     QMenu::separator {{ height: 1px; background: {c('BORDER')}; margin: 5px 8px; }}
 
     /* List / tree */
@@ -191,11 +217,40 @@ def build_qss(pal: dict | None = None) -> str:
         color: {c('TEXT_MAIN')};
         border: 1px solid {c('BORDER')};
         border-radius: 5px;
-        padding: 6px 14px;
+        padding: 6px 12px;
         font-size: 14px;
     }}
+    /* Split buttons (with a dropdown arrow) need extra right padding so the
+       label never runs under the 22px arrow section. */
+    #ActionButton[split="true"] {{ padding: 6px 28px 6px 12px; }}
     #ActionButton:hover {{ background: {c('BG_ROW_HOVER')}; }}
-    #ActionButton:pressed {{ background: {c('ACCENT')}; color: {c('TEXT_ON_ACCENT')}; }}
+    /* Menu open (menuOpen property) OR pressed → whole button + arrow go blue. */
+    #ActionButton:pressed, #ActionButton[menuOpen="true"] {{
+        background: {c('ACCENT')}; color: {c('TEXT_ON_ACCENT')};
+    }}
+    /* Split-button arrow section (right of the divider), like the mockup. */
+    #ActionButton::menu-button {{
+        background: transparent;
+        border-left: 1px solid {c('BORDER')};
+        width: 22px;
+        border-top-right-radius: 5px;
+        border-bottom-right-radius: 5px;
+    }}
+    #ActionButton::menu-button:hover {{ background: {c('BG_ROW_HOVER')}; }}
+    /* When the menu is open the arrow section matches the highlighted button. */
+    #ActionButton[menuOpen="true"]::menu-button {{
+        background: {c('ACCENT')};
+        border-left: 1px solid {c('ACCENT_HOV')};
+    }}
+    #ActionButton::menu-arrow {{ width: 10px; height: 10px; }}
+    /* Square icon-only toolbar button (Settings). */
+    #IconButton {{
+        background: {c('BG_ROW')};
+        border: 1px solid {c('BORDER')};
+        border-radius: 5px;
+    }}
+    #IconButton:hover {{ background: {c('BG_ROW_HOVER')}; }}
+    #IconButton:pressed {{ background: {c('ACCENT')}; }}
     #FooterButton {{
         background: {c('BG_ROW')};
         color: {c('TEXT_MAIN')};
@@ -233,6 +288,72 @@ def build_qss(pal: dict | None = None) -> str:
     """
 
 
+def _apply_qpalette(app, p: dict) -> None:
+    """Seed a role-based QPalette so stock widgets (menus, combos, tooltips,
+    disabled states) read the theme colours even where QSS doesn't reach."""
+    from PySide6.QtGui import QPalette, QColor
+    from PySide6.QtCore import Qt
+
+    c = lambda k: QColor(_c(p, k))
+    pal = QPalette()
+    pal.setColor(QPalette.Window, c("BG_DEEP"))
+    pal.setColor(QPalette.WindowText, c("TEXT_MAIN"))
+    pal.setColor(QPalette.Base, c("BG_LIST"))
+    pal.setColor(QPalette.AlternateBase, c("BG_ROW_ALT"))
+    pal.setColor(QPalette.Text, c("TEXT_MAIN"))
+    pal.setColor(QPalette.Button, c("BG_HEADER"))
+    pal.setColor(QPalette.ButtonText, c("TEXT_MAIN"))
+    pal.setColor(QPalette.Highlight, c("BG_SELECT"))
+    pal.setColor(QPalette.HighlightedText, c("TEXT_ON_ACCENT"))
+    pal.setColor(QPalette.ToolTipBase, c("BG_PANEL"))
+    pal.setColor(QPalette.ToolTipText, c("TEXT_MAIN"))
+    pal.setColor(QPalette.PlaceholderText, c("TEXT_FAINT"))
+    pal.setColor(QPalette.Link, c("LINK_BLUE"))
+    pal.setColor(QPalette.BrightText, c("TEXT_WHITE"))
+    # Fusion draws bevels/frames from these shade roles — seed them so panels,
+    # group boxes, frames and sunken borders read on the dark theme instead of
+    # the default near-black/near-white guesses.
+    pal.setColor(QPalette.Light, c("BORDER_FAINT"))
+    pal.setColor(QPalette.Midlight, c("BORDER_DIM"))
+    pal.setColor(QPalette.Mid, c("BORDER"))
+    pal.setColor(QPalette.Dark, c("BG_DEEP"))
+    pal.setColor(QPalette.Shadow, c("BG_OVERLAY_DEEP"))
+    # Keep selection vivid even when the window/widget isn't focused (otherwise
+    # Fusion greys the Inactive-group highlight, which looks broken in lists).
+    pal.setColor(QPalette.Inactive, QPalette.Highlight, c("BG_SELECT"))
+    pal.setColor(QPalette.Inactive, QPalette.HighlightedText, c("TEXT_ON_ACCENT"))
+    # Disabled states (greyed text) across all relevant roles.
+    dim = c("TEXT_DIM")
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText,
+                 QPalette.ToolTipText):
+        pal.setColor(QPalette.Disabled, role, dim)
+    app.setPalette(pal)
+
+
+def _resolve_base_style(p: dict):
+    """Return a created QStyle for the theme's declared base style. A palette may
+    set BASE_QSTYLE (MO2-style 'base style per theme'); default Fusion, and a
+    real 'Breeze' QStyle is used when the plugin is installed. Falls back through
+    Breeze→Fusion→whatever's available."""
+    from PySide6.QtWidgets import QStyleFactory
+    keys = {k.lower(): k for k in QStyleFactory.keys()}
+    wanted = str(p.get("BASE_QSTYLE", "") or "").lower()
+    pick = (keys.get(wanted)
+            or keys.get("breeze")
+            or keys.get("fusion")
+            or (QStyleFactory.keys()[0] if QStyleFactory.keys() else None))
+    return QStyleFactory.create(pick) if pick else None
+
+
 def apply_theme(app) -> None:
-    """Apply the active palette's QSS to a QApplication."""
-    app.setStyleSheet(build_qss())
+    """Apply the active theme: a base QStyle (Fusion, or the theme's declared
+    BASE_QSTYLE / system Breeze when present) + a role-based QPalette + the QSS
+    overlay. This mirrors MO2's QStyle+QSS model, with QPalette added so Fusion's
+    disabled/tooltip/frame/inactive states look right (MO2 leans on native styles
+    for those; Fusion needs the palette seeded)."""
+    p = active_palette()
+    style = _resolve_base_style(p)
+    if style is not None:
+        app.setStyle(style)
+    _apply_qpalette(app, p)
+    app.setStyleSheet(build_qss(p))

@@ -26,6 +26,7 @@ from gui_qt.selector_button import SelectorButton
 from gui_qt.game_state import GameState
 from gui_qt.detachable_tabs import DetachableTabWidget
 from gui_qt import glue
+from Utils.proton_tools import DOTNET_VERSIONS
 
 
 class MainWindow(QMainWindow):
@@ -40,6 +41,8 @@ class MainWindow(QMainWindow):
     _install_done = Signal(int, int, object)   # (ok_count, total, names-list)
     _prepared_ready = Signal(object)           # (PreparedInstall|None)
     _one_install_done = Signal(object)         # (installed name|None)
+    # Proton-tools installer worker → UI thread.
+    _proton_done = Signal(str, bool)           # (title, success)
 
     _PLAY_BAR_W = 380       # play-bar (header right) fixed width
     _BTN_H = 42          # consistent height for all header buttons (~30% bigger)
@@ -66,6 +69,8 @@ class MainWindow(QMainWindow):
         self._install_done.connect(self._on_install_done)
         self._prepared_ready.connect(self._on_prepared_ready)
         self._one_install_done.connect(self._on_one_install_done)
+        self._proton_busy = False
+        self._proton_done.connect(self._on_proton_done)
         self.setWindowTitle("Amethyst Mod Manager")
         self.setMinimumSize(1280, 800)   # Steam Deck is the floor
         self.resize(1280, 800)
@@ -795,15 +800,18 @@ class MainWindow(QMainWindow):
         # Split menu buttons (placeholder menus — wired up in a later phase).
         for label, ico, items in [
             ("Proton", "proton.png", [
-                ("Run: winecfg", None),
-                ("Run: Winetricks", None),
-                ("Run an .exe in this prefix…", None),
+                ("Run winecfg", self._proton_winecfg),
+                ("Run winetricks", self._proton_winetricks),
+                ("Run an .exe in this prefix…", self._proton_run_exe),
                 None,
-                ("Open Wine registry", None),
-                ("Edit Wine DLL overrides", None),
+                ("Open wine registry", self._proton_regedit),
                 None,
-                ("Install VC++ Redistributables", None),
-                ("Install .NET…", None),
+                ("Install VC++ Redistributable", self._proton_install_vcredist),
+                ("Install d3dcompiler_47", self._proton_install_d3dcompiler),
+                (".NET runtime", [
+                    (f".NET {v}", (lambda v=v: self._proton_install_dotnet(v)))
+                    for v in DOTNET_VERSIONS
+                ]),
             ]),
             ("Wizard", "wizard.png", [
                 ("Mod wizards…", None),
@@ -1127,6 +1135,110 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         self._install_paths(paths)
+
+    # ---- Proton tools ------------------------------------------------------
+    def _proton_game(self):
+        """Return the active configured game, or None (after notifying)."""
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._notify("No configured game selected.", "warning")
+            return None
+        return game
+
+    def _proton_winecfg(self):
+        game = self._proton_game()
+        if game is None:
+            return
+        from Utils.proton_tools import launch_wine_tool
+        launch_wine_tool(game, "winecfg", log_fn=self._append_log)
+
+    def _proton_regedit(self):
+        game = self._proton_game()
+        if game is None:
+            return
+        from Utils.proton_tools import launch_wine_tool
+        launch_wine_tool(game, "regedit", log_fn=self._append_log)
+
+    def _proton_winetricks(self):
+        game = self._proton_game()
+        if game is None:
+            return
+        import threading
+        from Utils.proton_tools import launch_winetricks
+        self._notify("Launching winetricks…", "info")
+        threading.Thread(
+            target=lambda: launch_winetricks(
+                game, log_fn=lambda m: self._op_log.emit(str(m))),
+            daemon=True).start()
+
+    def _proton_run_exe(self):
+        game = self._proton_game()
+        if game is None:
+            return
+        from Utils.portal_filechooser import pick_exe_file
+        from Utils.proton_tools import launch_exe_in_prefix
+
+        def _picked(exe_path):
+            if exe_path is None:
+                return
+            launch_exe_in_prefix(game, exe_path, log_fn=self._append_log)
+
+        pick_exe_file("Select EXE to run in this prefix", _picked)
+
+    def _proton_install_vcredist(self):
+        from Utils.proton_tools import install_vcredist
+        self._run_proton_installer(
+            "Installing VC++ Redistributable",
+            lambda plog: install_vcredist(self._gs.game, log_fn=plog))
+
+    def _proton_install_d3dcompiler(self):
+        from Utils.proton_tools import install_d3dcompiler_47
+        self._run_proton_installer(
+            "Installing d3dcompiler_47",
+            lambda plog: install_d3dcompiler_47(self._gs.game, log_fn=plog))
+
+    def _proton_install_dotnet(self, version: str):
+        from Utils.proton_tools import install_dotnet
+        self._run_proton_installer(
+            f"Installing .NET {version}",
+            lambda plog: install_dotnet(self._gs.game, version, log_fn=plog))
+
+    def _run_proton_installer(self, title: str, worker_fn):
+        """Run a blocking Proton installer (*worker_fn(log_fn) -> bool*) on a
+        worker thread, showing the indeterminate progress popup + a toast on
+        completion. Serialized: refuses a second installer while one runs."""
+        game = self._proton_game()
+        if game is None:
+            return
+        if self._proton_busy:
+            self._notify("A Proton installer is already running.", "warning")
+            return
+        self._proton_busy = True
+        self._op_title = title
+        self._ensure_feedback()
+        self._notify(f"{title}…", "info")
+        self._op_progress.emit(0, 0, title)   # indeterminate (busy) bar
+
+        import threading
+
+        def _run():
+            ok = False
+            try:
+                ok = bool(worker_fn(lambda m: self._op_log.emit(f"Proton Tools: {m}")))
+            except Exception as exc:
+                self._op_log.emit(f"Proton Tools error: {exc}")
+            self._proton_done.emit(title, ok)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_proton_done(self, title: str, success: bool):
+        self._proton_busy = False
+        if self._progress_popup is not None:
+            self._progress_popup.clear()
+        if success:
+            self._notify(f"{title} — done.", "success")
+        else:
+            self._notify(f"{title} — failed (see log).", "error")
 
     def _install_paths(self, paths: list[str]):
         """Queue + install a list of archive paths (shared by the Install Mod
@@ -2060,24 +2172,36 @@ class MainWindow(QMainWindow):
         b.setCursor(Qt.PointingHandCursor)
         return b
 
-    def _menu_action_button(self, text: str, icon_name: str,
-                            items: "list[tuple]") -> QToolButton:
-        """Like _action_button but a split button with a dropdown menu.
-        *items* is a list of (label, callback|None); None inserts a separator.
-        Highlights (button + arrow) while the menu is open via the `menuOpen`
-        property, mirroring SelectorButton."""
-        b = self._action_button(text, icon_name)
-        b.setProperty("split", True)
-        b.setPopupMode(QToolButton.MenuButtonPopup)
-        menu = QMenu(b)
+    def _populate_menu(self, menu: "QMenu", items: "list[tuple]") -> None:
+        """Fill *menu* from *items*. Each entry is None (separator) or
+        (label, callback) — where callback may be a list of (label, callback)
+        pairs, which becomes a submenu."""
         for entry in items:
             if entry is None:
                 menu.addSeparator()
                 continue
             label, cb = entry
-            act = menu.addAction(label)
-            if cb is not None:
+            if isinstance(cb, list):
+                sub = menu.addMenu(label)
+                self._populate_menu(sub, cb)
+            elif cb is not None:
+                act = menu.addAction(label)
                 act.triggered.connect(lambda _=False, c=cb: c())
+            else:
+                menu.addAction(label)   # inert label (placeholder)
+
+    def _menu_action_button(self, text: str, icon_name: str,
+                            items: "list[tuple]") -> QToolButton:
+        """Like _action_button but a split button with a dropdown menu.
+        *items* is a list of (label, callback|None); None inserts a separator.
+        If the second element is a list of (label, callback) pairs it becomes a
+        submenu instead. Highlights (button + arrow) while the menu is open via
+        the `menuOpen` property, mirroring SelectorButton."""
+        b = self._action_button(text, icon_name)
+        b.setProperty("split", True)
+        b.setPopupMode(QToolButton.MenuButtonPopup)
+        menu = QMenu(b)
+        self._populate_menu(menu, items)
         b.setMenu(menu)
         b.clicked.connect(b.showMenu)   # text section also opens the menu
 

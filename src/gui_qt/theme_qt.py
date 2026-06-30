@@ -116,6 +116,15 @@ def build_qss(pal: dict | None = None) -> str:
     QToolButton::menu-button {{ width: 16px; border-left: 1px solid {c('BORDER')}; }}
     QToolButton::menu-arrow {{ width: 8px; height: 8px; }}
 
+    QToolTip {{
+        background: {c('BG_HEADER')};
+        color: #ffffff;
+        border: 1px solid {c('ACCENT')};
+        border-radius: 4px;
+        padding: 5px 8px;
+        font-size: 13px;
+    }}
+
     QMenu {{
         background: {c('BG_PANEL')};
         border: 1px solid {c('BORDER')};
@@ -127,21 +136,33 @@ def build_qss(pal: dict | None = None) -> str:
         margin: 1px 2px;
     }}
     QMenu::item:selected {{ background: {c('BG_SELECT')}; color: {c('TEXT_ON_ACCENT')}; }}
-    /* Radio indicator for exclusive (selector) menus — a blue-filled dot when
-       checked, a hollow ring otherwise. */
+    /* Menu indicators. Exclusive (selector) menus = a blue-filled dot when
+       checked, a hollow ring otherwise. Non-exclusive (checkable) items use the
+       same blue rounded-square box as the modlist / QCheckBox indicators. */
     QMenu::indicator {{
-        width: 14px; height: 14px;
+        width: 16px; height: 16px;
         margin-left: 4px;
     }}
     QMenu::indicator:exclusive:unchecked {{
         border: 1px solid {c('BORDER_FAINT')};
-        border-radius: 7px;
+        border-radius: 8px;
         background: {c('BG_DEEP')};
     }}
     QMenu::indicator:exclusive:checked {{
         border: 1px solid {c('ACCENT')};
-        border-radius: 7px;
+        border-radius: 8px;
         background: {c('ACCENT')};
+    }}
+    QMenu::indicator:non-exclusive:unchecked {{
+        border: 1px solid {c('BORDER_FAINT')};
+        border-radius: 3px;
+        background: {c('BG_DEEP')};
+    }}
+    QMenu::indicator:non-exclusive:checked {{
+        border: 1px solid {c('ACCENT')};
+        border-radius: 3px;
+        background: {c('ACCENT')};
+        image: url({_icon_url('check_white.png')});
     }}
     QMenu::separator {{ height: 1px; background: {c('BORDER')}; margin: 5px 8px; }}
 
@@ -158,7 +179,7 @@ def build_qss(pal: dict | None = None) -> str:
     }}
     QHeaderView::section {{
         background: {c('BG_HEADER')};
-        color: {c('TEXT_DIM')};
+        color: {c('TEXT_MAIN')};
         padding: 5px 8px;
         border: none;
         border-right: 1px solid {c('BORDER')};

@@ -21,14 +21,17 @@ from Utils.filemap import OVERWRITE_NAME, ROOT_FOLDER_NAME
 _BOUNDARY_NAMES = (OVERWRITE_NAME, ROOT_FOLDER_NAME)
 
 
-# Column indices.
+# Column indices. Order mirrors the Tk app: Category right after Name, Size last.
 COL_NAME = 0
-COL_FLAGS = 1
-COL_CONFLICTS = 2
-COL_INSTALLED = 3
-COL_VERSION = 4
-COL_PRIORITY = 5
-COLUMNS = ["Mod Name", "Flags", "Conflicts", "Installed", "Version", "Priority"]
+COL_CATEGORY = 1
+COL_FLAGS = 2
+COL_CONFLICTS = 3
+COL_INSTALLED = 4
+COL_VERSION = 5
+COL_PRIORITY = 6
+COL_SIZE = 7
+COLUMNS = ["Mod Name", "Category", "Flags", "Conflicts", "Installed",
+           "Version", "Priority", "Size"]
 
 # Custom roles for the delegate.
 EntryRole = Qt.UserRole + 1        # the ModEntry
@@ -51,6 +54,10 @@ class ModListModel(QAbstractTableModel):
         self._entries: list[ModEntry] = entries or []
         self._versions = versions or {}
         self._installed = installed or {}
+        self._categories: dict[str, str] = {}
+        # Formatted mod folder sizes ("12 MB"). Computed lazily — only when the
+        # Size column is visible — so a default-hidden Size costs no disk walk.
+        self._sizes: dict[str, str] = {}
         self._conflicts = conflicts or {}
         self._bsa_conflicts: dict[str, int] = {}
         self._flags: dict[str, int] = {}
@@ -92,6 +99,15 @@ class ModListModel(QAbstractTableModel):
         self.beginResetModel()
         self._entries = self._with_boundaries(entries)
         self.endResetModel()
+
+    def set_sizes(self, sizes: dict[str, str]) -> None:
+        """Set formatted mod sizes (Size column). Repaints just that column —
+        used when the user enables Size from the column menu after first load."""
+        self._sizes = sizes or {}
+        if self._entries:
+            self.dataChanged.emit(self.index(0, COL_SIZE),
+                                  self.index(len(self._entries) - 1, COL_SIZE),
+                                  [Qt.DisplayRole])
 
     def set_flags(self, flags: dict[str, int]) -> None:
         self._flags = flags or {}
@@ -173,6 +189,11 @@ class ModListModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            # The Name column hosts the column-menu button at its left edge;
+            # pad the (left-aligned) label so it isn't drawn under the button.
+            # Display-only — persistence keys off the canonical COLUMNS names.
+            if section == COL_NAME:
+                return "    " + COLUMNS[section]
             return COLUMNS[section]
         return None
 
@@ -223,10 +244,14 @@ class ModListModel(QAbstractTableModel):
                 return e.display_name if col == COL_NAME else ""
             if col == COL_NAME:
                 return e.display_name
+            if col == COL_CATEGORY:
+                return self._categories.get(e.name, "")
             if col == COL_VERSION:
                 return self._versions.get(e.name, "")
             if col == COL_INSTALLED:
                 return self._installed.get(e.name, "")
+            if col == COL_SIZE:
+                return self._sizes.get(e.name, "")
             if col == COL_PRIORITY:
                 p = self._priority_for_row(index.row())
                 return str(p) if p >= 0 else ""
@@ -356,12 +381,19 @@ class ModListModel(QAbstractTableModel):
 
     def hidden_rows(self) -> set[int]:
         """Rows to hide: mods that fall under a collapsed separator (up to the
-        next separator). Separators themselves are never hidden."""
+        next separator). Separators themselves are never hidden.
+
+        The Overwrite / Root Folder boundaries never collapse their block — they
+        aren't user-collapsible (Tk excludes them from the toggle set), so a
+        stale '[Overwrite]' in the persisted collapsed set must NOT hide the
+        ungrouped mods that sit between Overwrite and the first real separator.
+        """
         hidden: set[int] = set()
         collapsing = False
         for i, e in enumerate(self._entries):
             if e.is_separator:
-                collapsing = e.display_name in self._collapsed
+                collapsing = (e.name not in _BOUNDARY_NAMES
+                              and e.display_name in self._collapsed)
             elif collapsing:
                 hidden.add(i)
         return hidden

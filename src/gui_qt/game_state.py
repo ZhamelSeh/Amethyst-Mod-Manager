@@ -165,8 +165,17 @@ class GameState:
     def _build_bsa_conflicts(self, g, log):
         """Compute BSA/BA2 archive conflicts. Returns (codes, overrides,
         overridden_by) — codes as 1 win / -1 lose / 2 mixed; the two maps key
-        mod → set(mods). Empty triple for non-archive games or on failure."""
+        mod → set(mods). Empty triple for non-archive games or on failure.
+
+        The "Hide BSA conflicts" setting empties the pipeline entirely (Tk
+        parity) so the expensive parse is skipped and no codes are produced."""
         empty = ({}, {}, {})
+        try:
+            from Utils.ui_config import load_hide_bsa_conflicts
+            if load_hide_bsa_conflicts():
+                return empty
+        except Exception:
+            pass
         exts = frozenset(getattr(g, "archive_extensions", frozenset()) or frozenset())
         if not exts:
             return empty

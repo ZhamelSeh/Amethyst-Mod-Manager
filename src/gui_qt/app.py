@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from gui_qt.theme_qt import apply_theme, active_palette, _c
 from gui_qt.icons import icon
-from gui_qt.modlist_model import ModListModel
+from gui_qt.modlist_model import ModListModel, COL_SIZE
 from gui_qt.modlist_view import ModListView
 from gui_qt.selector_button import SelectorButton
 from gui_qt.game_state import GameState
@@ -46,6 +46,8 @@ class MainWindow(QMainWindow):
     _need_prefix = Signal(object)              # (dict with required/file_list/...)
     # Proton-tools installer worker → UI thread.
     _proton_done = Signal(str, bool)           # (title, success)
+    # Nexus validate() worker → UI thread (username or None).
+    _nexus_validated = Signal(object)          # (username str | None)
 
     _PLAY_BAR_W = 380       # play-bar (header right) fixed width
     _BTN_H = 42          # consistent height for all header buttons (~30% bigger)
@@ -144,6 +146,12 @@ class MainWindow(QMainWindow):
         self._reload_modlist()
         self._reload_plugins()
         self._update_deployed_profile_highlight()
+
+        # Connect to Nexus (if logged in) so the footer can show the username +
+        # rate limits; validate runs on a worker so startup isn't blocked.
+        self._nexus_api = None
+        self._nexus_validated.connect(self._on_nexus_validated)
+        QTimer.singleShot(0, self._ensure_nexus_api)
 
     def _populate_selectors(self):
         """Fill the game/profile selectors from the current GameState."""
@@ -272,6 +280,19 @@ class MainWindow(QMainWindow):
             mv.show_mod(None)
         else:
             mv.show_mod(e.name)
+
+    def _open_settings_tab(self):
+        """Open the Settings tab scoped over the MODLIST panel (like the image
+        preview / text editor): it shows in the modlist region (in the shared top
+        tab bar) while the plugins panel and the rest of the UI stay live.
+        Re-clicking the gear focuses the existing tab."""
+        from gui_qt.settings_view import SettingsView
+        if self._tabs.has_key("settings"):
+            self._tabs.focus_key("settings")
+            return
+        view = SettingsView(self)
+        self._tabs.open_scoped_tab(
+            view, "Settings", self._modlist_panel_stack, key="settings")
 
     def _open_image_preview_tab(self, path, rel_str):
         """Open an image/.dds preview as a MODLIST-PANEL-SCOPED tab: it shows in
@@ -836,10 +857,11 @@ class MainWindow(QMainWindow):
 
         h.addStretch(1)
 
-        # Settings — icon-only square button on the far right (placeholder menu/
-        # dialog wired later).
+        # Settings — icon-only square button on the far right. Opens a Settings
+        # tab scoped over the Plugins panel.
         self._settings_button = self._icon_square_button(
             "settings.png", tooltip="Settings")
+        self._settings_button.clicked.connect(self._open_settings_tab)
         h.addWidget(self._settings_button)
 
         self._left_header_widget = header
@@ -908,6 +930,44 @@ class MainWindow(QMainWindow):
                            on_add=self._on_add_game_add)
         self._tabs.open_tab(page, "Add game", key="add_game")
 
+    def _ensure_nexus_api(self):
+        """Build the shared NexusAPI from saved OAuth tokens (idempotent) and
+        kick off a background validate() to learn the username. Returns the API
+        or None (not logged in / connection failed). Reused by the footer and
+        the Nexus browser tab so there's a single instance whose passively
+        captured rate limits the footer can read."""
+        if getattr(self, "_nexus_api", None) is not None:
+            return self._nexus_api
+        from Nexus.nexus_oauth import load_oauth_tokens
+        from Nexus.nexus_api import NexusAPI
+        tokens = load_oauth_tokens()
+        if tokens is None:
+            return None
+        try:
+            self._nexus_api = NexusAPI.from_oauth(tokens)
+        except Exception as exc:
+            self._append_log(f"[nexus] api init failed: {exc}")
+            return None
+        # Validate off-thread (one rate-limited call; result cached 5 min).
+        import threading
+
+        def _worker():
+            name = None
+            try:
+                name = self._nexus_api.validate().name
+            except Exception as exc:
+                self._append_log(f"[nexus] validate failed: {exc}")
+            self._nexus_validated.emit(name)
+        threading.Thread(target=_worker, daemon=True).start()
+        return self._nexus_api
+
+    def _on_nexus_validated(self, name):
+        """Worker reported the validated username (or None) — update the footer."""
+        if name:
+            self._append_log(f"[nexus] logged in as {name}")
+        if hasattr(self, "_nexus_footer"):
+            self._nexus_footer.set_username(name)
+
     def _open_nexus_browser_tab(self):
         """Open the Nexus Mods browser as a detachable tab. Needs a configured
         game with a Nexus domain and existing OAuth tokens (login UI deferred)."""
@@ -922,18 +982,12 @@ class MainWindow(QMainWindow):
         if not domain:
             self._notify(f"'{game.name}' has no Nexus Mods page.", "warning")
             return
-        from Nexus.nexus_oauth import load_oauth_tokens
-        from Nexus.nexus_api import NexusAPI
-        tokens = load_oauth_tokens()
-        if tokens is None:
+        # Reuse the shared API (built at startup); falls back to building it now
+        # if startup couldn't (e.g. the user logged in afterwards).
+        api = self._ensure_nexus_api()
+        if api is None:
             self._notify("Log in to Nexus first (Nexus settings).", "warning")
             self._append_log("[nexus] no OAuth tokens — login required")
-            return
-        try:
-            api = NexusAPI.from_oauth(tokens)
-        except Exception as exc:
-            self._notify("Could not connect to Nexus.", "error")
-            self._append_log(f"[nexus] api error: {exc}")
             return
         from gui_qt.nexus_browser_view import NexusBrowserView
         view = NexusBrowserView(api, domain, game,
@@ -1070,6 +1124,57 @@ class MainWindow(QMainWindow):
                 self._op_done.emit("deploy", bool(ok), warns)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def closeEvent(self, event):
+        """On close, optionally restore every deployed game to vanilla (the
+        'Restore on close' setting). Synchronous (the app is exiting) — mirrors
+        the Tk gui.py shutdown path."""
+        try:
+            from Utils.ui_config import load_restore_on_close
+            if load_restore_on_close():
+                self._restore_all_on_close()
+        except Exception as exc:
+            print(f"[gui_qt] restore-on-close error: {exc}", flush=True)
+        super().closeEvent(event)
+
+    def _restore_all_on_close(self):
+        """Restore every configured game that has an active deployment back to
+        vanilla. Ported from gui.py `_restore_all_on_close`."""
+        from gui_qt.game_state import _GAMES
+        from Utils.deploy import restore_root_folder
+
+        games = [g for g in _GAMES.values()
+                 if g.is_configured() and g.get_deploy_active()
+                 and getattr(g, "restore_on_close_eligible", True)]
+        if not games:
+            return
+        log_fn = lambda m: print(f"[restore-on-close] {m}", flush=True)
+        log_fn(f"restoring {len(games)} game(s)...")
+        for game in games:
+            try:
+                game_root = game.get_game_path()
+                last_deployed = game.get_last_deployed_profile()
+                original_profile_dir = getattr(game, "_active_profile_dir", None)
+                if last_deployed:
+                    game.set_active_profile_dir(
+                        game.get_profile_root() / "profiles" / last_deployed)
+                    # Reload so the last-deployed profile's path overrides drive
+                    # the restore (it may target a different game folder).
+                    game.load_paths()
+                    game_root = game.get_game_path()
+                try:
+                    if hasattr(game, "restore"):
+                        game.restore(log_fn=log_fn)
+                    root_folder_dir = game.get_effective_root_folder_path()
+                    if root_folder_dir.is_dir() and game_root:
+                        restore_root_folder(root_folder_dir, game_root, log_fn=log_fn)
+                    game.clear_deploy_active()
+                finally:
+                    if original_profile_dir is not None:
+                        game.set_active_profile_dir(original_profile_dir)
+                        game.load_paths()
+            except Exception as e:
+                log_fn(f"error for {game.name}: {e}")
 
     def _on_restore(self):
         game = self._gs.game
@@ -1433,14 +1538,101 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self._op_log.emit(f"Install error ({prepared.mod_name}): {exc}")
                 name = None
+            if name:
+                self._maybe_clear_archive(prepared)
             self._one_install_done.emit(name)
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _maybe_clear_archive(self, prepared):
+        """Delete the source archive after a successful install, honouring the
+        'Clear archive after install' / 'Keep FOMOD archives' settings (Tk
+        parity). Runs on the install worker thread; failures are non-fatal."""
+        try:
+            from Utils.ui_config import (
+                load_clear_archive_after_install, load_keep_fomod_archives)
+            if not load_clear_archive_after_install():
+                return
+            if prepared.is_fomod() and load_keep_fomod_archives():
+                return
+            archive = getattr(prepared, "archive", None)
+            if archive is None:
+                return
+            from Nexus.nexus_download import delete_archive_and_sidecar
+            from pathlib import Path as _P
+            delete_archive_and_sidecar(_P(archive))
+            self._op_log.emit(f"Removed archive: {_P(archive).name}")
+        except Exception as exc:
+            self._op_log.emit(f"Archive cleanup skipped: {exc}")
+
     def _on_one_install_done(self, name):
         if name:
+            # Optional post-install rename prompt (Tk parity). Modal, before the
+            # next queued install — keeps one dialog at a time.
+            name = self._maybe_prompt_rename(name)
             self._install_ok.append(name)
         self._install_next()   # continue the queue
+
+    def _maybe_prompt_rename(self, name: str) -> str:
+        """If 'Rename mod after install' is on, prompt for a new name and rename
+        the mod (staging folder + index + modlist entry). Returns the final name
+        (unchanged if the user cancels or the rename fails)."""
+        try:
+            from Utils.ui_config import load_rename_mod_after_install
+            if not load_rename_mod_after_install():
+                return name
+        except Exception:
+            return name
+        from PySide6.QtWidgets import QInputDialog
+        new, ok = QInputDialog.getText(
+            self, "Rename mod", "New name for the installed mod:", text=name)
+        if not ok or not new.strip():
+            return name
+        renamed = self._rename_mod_on_disk(name, new.strip())
+        return renamed or name
+
+    def _rename_mod_on_disk(self, old_name: str, new_name: str) -> str | None:
+        """Rename a mod: staging folder → new, modindex entry, modlist entry,
+        then reload. Returns the sanitised new name on success, else None.
+        Mirrors the Tk modlist_panel.rename_mod_by_name operation."""
+        from gui.mod_name_utils import sanitize_mod_folder_name
+        new_name = sanitize_mod_folder_name(new_name)
+        if not old_name or not new_name or old_name == new_name:
+            return None
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return None
+        old_folder = staging / old_name
+        new_folder = staging / new_name
+        if new_folder.exists():
+            self._notify(f"A mod named '{new_name}' already exists.", "warning")
+            return None
+        try:
+            if old_folder.is_dir():
+                old_folder.rename(new_folder)
+        except OSError as exc:
+            self._notify(f"Rename failed: {exc}", "warning")
+            return None
+        # Keep the persistent mod index in sync (avoids a full rescan).
+        try:
+            from Utils.filemap import rename_in_mod_index
+            from Utils.ui_config import load_normalize_folder_case
+            idx_path = staging.parent / "modindex.bin"
+            rename_in_mod_index(idx_path, old_name, new_name,
+                                normalize_folder_case=load_normalize_folder_case())
+        except Exception:
+            pass
+        # Update the modlist entry by name, persist, and reload everything.
+        m = self._modlist_model
+        for r in range(m.rowCount()):
+            e = m.entry(r)
+            if not e.is_separator and e.name == old_name:
+                e.name = new_name
+                break
+        m.save()
+        self._reload_modlist()
+        self._notify(f"Renamed to '{new_name}'.", "info")
+        return new_name
 
     def _on_install_done(self, ok: int, total: int, names):
         self._install_running = False
@@ -1985,6 +2177,7 @@ class MainWindow(QMainWindow):
         self._modlist_model.set_entries(entries)
         self._modlist_model._versions = versions
         self._modlist_model._installed = installed
+        self._modlist_model._categories = self._mod_categories
         self._modlist_model.set_flags(flags)
         self._modlist_model.set_conflicts({}, {})   # clear stale; recomputed async
         # Persist edits back to this modlist; rebuild conflicts after each save.
@@ -1993,6 +2186,12 @@ class MainWindow(QMainWindow):
         self._modlist_view.staging_dir = staging
         self._modlist_view.profile_dir = self._gs.profile_dir()
         self._modlist_view.game = self._gs.game
+        # Enabling the Size column scans mod folder sizes on demand (Tk parity:
+        # only walk the disk when Size is actually shown).
+        self._modlist_view.on_sizes_requested = self._apply_modlist_sizes
+        self._modlist_model._sizes = {}
+        if not self._modlist_view.isColumnHidden(COL_SIZE):
+            self._apply_modlist_sizes()
         self._modlist_view.load_separator_state()
         # Point the Mod Files tab at this game/profile (index next to filemap).
         if hasattr(self, "_mod_files_view"):
@@ -2039,6 +2238,18 @@ class MainWindow(QMainWindow):
 
         if entries:
             self._rebuild_conflicts_async(rescan_index=rescan_index)
+
+    def _apply_modlist_sizes(self):
+        """Scan mod folder sizes and push them to the model. Called on reload
+        when the Size column is visible, and when the user enables Size from the
+        column menu (the disk walk is skipped while Size stays hidden)."""
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return
+        from gui_qt.modlist_data import compute_sizes
+        entries = [self._modlist_model.entry(r)
+                   for r in range(self._modlist_model.rowCount())]
+        self._modlist_model.set_sizes(compute_sizes(entries, staging))
 
     def _reload_plugins(self):
         """Load the active game/profile's plugins into the Plugins tab."""
@@ -2404,6 +2615,11 @@ class MainWindow(QMainWindow):
         h.addWidget(self._clear_log_btn)
 
         h.addStretch(1)
+
+        # Nexus username at the far right; hover shows API rate-limit usage.
+        from gui_qt.nexus_footer import NexusFooterLabel
+        self._nexus_footer = NexusFooterLabel(lambda: getattr(self, "_nexus_api", None))
+        h.addWidget(self._nexus_footer)
 
         self._log_open_widgets = [self._errors_lbl, self._warnings_lbl,
                                   self._clear_log_btn]

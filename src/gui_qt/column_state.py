@@ -14,7 +14,11 @@ _SECTION = "qt_columns"
 
 
 def _make_parser():
-    parser = configparser.ConfigParser()
+    # strict=False so a legacy duplicate key (e.g. an older build wrote the
+    # lowercase ``w_mod name`` AND this case-preserving build wrote ``w_Mod
+    # Name``) doesn't raise on read — last value wins. save_state rewrites the
+    # whole section from scratch, which purges such stale duplicates.
+    parser = configparser.ConfigParser(strict=False)
     parser.optionxform = str   # preserve key case (column names are case-sensitive)
     return parser
 
@@ -43,8 +47,11 @@ def _write(parser):
 def save_state(widths: dict[str, int], order: list[str],
                hidden: set[str], sort_col: str | None, ascending: bool) -> None:
     parser = _read()
-    if not parser.has_section(_SECTION):
-        parser.add_section(_SECTION)
+    # Rewrite the section from scratch so stale keys (incl. legacy lower-cased
+    # ``w_*`` duplicates from older builds) are removed rather than accumulated.
+    if parser.has_section(_SECTION):
+        parser.remove_section(_SECTION)
+    parser.add_section(_SECTION)
     sec = parser[_SECTION]
     for name, w in widths.items():
         sec[f"w_{name}"] = str(int(w))
@@ -63,10 +70,18 @@ def load_state():
     if not parser.has_section(_SECTION):
         return out
     sec = parser[_SECTION]
+    # Map width keys case-insensitively back to canonical column names. A
+    # ui_config write (default, lower-casing optionxform) shares this file and
+    # can lower-case our ``w_Mod Name`` → ``w_mod name``; resolve against the
+    # real column names so widths survive that round-trip instead of silently
+    # resetting. Unknown keys fall back to their raw (case-preserved) name.
+    from gui_qt.modlist_model import COLUMNS
+    _canon = {c.lower(): c for c in COLUMNS}
     for key, val in sec.items():
         if key.startswith("w_"):
             try:
-                out["widths"][key[2:]] = int(val)
+                raw_name = key[2:]
+                out["widths"][_canon.get(raw_name.lower(), raw_name)] = int(val)
             except ValueError:
                 pass
     if sec.get("order"):

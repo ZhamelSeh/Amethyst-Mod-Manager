@@ -23,7 +23,11 @@ class TkStyleHeader(QHeaderView):
         # Section-move OFF: it conflicts with boundary-drag resizing and isn't
         # needed for the Tk feel. (Column reordering can return later via a
         # dedicated affordance.)
-        self.setSectionsMovable(False)
+        # Section MOVE is enabled (Tk parity — drag a header to reorder). It
+        # coexists with our boundary-drag resize: a press ON a boundary line is
+        # consumed for resizing (see mousePressEvent), anything else falls
+        # through to Qt's native move. The view pins COL 0 (Mod Name) in place.
+        self.setSectionsMovable(True)
         self.setSectionsClickable(True)
         # We own resizing; Qt must not auto-resize or interactively resize.
         self.setSectionResizeMode(QHeaderView.Fixed)

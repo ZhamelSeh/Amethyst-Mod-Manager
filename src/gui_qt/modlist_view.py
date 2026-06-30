@@ -7,12 +7,14 @@ TkStyleHeader owns column resizing; column state persists via column_state.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, QRect
-from PySide6.QtGui import QPainter, QColor, QPen
-from PySide6.QtWidgets import QTreeView, QAbstractItemView, QHeaderView
+from PySide6.QtGui import QPainter, QColor, QPen, QAction
+from PySide6.QtWidgets import (
+    QTreeView, QAbstractItemView, QHeaderView, QToolButton, QMenu,
+)
 
 from gui_qt.modlist_model import (
-    ModListModel, COLUMNS, COL_NAME, COL_PRIORITY, COL_FLAGS, COL_CONFLICTS,
-    COL_INSTALLED, COL_VERSION, HighlightRole,
+    ModListModel, COLUMNS, COL_NAME, COL_CATEGORY, COL_PRIORITY, COL_FLAGS,
+    COL_CONFLICTS, COL_INSTALLED, COL_VERSION, COL_SIZE, HighlightRole,
 )
 from PySide6.QtWidgets import QWidget
 from gui_qt.modlist_delegate import ModRowDelegate
@@ -22,14 +24,18 @@ from gui_qt.modlist_header import TkStyleHeader
 # Per-column default width + minimum (design px), mirroring the Tk app's
 # _layout_columns data_defaults / data_mins. Name auto-fills the leftover.
 COL_DEFAULTS = {
-    COL_FLAGS: 70, COL_CONFLICTS: 95, COL_INSTALLED: 100,
-    COL_VERSION: 90, COL_PRIORITY: 75,
+    COL_CATEGORY: 120, COL_FLAGS: 70, COL_CONFLICTS: 95, COL_INSTALLED: 100,
+    COL_VERSION: 90, COL_PRIORITY: 75, COL_SIZE: 85,
 }
 COL_MINS = {
-    COL_NAME: 120, COL_FLAGS: 60, COL_CONFLICTS: 90, COL_INSTALLED: 90,
-    COL_VERSION: 80, COL_PRIORITY: 70,
+    COL_NAME: 120, COL_CATEGORY: 90, COL_FLAGS: 60, COL_CONFLICTS: 90,
+    COL_INSTALLED: 90, COL_VERSION: 80, COL_PRIORITY: 70, COL_SIZE: 70,
 }
 NAME_MIN = COL_MINS[COL_NAME]
+
+# Columns shown by default on a fresh INI (no persisted state). Tk parity:
+# Category, Installed, Size are hidden until the user enables them.
+_FIRST_RUN_HIDDEN = {COL_CATEGORY, COL_INSTALLED, COL_SIZE}
 
 
 class ModListView(QTreeView):
@@ -98,7 +104,7 @@ class ModListView(QTreeView):
         h = self.header()
         # sectionResized is handled by _on_section_resized (which saves);
         # only moves + sort-indicator need a direct save hook here.
-        h.sectionMoved.connect(lambda *a: self._schedule_save())
+        h.sectionMoved.connect(self._on_section_moved)
         h.sortIndicatorChanged.connect(lambda *a: self._schedule_save())
 
         # Marker strip: a coloured-tick gutter beside the scrollbar showing
@@ -125,7 +131,94 @@ class ModListView(QTreeView):
             self.setColumnWidth(col, w)
         self._fitting = False
         h.sectionResized.connect(lambda *a: self._schedule_save())
-        h.sectionMoved.connect(lambda *a: self._schedule_save())
+        self._build_column_menu_button(h)
+
+    # ---- column show/hide menu (eye button, aligned over the checkboxes) --
+    def _build_column_menu_button(self, header):
+        """A small eye button pinned to the LEFT of the Mod Name column header,
+        centred over the row checkbox column below; opens a checkable menu to
+        show/hide each toggleable column (Name always stays)."""
+        from gui_qt.theme_qt import active_palette, _c
+        from gui_qt.icons import icon
+        from PySide6.QtCore import QSize
+        btn = QToolButton(header)
+        btn.setIcon(icon("eye1_white.png", 16))
+        btn.setIconSize(QSize(16, 16))
+        btn.setCursor(Qt.ArrowCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setAutoRaise(True)
+        btn.setToolTip("Show / hide columns")
+        # Opaque header-coloured background so it sits cleanly over the Mod Name
+        # header text; hover/press come from the global QToolButton QSS.
+        bg = _c(active_palette(), "BG_HEADER")
+        btn.setStyleSheet(
+            f"QToolButton {{ background: {bg}; border: none; padding: 0px; }}")
+        btn.clicked.connect(self._show_column_menu)
+        self._col_menu_btn = btn
+        # Callback the window sets so enabling Size can trigger a size scan.
+        self.on_sizes_requested = None
+        self._position_column_menu_button()
+        btn.show()
+
+    _COL_BTN_W = 26
+
+    def _position_column_menu_button(self):
+        btn = getattr(self, "_col_menu_btn", None)
+        if btn is None:
+            return
+        from gui_qt.modlist_delegate import CHECK_BOX
+        h = self.header()
+        # Centre the button on the row checkbox column below it: the delegate
+        # draws each checkbox at (col_left + 10, …) with width CHECK_BOX.
+        col_left = h.sectionViewportPosition(COL_NAME)
+        cb_center = col_left + 10 + CHECK_BOX // 2
+        x = cb_center - self._COL_BTN_W // 2
+        btn.setGeometry(max(0, x), 0, self._COL_BTN_W, h.height())
+        btn.raise_()
+
+    def _show_column_menu(self):
+        menu = QMenu(self)
+        for col, name in enumerate(COLUMNS):
+            if col == COL_NAME:
+                continue   # Name is always shown
+            a = QAction(name, menu)
+            a.setCheckable(True)
+            a.setChecked(not self.isColumnHidden(col))
+            a.toggled.connect(lambda checked, c=col: self._set_column_visible(c, checked))
+            menu.addAction(a)
+        btn = self._col_menu_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _set_column_visible(self, col: int, visible: bool):
+        self.setColumnHidden(col, not visible)
+        if visible:
+            # Qt collapses a hidden section's width to 0; restore a sensible
+            # width so the re-shown column is actually visible (not a 0-px
+            # sliver that only appears after the next manual resize).
+            if self.columnWidth(col) <= 0:
+                self.header().resizeSection(col, COL_DEFAULTS.get(col, 90))
+            # If Size was just enabled and we have no sizes yet, ask for a scan.
+            if (col == COL_SIZE and not self.model()._sizes
+                    and callable(getattr(self, "on_sizes_requested", None))):
+                self.on_sizes_requested()
+        self._fit_name_to_width()   # Name re-absorbs/releases the freed width
+        self.viewport().update()
+        self._schedule_save()
+
+    def _on_section_moved(self, logical, old_visual, new_visual):
+        """Persist column order after a drag-reorder, but keep Mod Name pinned
+        as the first column (it's the stretch column + hosts the menu button)."""
+        if self._restoring or getattr(self, "_pinning_name", False):
+            return
+        h = self.header()
+        if h.visualIndex(COL_NAME) != 0:
+            # A move displaced Name from position 0 — snap it back.
+            self._pinning_name = True
+            h.moveSection(h.visualIndex(COL_NAME), 0)
+            self._pinning_name = False
+        self._position_column_menu_button()
+        self.viewport().update()
+        self._schedule_save()
 
     # ---- separator collapse/expand ---------------------------------------
     def load_separator_state(self):
@@ -231,10 +324,12 @@ class ModListView(QTreeView):
     def showEvent(self, event):
         super().showEvent(event)
         self._fit_name_to_width()
+        self._position_column_menu_button()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_name_to_width()
+        self._position_column_menu_button()
         if hasattr(self, "_marker_strip"):
             self._reposition_marker_strip()
 
@@ -538,6 +633,10 @@ class ModListView(QTreeView):
     def _restore_column_state(self):
         st = column_state.load_state()
         if not (st["widths"] or st["order"] or st["hidden"] or st["sort_col"]):
+            # Fresh INI: apply Tk-parity first-run hidden columns (Category /
+            # Installed / Size). The user's later choices persist over this.
+            for col in _FIRST_RUN_HIDDEN:
+                self.setColumnHidden(col, True)
             return
         name_to_col = {n: i for i, n in enumerate(COLUMNS)}
         for name, w in st["widths"].items():

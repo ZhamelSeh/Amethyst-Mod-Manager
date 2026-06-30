@@ -36,6 +36,16 @@ def get_ui_config_path() -> Path:
     return get_config_dir() / "amethyst.ini"
 
 
+def _new_parser() -> "configparser.ConfigParser":
+    """A ConfigParser tolerant of a duplicated option/section (last value wins
+    instead of raising). amethyst.ini is shared with column_state.py, which uses
+    a case-preserving optionxform; a legacy key that differs only in case (e.g.
+    ``w_Mod Name`` vs ``w_mod name`` in [qt_columns]) would otherwise make EVERY
+    read here raise DuplicateOptionError and break all saves. strict=False lets
+    the file still load so settings can be written."""
+    return configparser.ConfigParser(strict=False)
+
+
 def _get_portal_scale() -> float:
     """Read the DE scale via the XDG Settings portal.
 
@@ -422,7 +432,7 @@ def load_ui_scale() -> float:
         _seed_first_run_defaults(path)
         return _ui_scale
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         if parser.has_section(_INI_SECTION) and parser.has_option(_INI_SECTION, _INI_OPTION):
             raw = parser.get(_INI_SECTION, _INI_OPTION).strip().lower()
@@ -440,7 +450,7 @@ def load_ui_scale() -> float:
 def _write_ini(path: Path, scale_str: str) -> None:
     """Write the [ui] scale to amethyst.ini."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _INI_SECTION not in parser:
@@ -457,7 +467,7 @@ def _seed_first_run_defaults(path: Path) -> None:
     never run this code path so their behaviour is unchanged.
     """
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         if path.is_file():
             parser.read(path)
         if _COLLECTIONS_SECTION not in parser:
@@ -499,7 +509,7 @@ def load_font_family() -> str:
     if not path.is_file():
         return _font_family
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         value = parser.get(_INI_SECTION, _INI_FONT_OPTION, fallback="").strip()
         _font_family = value if value else _DEFAULT_FONT_FAMILY
@@ -514,7 +524,7 @@ def save_font_family(family: str) -> None:
     _font_family = family.strip() or _DEFAULT_FONT_FAMILY
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _INI_SECTION not in parser:
@@ -564,7 +574,7 @@ def load_collection_settings() -> dict:
     if not path.is_file():
         return defaults
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         if not parser.has_section(_COLLECTIONS_SECTION):
             return defaults
@@ -596,7 +606,7 @@ def save_collection_settings(download_order: str, max_concurrent: int,
     """Persist collection settings to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _COLLECTIONS_SECTION not in parser:
@@ -622,7 +632,7 @@ def load_nexus_show_adult() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_NEXUS_SECTION, "show_adult", fallback=False)
     except Exception:
@@ -639,7 +649,7 @@ def load_column_widths() -> dict[int, int]:
     if not path.is_file():
         return {}
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         if _COLUMNS_SECTION not in parser:
             return {}
@@ -658,7 +668,7 @@ def save_column_widths(widths: dict[int, int]) -> None:
     """Persist column width overrides to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     # Preserve column order/hidden/sort keys across the section overwrite
@@ -688,7 +698,7 @@ def load_column_order() -> list[int]:
     if not path.is_file():
         return list(_DEFAULT_COL_ORDER)
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         raw = parser.get(_COLUMNS_SECTION, "order", fallback=None)
         if raw is None:
@@ -714,7 +724,7 @@ def save_column_order(order: list[int]) -> None:
     """Persist column display order to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _COLUMNS_SECTION not in parser:
@@ -735,7 +745,7 @@ def load_column_hidden() -> set[int]:
     if not path.is_file():
         return set()
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         raw = parser.get(_COLUMNS_SECTION, "hidden", fallback=None)
         if raw is None:
@@ -755,7 +765,7 @@ def load_column_hidden() -> set[int]:
 
 def _save_columns_hidden_and_introduced(path: Path, hidden: set[int], introduced: set[int]) -> None:
     """Persist both the hidden set and the introduced marker together."""
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _COLUMNS_SECTION not in parser:
@@ -770,7 +780,7 @@ def save_column_hidden(hidden: set[int]) -> None:
     """Persist hidden column indices to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _COLUMNS_SECTION not in parser:
@@ -787,7 +797,7 @@ def load_sort_state() -> tuple[str | None, bool]:
     if not path.is_file():
         return None, True
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         col = parser.get(_COLUMNS_SECTION, "sort_column", fallback=None)
         if col == "none":
@@ -802,7 +812,7 @@ def save_sort_state(sort_column: str | None, ascending: bool) -> None:
     """Persist sort column and direction to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _COLUMNS_SECTION not in parser:
@@ -819,7 +829,7 @@ def load_window_geometry() -> str | None:
     if not path.is_file():
         return None
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_WINDOW_SECTION, "geometry", fallback=None)
     except Exception:
@@ -830,7 +840,7 @@ def save_window_geometry(geometry: str) -> None:
     """Persist window geometry string to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _WINDOW_SECTION not in parser:
@@ -852,7 +862,7 @@ def load_dev_mode() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_DEV_SECTION, "devmode", fallback="false").strip().lower() == "true"
     except Exception:
@@ -869,7 +879,7 @@ def load_force_manual_install() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_DEV_SECTION, "force_manual_install", fallback="false").strip().lower() == "true"
     except Exception:
@@ -888,7 +898,7 @@ def load_normalize_folder_case() -> bool:
     if not path.is_file():
         return True
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "normalize_folder_case", fallback=True)
     except Exception:
@@ -899,7 +909,7 @@ def save_normalize_folder_case(value: bool) -> None:
     """Persist the normalize_folder_case setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -921,7 +931,7 @@ def load_allow_prerelease() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_UPDATES_SECTION, "allow_prerelease", fallback=False)
     except Exception:
@@ -932,7 +942,7 @@ def save_allow_prerelease(value: bool) -> None:
     """Persist the allow_prerelease setting to amethyst.ini under [updates]."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _UPDATES_SECTION not in parser:
@@ -948,7 +958,7 @@ def load_clear_archive_after_install() -> bool:
     if not path.is_file():
         return True
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "clear_archive_after_install", fallback=True)
     except Exception:
@@ -959,7 +969,7 @@ def save_clear_archive_after_install(value: bool) -> None:
     """Persist the clear_archive_after_install setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -979,7 +989,7 @@ def load_keep_fomod_archives() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "keep_fomod_archives", fallback=False)
     except Exception:
@@ -990,7 +1000,7 @@ def save_keep_fomod_archives(value: bool) -> None:
     """Persist the keep_fomod_archives setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -1006,7 +1016,7 @@ def load_show_summary_tooltips() -> bool:
     if not path.is_file():
         return True
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "show_summary_tooltips", fallback=True)
     except Exception:
@@ -1017,7 +1027,7 @@ def save_show_summary_tooltips(value: bool) -> None:
     """Persist the show_summary_tooltips setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -1037,7 +1047,7 @@ def load_hide_bsa_conflicts() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "hide_bsa_conflicts", fallback=False)
     except Exception:
@@ -1048,7 +1058,7 @@ def save_hide_bsa_conflicts(value: bool) -> None:
     """Persist the hide_bsa_conflicts setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -1067,7 +1077,7 @@ def load_rename_mod_after_install() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "rename_mod_after_install", fallback=False)
     except Exception:
@@ -1078,7 +1088,7 @@ def save_rename_mod_after_install(value: bool) -> None:
     """Persist the rename_mod_after_install setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -1098,7 +1108,7 @@ def load_restore_on_close() -> bool:
     if not path.is_file():
         return False
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.getboolean(_FILEMAP_SECTION, "restore_on_close", fallback=False)
     except Exception:
@@ -1109,7 +1119,7 @@ def save_restore_on_close(value: bool) -> None:
     """Persist the restore_on_close setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _FILEMAP_SECTION not in parser:
@@ -1123,7 +1133,7 @@ def save_nexus_show_adult(value: bool) -> None:
     """Persist the show_adult setting to amethyst.ini."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _NEXUS_SECTION not in parser:
@@ -1145,7 +1155,7 @@ def load_heroic_config_path() -> str:
     if not path.is_file():
         return ""
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_PATHS_SECTION, "heroic_config_path", fallback="").strip()
     except Exception:
@@ -1156,7 +1166,7 @@ def save_heroic_config_path(value: str) -> None:
     """Persist the Heroic config directory path to amethyst.ini. Pass '' to clear."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _PATHS_SECTION not in parser:
@@ -1172,7 +1182,7 @@ def load_steam_libraries_vdf_path() -> str:
     if not path.is_file():
         return ""
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_PATHS_SECTION, "steam_libraries_vdf", fallback="").strip()
     except Exception:
@@ -1183,7 +1193,7 @@ def save_steam_libraries_vdf_path(value: str) -> None:
     """Persist the Steam libraryfolders.vdf path to amethyst.ini. Pass '' to clear."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _PATHS_SECTION not in parser:
@@ -1203,7 +1213,7 @@ def load_default_staging_path() -> str:
     if not path.is_file():
         return ""
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_PATHS_SECTION, "default_staging_path", fallback="").strip()
     except Exception:
@@ -1214,7 +1224,7 @@ def save_default_staging_path(value: str) -> None:
     """Persist the default mod staging folder to amethyst.ini. Pass '' to clear."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _PATHS_SECTION not in parser:
@@ -1235,7 +1245,7 @@ def load_download_cache_path() -> str:
     if not path.is_file():
         return ""
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         return parser.get(_PATHS_SECTION, "download_cache_path", fallback="").strip()
     except Exception:
@@ -1246,7 +1256,7 @@ def save_download_cache_path(value: str) -> None:
     """Persist the download cache root to amethyst.ini. Pass '' to clear."""
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _PATHS_SECTION not in parser:
@@ -1346,7 +1356,7 @@ def load_theme_colors() -> dict[str, str]:
     path = get_ui_config_path()
     if path.is_file():
         try:
-            parser = configparser.ConfigParser()
+            parser = _new_parser()
             parser.read(path)
             if parser.has_section(_THEME_SECTION):
                 for key in THEME_DEFAULTS:
@@ -1373,7 +1383,7 @@ def save_theme_color(key: str, value: str) -> None:
     value = value.strip()
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _THEME_SECTION not in parser:
@@ -1407,7 +1417,7 @@ def get_appearance_mode() -> str:
     if not path.is_file():
         return _APPEARANCE_DEFAULT
     try:
-        parser = configparser.ConfigParser()
+        parser = _new_parser()
         parser.read(path)
         raw = parser.get(_INI_SECTION, _APPEARANCE_OPTION, fallback=_APPEARANCE_DEFAULT).strip().lower()
         return raw if _APPEARANCE_ID_RE.match(raw) else _APPEARANCE_DEFAULT
@@ -1424,7 +1434,7 @@ def save_appearance_mode(mode: str) -> None:
         return
     path = get_ui_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    parser = configparser.ConfigParser()
+    parser = _new_parser()
     if path.is_file():
         parser.read(path)
     if _INI_SECTION not in parser:

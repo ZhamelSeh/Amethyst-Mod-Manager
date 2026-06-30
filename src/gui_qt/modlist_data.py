@@ -5,6 +5,7 @@ they can run on a worker thread.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -85,6 +86,56 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path):
             flags[e.name] = bits
 
     return versions, installed, flags, categories, updates, fomod, bain
+
+
+# ---- mod folder sizes (Size column) — ported from gui/modlist_panel.py --------
+def _dir_size_bytes(path: Path) -> int:
+    """Recursively sum file sizes under path (bytes). Safe to run in a thread."""
+    total = 0
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+                    elif entry.is_dir(follow_symlinks=False):
+                        total += _dir_size_bytes(Path(entry.path))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def _format_size(num_bytes: int) -> str:
+    """Format a byte count as a short KB/MB/GB string."""
+    if num_bytes <= 0:
+        return ""
+    kb = num_bytes / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.1f} MB"
+    return f"{mb / 1024:.2f} GB"
+
+
+def compute_sizes(entries: list[ModEntry], staging_dir: Path) -> dict[str, str]:
+    """Formatted folder size per non-separator mod. Walks the staging dir, so
+    only call it when the Size column is visible (Tk gates the same way)."""
+    sizes: dict[str, str] = {}
+    if staging_dir is None:
+        return sizes
+    for e in entries:
+        if e.is_separator:
+            continue
+        mod_dir = staging_dir / e.name
+        if not mod_dir.is_dir():
+            continue
+        s = _format_size(_dir_size_bytes(mod_dir))
+        if s:
+            sizes[e.name] = s
+    return sizes
 
 
 # Qt display conflict codes (drawn by the delegate). Mirrors the Tk app's

@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._plugin_footer_stack = QStackedWidget()
         self._plugin_footer_stack.addWidget(self._plugins_footer())       # page 0
         self._plugin_footer_stack.addWidget(self._mod_files_footer())     # page 1
+        self._plugin_footer_stack.addWidget(self._data_footer())          # page 2
         rc.addWidget(self._plugin_footer_stack)
         self._right_col = right_col
 
@@ -289,6 +290,19 @@ class MainWindow(QMainWindow):
             mods = pv.selected_owner_mods(owner)
             # Plugin selected → orange its owning mod, clear mod conflict tint.
             mv.set_highlighted_mods(mods)
+            mv.clearSelection()
+        finally:
+            self._xpanel_busy = False
+
+    def _on_data_select_mod(self, mod):
+        """A Data-tab file row was selected → orange-highlight its winning mod in
+        the modlist (Tk parity); a folder row clears it."""
+        if self._suppress_xpanel():
+            return
+        self._xpanel_busy = True
+        try:
+            mv = self._modlist_view
+            mv.set_highlighted_mods({mod} if mod else set())
             mv.clearSelection()
         finally:
             self._xpanel_busy = False
@@ -442,6 +456,42 @@ class MainWindow(QMainWindow):
         v.addWidget(search)
         self._mod_files_search = search
         return bar
+
+    def _data_footer(self) -> QWidget:
+        """Filters + Expand-all + search, shown under the plugins column when the
+        Data sub-tab is active (no Pack/Unpack — Data is read-only)."""
+        bar = QWidget()
+        bar.setObjectName("HeaderBar")
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(6)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(4)
+        self._data_filters_btn = self._color_button(
+            "Filters", _c(self._pal, "BTN_INFO"), compact=True)
+        self._data_filters_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._data_filters_btn.clicked.connect(self._toggle_data_filters)
+        self._data_expand_btn = self._text_button("⊞ Expand all", compact=True)
+        self._data_expand_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._data_expand_btn.clicked.connect(self._on_data_expand_clicked)
+        btns.addWidget(self._data_filters_btn)
+        btns.addWidget(self._data_expand_btn)
+        btns.addStretch(1)
+        v.addLayout(btns)
+
+        search = QLineEdit()
+        search.setPlaceholderText("Search files…")
+        search.setClearButtonEnabled(True)
+        search.textChanged.connect(lambda t: self._data_view._on_search(t))
+        v.addWidget(search)
+        self._data_search = search
+        return bar
+
+    def _on_data_expand_clicked(self):
+        expanded = self._data_view._toggle_expand_all()
+        self._data_expand_btn.setText("⊟ Collapse all" if expanded
+                                      else "⊞ Expand all")
 
     def _left_header(self) -> QWidget:
         # Single row: game/profile selectors, then the mod-action buttons.
@@ -998,8 +1048,48 @@ class MainWindow(QMainWindow):
         self._mod_files_filter_panel = self._build_mod_files_filter_panel()
         self._mod_files_filter_panel.setVisible(False)
         h.addWidget(self._mod_files_filter_panel)
+        # The Data filter panel shares the same window-left slot.
+        self._data_filter_panel = self._build_data_filter_panel()
+        self._data_filter_panel.setVisible(False)
+        h.addWidget(self._data_filter_panel)
         h.addWidget(col, 1)
         return area
+
+    def _build_data_filter_panel(self):
+        from gui_qt.filter_panel import FilterSidePanel
+        from gui_qt.data_view import DataView
+        panel = FilterSidePanel(DataView.filter_spec(), title="Filters")
+        panel.changed.connect(self._on_data_filter_changed)
+        panel.close_requested.connect(self._toggle_data_filters)
+        self._data_view.filetypes_changed.connect(self._sync_data_filter_list)
+        return panel
+
+    def _toggle_data_filters(self):
+        """Open/close the Data filter panel in the window-left slot (does NOT hide
+        the plugins column — the Data tree lives there)."""
+        panel = self._data_filter_panel
+        show = not panel.isVisible()
+        if show:
+            self._modlist_filter_panel.setVisible(False)
+            self._mod_files_filter_panel.setVisible(False)
+            panel.setVisible(True)
+            self._sync_data_filter_list()
+        else:
+            panel.setVisible(False)
+
+    def _on_data_filter_changed(self, state: dict):
+        self._data_view.apply_filter_state(state)
+        active = self._data_filter_panel.any_active()
+        b = getattr(self, "_data_filters_btn", None)
+        if b is not None:
+            b.setProperty("active", active)
+            b.style().unpolish(b); b.style().polish(b)
+
+    def _sync_data_filter_list(self):
+        if not self._data_filter_panel.isVisible():
+            return
+        self._data_filter_panel.set_dynamic_items(
+            "filetypes", self._data_view.filetype_items())
 
     def _build_mod_files_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
@@ -1022,6 +1112,7 @@ class MainWindow(QMainWindow):
         show = not panel.isVisible()
         if show:
             self._modlist_filter_panel.setVisible(False)  # share the slot
+            self._data_filter_panel.setVisible(False)
             panel.setVisible(True)
             self._sync_mod_files_filter_list()
         else:
@@ -1091,10 +1182,13 @@ class MainWindow(QMainWindow):
         show = not panel.isVisible()
         right = getattr(self, "_right_col", None)
         if show:
-            # The Mod Files filter shares this slot — close it first.
+            # The Mod Files / Data filters share this slot — close them first.
             mfp = getattr(self, "_mod_files_filter_panel", None)
             if mfp is not None and mfp.isVisible():
                 self._toggle_mod_files_filters()
+            dfp = getattr(self, "_data_filter_panel", None)
+            if dfp is not None and dfp.isVisible():
+                self._toggle_data_filters()
             self._filter_plugins_was_visible = bool(
                 right is not None and right.isVisible())
             panel.setVisible(True)
@@ -1368,6 +1462,12 @@ class MainWindow(QMainWindow):
             self._mod_files_view.configure(
                 self._gs.game, self._gs.profile_dir(), idx)
             self._mod_files_view.show_mod(None)
+        # Point the Data tab at this game/profile (filemap.txt + modindex.bin).
+        if hasattr(self, "_data_view"):
+            fm = (staging.parent / "filemap.txt") if staging is not None else None
+            idx2 = (staging.parent / "modindex.bin") if staging is not None else None
+            self._data_view.configure(
+                self._gs.game, self._gs.profile_dir(), fm, idx2)
         self._refresh_footer_toggle_labels()
         # Re-apply an active search against the fresh row indices.
         self._apply_modlist_search()
@@ -1426,6 +1526,9 @@ class MainWindow(QMainWindow):
         # Rebuild the filter data + repopulate the filter panel's dynamic lists,
         # then reapply whatever filters are currently active.
         self._rebuild_filter_data()
+        # The deployed filemap changed → the Data tab is stale (rebuilds lazily).
+        if hasattr(self, "_data_view"):
+            self._data_view.mark_dirty()
 
     # ----------------------------------------------------------------- right
     def _build_plugins(self) -> QWidget:
@@ -1505,12 +1608,22 @@ class MainWindow(QMainWindow):
         self._mod_files_view.changed.connect(self._on_mod_files_changed)
         self._mod_files_view.on_open_image = self._open_image_preview_tab
         self._plugin_stack.addWidget(self._mod_files_view)
-        # Other pages: placeholders for now.
-        for t in self._plugin_tab_names[2:]:
-            ph = QLabel(f"{t}\n(coming in a later phase)")
-            ph.setAlignment(Qt.AlignCenter)
-            ph.setStyleSheet(f"color:{_c(self._pal,'TEXT_FAINT')};")
-            self._plugin_stack.addWidget(ph)
+        # Page 2: Text Files placeholder.
+        ph = QLabel("Text Files\n(coming in a later phase)")
+        ph.setAlignment(Qt.AlignCenter)
+        ph.setStyleSheet(f"color:{_c(self._pal,'TEXT_FAINT')};")
+        self._plugin_stack.addWidget(ph)
+        # Page 3: the real Data view.
+        from gui_qt.data_view import DataView
+        self._data_view = DataView()
+        self._data_view.on_select_mod = self._on_data_select_mod
+        self._plugin_stack.addWidget(self._data_view)
+        # Page 4: Downloads placeholder.
+        ph2 = QLabel("Downloads\n(coming in a later phase)")
+        ph2.setAlignment(Qt.AlignCenter)
+        ph2.setStyleSheet(f"color:{_c(self._pal,'TEXT_FAINT')};")
+        self._plugin_stack.addWidget(ph2)
+        self._DATA_TAB_IDX = 3
 
         tabs = QHBoxLayout()
         tabs.setSpacing(2)
@@ -1529,10 +1642,17 @@ class MainWindow(QMainWindow):
 
     def _select_plugin_tab(self, idx: int):
         self._plugin_stack.setCurrentIndex(idx)
-        # Swap the column footer to match: page 1 = Mod Files tools, else plugins.
+        # Swap the column footer to match the active sub-tab:
+        # page 0 = plugin tools, 1 = Mod Files tools, 2 = Data tools.
         fstack = getattr(self, "_plugin_footer_stack", None)
         if fstack is not None:
-            fstack.setCurrentIndex(1 if idx == 1 else 0)
+            data_idx = getattr(self, "_DATA_TAB_IDX", 3)
+            fstack.setCurrentIndex(
+                1 if idx == 1 else 2 if idx == data_idx else 0)
+        # Deferred Data build: only (re)build the tree when its tab is shown.
+        dv = getattr(self, "_data_view", None)
+        if dv is not None:
+            dv.set_visible_tab(idx == getattr(self, "_DATA_TAB_IDX", 3))
         for i, lbl in enumerate(self._plugin_tab_labels):
             sel = i == idx
             lbl.setStyleSheet(

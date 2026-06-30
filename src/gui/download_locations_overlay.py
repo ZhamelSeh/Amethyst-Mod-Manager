@@ -37,121 +37,22 @@ from gui.theme import (
 )
 
 
-def _read_config() -> tuple[list[str], bool, bool]:
-    """Load (extras, default_disabled, cache_disabled) from config.
-
-    Supports the legacy format (a bare JSON list of paths) as well as the
-    newer object form
-    ``{"extras": [...], "default_disabled": bool, "cache_disabled": bool}``.
-    """
-    path = get_download_locations_path()
-    if not path.is_file():
-        return [], False, False
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return [], False, False
-    if isinstance(data, list):
-        return [str(p).strip() for p in data if p and str(p).strip()], False, False
-    if isinstance(data, dict):
-        raw = data.get("extras", [])
-        extras = (
-            [str(p).strip() for p in raw if p and str(p).strip()]
-            if isinstance(raw, list) else []
-        )
-        return (
-            extras,
-            bool(data.get("default_disabled", False)),
-            bool(data.get("cache_disabled", False)),
-        )
-    return [], False, False
-
-
-def _write_config(extras: list[str], default_disabled: bool,
-                  cache_disabled: bool) -> None:
-    path = get_download_locations_path()
-    path.write_text(
-        json.dumps(
-            {
-                "extras": extras,
-                "default_disabled": default_disabled,
-                "cache_disabled": cache_disabled,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
-def _load_locations() -> list[str]:
-    """Load extra download scan paths from config."""
-    return _read_config()[0]
-
-
-def _save_locations(locations: list[str]) -> None:
-    """Save extra download scan paths (preserving the toggle flags)."""
-    _, disabled, cache_disabled = _read_config()
-    _write_config(locations, disabled, cache_disabled)
-
-
-def get_default_downloads_dir() -> Path:
-    """Return the system default Downloads folder (per xdg-user-dirs)."""
-    return xdg_download_dir()
-
-
-def is_default_downloads_disabled() -> bool:
-    """True if the user has opted out of scanning the default Downloads folder."""
-    return _read_config()[1]
-
-
-def set_default_downloads_disabled(disabled: bool) -> None:
-    extras, _, cache_disabled = _read_config()
-    _write_config(extras, bool(disabled), cache_disabled)
-
-
-def is_cache_default_disabled() -> bool:
-    """True if the user has opted out of scanning the active game's
-    download_cache folder."""
-    return _read_config()[2]
-
-
-def set_cache_default_disabled(disabled: bool) -> None:
-    extras, default_disabled, _ = _read_config()
-    _write_config(extras, default_disabled, bool(disabled))
-
-
-def load_extra_download_locations() -> list[str]:
-    """Return extra scan paths only (excludes the default Downloads folder)."""
-    return _load_locations()
-
-
-def get_effective_download_locations() -> list[Path]:
-    """Return all folders that should be scanned for archives.
-
-    Includes the default Downloads folder (unless the user disabled it) plus
-    any user-added extras. De-duplicated by resolved path.
-    """
-    dirs: list[Path] = []
-    seen: set[Path] = set()
-    if not is_default_downloads_disabled():
-        default = get_default_downloads_dir()
-        try:
-            key = default.resolve()
-        except OSError:
-            key = default
-        dirs.append(default)
-        seen.add(key)
-    for p in _load_locations():
-        path = Path(p).expanduser()
-        try:
-            key = path.resolve()
-        except OSError:
-            key = path
-        if key in seen:
-            continue
-        dirs.append(path)
-        seen.add(key)
-    return dirs
+# Settings read/write moved to the toolkit-neutral Utils.download_locations so
+# the Qt Downloads tab shares the exact same storage. Re-exported here (with the
+# original private names) for existing Tk call sites.
+from Utils.download_locations import (   # noqa: E402
+    read_config as _read_config,
+    write_config as _write_config,
+    load_extra_download_locations as _load_locations,
+    save_extra_download_locations as _save_locations,
+    load_extra_download_locations,
+    get_default_downloads_dir,
+    is_default_downloads_disabled,
+    set_default_downloads_disabled,
+    is_cache_default_disabled,
+    set_cache_default_disabled,
+    get_effective_download_locations,
+)
 
 
 class DownloadLocationsOverlay(tk.Frame):

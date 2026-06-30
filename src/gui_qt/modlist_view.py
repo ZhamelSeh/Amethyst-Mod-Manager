@@ -71,6 +71,7 @@ class ModListView(QTreeView):
 
         # Right-click context menu.
         self.staging_dir = None   # set by the window for Open-folder
+        self.game = None          # set by the window (for full mod removal)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 

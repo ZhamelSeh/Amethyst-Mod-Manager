@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
         self._plugin_footer_stack.addWidget(self._plugins_footer())       # page 0
         self._plugin_footer_stack.addWidget(self._mod_files_footer())     # page 1
         self._plugin_footer_stack.addWidget(self._data_footer())          # page 2
+        self._plugin_footer_stack.addWidget(self._downloads_footer())     # page 3
         rc.addWidget(self._plugin_footer_stack)
         self._right_col = right_col
 
@@ -492,6 +493,93 @@ class MainWindow(QMainWindow):
         expanded = self._data_view._toggle_expand_all()
         self._data_expand_btn.setText("⊟ Collapse all" if expanded
                                       else "⊞ Expand all")
+
+    def _downloads_footer(self) -> QWidget:
+        """Install Selected / Remove Selected / Locations / Filters + search,
+        shown under the plugins column when the Downloads sub-tab is active."""
+        bar = QWidget()
+        bar.setObjectName("HeaderBar")
+        v = QVBoxLayout(bar)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(6)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(4)
+        self._dl_install_btn = self._color_button(
+            "Install Selected", _c(self._pal, "BTN_SUCCESS"), compact=True)
+        self._dl_install_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._dl_install_btn.setEnabled(False)
+        self._dl_install_btn.clicked.connect(
+            lambda: self._downloads_view.install_selected())
+        self._dl_remove_btn = self._color_button(
+            "Remove Selected", _c(self._pal, "BTN_DANGER"), compact=True)
+        self._dl_remove_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._dl_remove_btn.setEnabled(False)
+        self._dl_remove_btn.clicked.connect(self._on_downloads_remove)
+        self._dl_locations_btn = self._color_button(
+            "Locations", _c(self._pal, "BTN_INFO"), compact=True)
+        self._dl_locations_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._dl_locations_btn.clicked.connect(self._on_downloads_locations)
+        self._dl_filters_btn = self._color_button(
+            "Filters", _c(self._pal, "BTN_INFO"), compact=True)
+        self._dl_filters_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._dl_filters_btn.clicked.connect(self._toggle_downloads_filters)
+        btns.addWidget(self._dl_install_btn)
+        btns.addWidget(self._dl_remove_btn)
+        btns.addWidget(self._dl_locations_btn)
+        btns.addWidget(self._dl_filters_btn)
+        btns.addStretch(1)
+        v.addLayout(btns)
+
+        search = QLineEdit()
+        search.setPlaceholderText("Search downloads…")
+        search.setClearButtonEnabled(True)
+        search.textChanged.connect(lambda t: self._downloads_view._on_search(t))
+        v.addWidget(search)
+        self._dl_search = search
+        return bar
+
+    def _update_downloads_footer(self):
+        n = self._downloads_view.checked_count()
+        for attr, label in (("_dl_install_btn", "Install Selected"),
+                            ("_dl_remove_btn", "Remove Selected")):
+            b = getattr(self, attr, None)
+            if b is not None:
+                b.setEnabled(n > 0)
+                b.setText(f"{label} ({n})" if n else label)
+
+    def _on_downloads_locations(self):
+        from gui_qt.download_locations_dialog import DownloadLocationsDialog
+        dlg = DownloadLocationsDialog(self)
+        if dlg.exec():
+            self._downloads_view.refresh()
+
+    def _on_downloads_remove(self):
+        from PySide6.QtWidgets import QMessageBox
+        paths = self._downloads_view.checked_paths()
+        if not paths:
+            return
+        names = "\n".join(Path(p).name for p in paths[:20])
+        more = f"\n… and {len(paths) - 20} more" if len(paths) > 20 else ""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Remove archives")
+        box.setText(f"Permanently delete {len(paths)} archive(s) from disk?")
+        box.setInformativeText(names + more)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        if box.exec() != QMessageBox.Yes:
+            return
+        removed = 0
+        for p in paths:
+            try:
+                Path(p).unlink()
+                removed += 1
+            except OSError as exc:
+                print(f"[gui_qt] remove failed: {p}: {exc}", flush=True)
+        self._notify(f"Removed {removed} archive(s)", "info")
+        self._downloads_view.clear_checks()
+        self._downloads_view.refresh()
 
     def _left_header(self) -> QWidget:
         # Single row: game/profile selectors, then the mod-action buttons.
@@ -891,6 +979,20 @@ class MainWindow(QMainWindow):
             "Mod archives (*.zip *.7z *.rar *.fomod *.tar *.tar.gz *.tgz);;All files (*)")
         if not paths:
             return
+        self._install_paths(paths)
+
+    def _install_paths(self, paths: list[str]):
+        """Queue + install a list of archive paths (shared by the Install Mod
+        button and the Downloads tab). FOMODs pause for the wizard mid-queue."""
+        if not paths:
+            return
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._notify("No configured game selected.", "warning")
+            return
+        if getattr(self, "_install_running", False):
+            self._notify("An install is already in progress.", "warning")
+            return
         profile_dir = self._gs.profile_dir()
         if profile_dir is None:
             self._notify("No active profile.", "warning")
@@ -1008,6 +1110,9 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1200, self._progress_popup.clear)
         self._reload_modlist()
         self._reload_plugins()
+        # Re-flag Reinstall in the Downloads tab now that meta.ini changed.
+        if hasattr(self, "_downloads_view"):
+            self._downloads_view.mark_dirty()
         if ok == total and ok > 0:
             if ok == 1:
                 self._notify(f"Installed {names[0]}", "success")
@@ -1052,8 +1157,49 @@ class MainWindow(QMainWindow):
         self._data_filter_panel = self._build_data_filter_panel()
         self._data_filter_panel.setVisible(False)
         h.addWidget(self._data_filter_panel)
+        # The Downloads filter panel shares the slot too.
+        self._downloads_filter_panel = self._build_downloads_filter_panel()
+        self._downloads_filter_panel.setVisible(False)
+        h.addWidget(self._downloads_filter_panel)
         h.addWidget(col, 1)
         return area
+
+    def _build_downloads_filter_panel(self):
+        from gui_qt.filter_panel import FilterSidePanel
+        panel = FilterSidePanel(self._downloads_view.filter_spec(), title="Filters")
+        panel.changed.connect(self._on_downloads_filter_changed)
+        panel.close_requested.connect(self._toggle_downloads_filters)
+        self._downloads_view.filetypes_changed.connect(
+            self._sync_downloads_filter_list)
+        return panel
+
+    def _toggle_downloads_filters(self):
+        panel = self._downloads_filter_panel
+        show = not panel.isVisible()
+        if show:
+            self._modlist_filter_panel.setVisible(False)
+            self._mod_files_filter_panel.setVisible(False)
+            self._data_filter_panel.setVisible(False)
+            panel.setVisible(True)
+            self._sync_downloads_filter_list()
+        else:
+            panel.setVisible(False)
+
+    def _on_downloads_filter_changed(self, state: dict):
+        self._downloads_view.apply_filter_state(state)
+        active = self._downloads_filter_panel.any_active()
+        b = getattr(self, "_dl_filters_btn", None)
+        if b is not None:
+            b.setProperty("active", active)
+            b.style().unpolish(b); b.style().polish(b)
+
+    def _sync_downloads_filter_list(self):
+        if not self._downloads_filter_panel.isVisible():
+            return
+        self._downloads_filter_panel.set_dynamic_items(
+            "filetypes", self._downloads_view.filetype_items())
+        self._downloads_filter_panel.set_dynamic_items(
+            "locations", self._downloads_view.location_items())
 
     def _build_data_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
@@ -1072,6 +1218,7 @@ class MainWindow(QMainWindow):
         if show:
             self._modlist_filter_panel.setVisible(False)
             self._mod_files_filter_panel.setVisible(False)
+            self._downloads_filter_panel.setVisible(False)
             panel.setVisible(True)
             self._sync_data_filter_list()
         else:
@@ -1113,6 +1260,7 @@ class MainWindow(QMainWindow):
         if show:
             self._modlist_filter_panel.setVisible(False)  # share the slot
             self._data_filter_panel.setVisible(False)
+            self._downloads_filter_panel.setVisible(False)
             panel.setVisible(True)
             self._sync_mod_files_filter_list()
         else:
@@ -1189,6 +1337,9 @@ class MainWindow(QMainWindow):
             dfp = getattr(self, "_data_filter_panel", None)
             if dfp is not None and dfp.isVisible():
                 self._toggle_data_filters()
+            dlfp = getattr(self, "_downloads_filter_panel", None)
+            if dlfp is not None and dlfp.isVisible():
+                self._toggle_downloads_filters()
             self._filter_plugins_was_visible = bool(
                 right is not None and right.isVisible())
             panel.setVisible(True)
@@ -1455,6 +1606,7 @@ class MainWindow(QMainWindow):
         self._modlist_model.on_saved = self._rebuild_conflicts_async
         self._modlist_view.staging_dir = staging
         self._modlist_view.profile_dir = self._gs.profile_dir()
+        self._modlist_view.game = self._gs.game
         self._modlist_view.load_separator_state()
         # Point the Mod Files tab at this game/profile (index next to filemap).
         if hasattr(self, "_mod_files_view"):
@@ -1468,10 +1620,22 @@ class MainWindow(QMainWindow):
             idx2 = (staging.parent / "modindex.bin") if staging is not None else None
             self._data_view.configure(
                 self._gs.game, self._gs.profile_dir(), fm, idx2)
+        # Point the Downloads tab at this game (game-name getter for cache dir).
+        if hasattr(self, "_downloads_view"):
+            self._downloads_view.configure(
+                self._gs.game, lambda: self._gs.game_name)
         self._refresh_footer_toggle_labels()
         # Re-apply an active search against the fresh row indices.
         self._apply_modlist_search()
         print(f"[gui_qt] modlist: {ml_path} ({len(entries)} entries)")
+
+        # The Downloads tab reflects the active profile's STAGING folder (which
+        # changes with the profile), so refresh it on every reload — even for an
+        # empty profile, where the conflict rebuild below is skipped.
+        if hasattr(self, "_data_view"):
+            self._data_view.mark_dirty()
+        if hasattr(self, "_downloads_view"):
+            self._downloads_view.mark_dirty()
 
         if entries:
             self._rebuild_conflicts_async(rescan_index=rescan_index)
@@ -1529,6 +1693,9 @@ class MainWindow(QMainWindow):
         # The deployed filemap changed → the Data tab is stale (rebuilds lazily).
         if hasattr(self, "_data_view"):
             self._data_view.mark_dirty()
+        # A mod may have been added/removed → re-evaluate Install vs Reinstall.
+        if hasattr(self, "_downloads_view"):
+            self._downloads_view.mark_dirty()
 
     # ----------------------------------------------------------------- right
     def _build_plugins(self) -> QWidget:
@@ -1618,12 +1785,15 @@ class MainWindow(QMainWindow):
         self._data_view = DataView()
         self._data_view.on_select_mod = self._on_data_select_mod
         self._plugin_stack.addWidget(self._data_view)
-        # Page 4: Downloads placeholder.
-        ph2 = QLabel("Downloads\n(coming in a later phase)")
-        ph2.setAlignment(Qt.AlignCenter)
-        ph2.setStyleSheet(f"color:{_c(self._pal,'TEXT_FAINT')};")
-        self._plugin_stack.addWidget(ph2)
+        # Page 4: the real Downloads view.
+        from gui_qt.downloads_view import DownloadsView
+        self._downloads_view = DownloadsView()
+        self._downloads_view.on_install = self._install_paths
+        self._downloads_view.selection_changed.connect(
+            self._update_downloads_footer)
+        self._plugin_stack.addWidget(self._downloads_view)
         self._DATA_TAB_IDX = 3
+        self._DOWNLOADS_TAB_IDX = 4
 
         tabs = QHBoxLayout()
         tabs.setSpacing(2)
@@ -1643,16 +1813,23 @@ class MainWindow(QMainWindow):
     def _select_plugin_tab(self, idx: int):
         self._plugin_stack.setCurrentIndex(idx)
         # Swap the column footer to match the active sub-tab:
-        # page 0 = plugin tools, 1 = Mod Files tools, 2 = Data tools.
+        # 0 = plugin tools, 1 = Mod Files, 2 = Data, 3 = Downloads.
         fstack = getattr(self, "_plugin_footer_stack", None)
+        data_idx = getattr(self, "_DATA_TAB_IDX", 3)
+        dl_idx = getattr(self, "_DOWNLOADS_TAB_IDX", 4)
         if fstack is not None:
-            data_idx = getattr(self, "_DATA_TAB_IDX", 3)
             fstack.setCurrentIndex(
-                1 if idx == 1 else 2 if idx == data_idx else 0)
-        # Deferred Data build: only (re)build the tree when its tab is shown.
+                1 if idx == 1 else 2 if idx == data_idx
+                else 3 if idx == dl_idx else 0)
+        # Deferred build: only (re)build a tab's contents when it's shown.
         dv = getattr(self, "_data_view", None)
         if dv is not None:
-            dv.set_visible_tab(idx == getattr(self, "_DATA_TAB_IDX", 3))
+            dv.set_visible_tab(idx == data_idx)
+        dlv = getattr(self, "_downloads_view", None)
+        if dlv is not None:
+            dlv.set_visible_tab(idx == dl_idx)
+            if idx == dl_idx:
+                self._update_downloads_footer()
         for i, lbl in enumerate(self._plugin_tab_labels):
             sel = i == idx
             lbl.setStyleSheet(

@@ -134,9 +134,26 @@ def _add_separator(view, model, row, above):
 
 
 def _remove(view, model, row):
+    """Fully remove a mod: undeploy its files, delete its staging folder, drop
+    its index/BSA/plugins entries, then remove the modlist row. (Not just the
+    list line — that left the files on disk so the mod still read as installed.)"""
     from PySide6.QtWidgets import QMessageBox
     e = model.entry(row)
-    if QMessageBox.question(view, "Remove mod",
-                            f"Remove '{e.display_name}' from the list?") \
-            == QMessageBox.Yes:
-        model.remove_row(row)
+    if e is None or e.is_separator:
+        return
+    if QMessageBox.question(
+            view, "Remove mod",
+            f"Remove '{e.display_name}'?\n\nThis deletes the mod folder and "
+            "cannot be undone.") != QMessageBox.Yes:
+        return
+    name = e.name
+    game = getattr(view, "game", None)
+    profile_dir = getattr(view, "profile_dir", None)
+    if game is not None and profile_dir is not None:
+        try:
+            from Utils.mod_remove import remove_mods
+            remove_mods(game, profile_dir, [name],
+                        log_fn=lambda m: print(f"[remove] {m}", flush=True))
+        except Exception as exc:
+            print(f"[gui_qt] mod removal failed: {exc}", flush=True)
+    model.remove_row(row)

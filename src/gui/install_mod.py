@@ -1084,6 +1084,18 @@ try:
         _resolve_src_case, _resolve_dst_case, _link_or_copy,
         _copytree_case_insensitive, _copy_file_list,
     )
+    # The file-list staging pipeline also lives in the neutral module now, so the
+    # Qt installer runs IDENTICAL structure-normalisation. Re-import under the
+    # original private names so the big install_mod_from_archive flow is unchanged.
+    from Utils.mod_install import (
+        resolve_direct_files as _resolve_direct_files,
+        unwrap_single_folder as _unwrap_single_folder,
+        apply_strip_prefixes_to_file_list as _apply_strip_prefixes_to_file_list,
+        check_mod_top_level as _check_mod_top_level,
+        try_auto_strip_top_level as _try_auto_strip_top_level,
+        check_mod_top_level_file_types as _check_mod_top_level_file_types,
+        try_auto_strip_for_file_types as _try_auto_strip_for_file_types,
+    )
 except Exception:
     pass
 

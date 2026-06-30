@@ -41,6 +41,9 @@ class MainWindow(QMainWindow):
     _install_done = Signal(int, int, object)   # (ok_count, total, names-list)
     _prepared_ready = Signal(object)           # (PreparedInstall|None)
     _one_install_done = Signal(object)         # (installed name|None)
+    # Worker asks the UI to show the Set-Prefix overlay; payload carries a
+    # result holder + threading.Event the worker blocks on.
+    _need_prefix = Signal(object)              # (dict with required/file_list/...)
     # Proton-tools installer worker → UI thread.
     _proton_done = Signal(str, bool)           # (title, success)
 
@@ -69,6 +72,7 @@ class MainWindow(QMainWindow):
         self._install_done.connect(self._on_install_done)
         self._prepared_ready.connect(self._on_prepared_ready)
         self._one_install_done.connect(self._on_one_install_done)
+        self._need_prefix.connect(self._on_need_prefix_ui)
         self._proton_busy = False
         self._proton_done.connect(self._on_proton_done)
         self.setWindowTitle("Amethyst Mod Manager")
@@ -1311,6 +1315,40 @@ class MainWindow(QMainWindow):
                      else f"Installing {Path(paths[0]).name}…", "info")
         self._install_next()
 
+    def _make_need_prefix_cb(self):
+        """Return an on_need_prefix(required, file_list, mod_name) callback for the
+        install worker. It runs on the WORKER thread, so it asks the UI thread to
+        show the Set-Prefix overlay (via _need_prefix) and BLOCKS on an Event
+        until the user responds — mirroring the Tk non-main-thread prefix dialog.
+        Returns the prefix str ("" = as-is), or None (cancel)."""
+        import threading
+
+        def _cb(required, file_list, mod_name):
+            holder = {"result": None}
+            ev = threading.Event()
+            self._need_prefix.emit({
+                "required": required, "file_list": file_list,
+                "mod_name": mod_name, "holder": holder, "event": ev})
+            ev.wait()
+            return holder["result"]
+
+        return _cb
+
+    def _on_need_prefix_ui(self, payload):
+        """UI thread: show the Set-Prefix overlay; unblock the worker when done.
+        The progress popup is hidden while the user decides (no work running)."""
+        if self._progress_popup is not None:
+            self._progress_popup.clear()
+        from gui_qt.set_prefix_overlay import SetPrefixOverlay
+
+        def _done(result):
+            payload["holder"]["result"] = result
+            payload["event"].set()
+
+        SetPrefixOverlay.show_over(
+            self, payload["mod_name"], payload["required"],
+            payload["file_list"], _done)
+
     def _install_next(self):
         """Pop the next queued archive: prepare it on a worker; the prepared
         result comes back on _prepared_ready (UI thread)."""
@@ -1333,7 +1371,8 @@ class MainWindow(QMainWindow):
                     path, self._install_game, self._install_profile_dir,
                     log_fn=lambda m: self._op_log.emit(str(m)),
                     progress_fn=lambda d, t, ph=None: self._op_progress.emit(d, t, ph),
-                    prebuilt_meta=meta)
+                    prebuilt_meta=meta,
+                    on_need_prefix=self._make_need_prefix_cb())
             except Exception as exc:
                 self._op_log.emit(f"Prepare error ({Path(path).name}): {exc}")
                 prepared = None
@@ -2009,7 +2048,25 @@ class MainWindow(QMainWindow):
                                     profile=self._gs.profile,
                                     profile_dir=self._gs.profile_dir())
         self._apply_plugin_search()
+        self._refresh_framework_banner()
         print(f"[gui_qt] plugins: {len(rows)} entries")
+
+    def _refresh_framework_banner(self):
+        """Re-detect modding frameworks and update the Plugins-tab banner. Called
+        on game/profile change + after each filemap rebuild (same as Tk)."""
+        if not hasattr(self, "_framework_banner"):
+            return
+        from Utils.framework_detect import detect_frameworks
+        staging = self._gs.staging_dir()
+        filemap_path = (staging.parent / "filemap.txt") if staging is not None else None
+        try:
+            statuses = detect_frameworks(
+                self._gs.game, filemap_path, self._gs.modlist_path(),
+                rf_toggle_enabled=True)
+        except Exception as exc:
+            print(f"[gui_qt] framework detect error: {exc}", flush=True)
+            statuses = []
+        self._framework_banner.set_statuses(statuses)
 
     def _rebuild_conflicts_async(self, rescan_index: bool = False):
         """Build the filemap off-thread; the worker emits _conflicts_ready
@@ -2066,6 +2123,9 @@ class MainWindow(QMainWindow):
         nv = getattr(self, "_nexus_view", None)
         if nv is not None:
             nv.refresh_installed()
+        # The filemap (staged/deployed file set) changed → framework states may
+        # have flipped (e.g. a framework mod toggled, deployed, or removed).
+        self._refresh_framework_banner()
 
     # ----------------------------------------------------------------- right
     def _build_plugins(self) -> QWidget:
@@ -2135,10 +2195,19 @@ class MainWindow(QMainWindow):
                                   "Data", "Downloads"]
         self._plugin_stack = QStackedWidget()
 
-        # Page 0: the real Plugins view.
+        # Page 0: the real Plugins view, with a framework-status banner above the
+        # columns (one colored row per framework the game declares).
         self._plugin_model = PluginModel()
         self._plugin_view = PluginView(self._plugin_model)
-        self._plugin_stack.addWidget(self._plugin_view)
+        from gui_qt.framework_banner import FrameworkBanner
+        self._framework_banner = FrameworkBanner()
+        _plugins_page = QWidget()
+        _pl = QVBoxLayout(_plugins_page)
+        _pl.setContentsMargins(0, 0, 0, 0)
+        _pl.setSpacing(0)
+        _pl.addWidget(self._framework_banner)
+        _pl.addWidget(self._plugin_view, 1)
+        self._plugin_stack.addWidget(_plugins_page)
         # Page 1: the real Mod Files view.
         from gui_qt.mod_files_view import ModFilesView
         self._mod_files_view = ModFilesView()

@@ -179,6 +179,255 @@ def _copy_file_list(file_list, src_root: str, dest_root: Path, log_fn) -> None:
     log_fn(f"Copied {copied} item(s) to staging area.")
 
 
+# ---- file-list staging pipeline (moved from gui/install_mod.py, shared) -------
+# Builds a (src, dst, is_folder) list for a non-FOMOD archive and normalises it to
+# the game's expected layout: strip prefixes → install-prefix → required-top-level
+# check → auto-strip folders → auto-strip to a required file type → (else) ask for
+# a prefix → post-strip. gui/install_mod.py imports these back so Tk + Qt run the
+# SAME staging code (fixes "mod installed with wrong structure" e.g. CET).
+def resolve_direct_files(extract_dir: str) -> list[tuple[str, str, bool]]:
+    """Every file under *extract_dir* as a (src, dst, is_folder) tuple (src == dst,
+    both relative to the root). A top-level ``fomod/`` folder is skipped (installer
+    metadata, not game content)."""
+    result: list[tuple[str, str, bool]] = []
+    root = Path(extract_dir)
+    for entry in root.rglob("*"):
+        if entry.is_file():
+            rel = str(entry.relative_to(root))
+            first = rel.replace("\\", "/").split("/", 1)[0]
+            if first.lower() == "fomod":
+                continue
+            result.append((rel, rel, False))
+    return result
+
+
+def unwrap_single_folder(extract_dir: str) -> str:
+    """If *extract_dir* has exactly one subdirectory and no files, return that
+    subdirectory (archives wrapped in a single ModName/ folder)."""
+    root = Path(extract_dir)
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return extract_dir
+    if len(entries) == 1 and entries[0].is_dir():
+        return str(entries[0])
+    return extract_dir
+
+
+def apply_strip_prefixes_to_file_list(
+    file_list: list[tuple[str, str, bool]],
+    strip_prefixes: set[str],
+) -> list[tuple[str, str, bool]]:
+    """Strip leading path segments matching *strip_prefixes* (case-insensitive),
+    repeatedly, until the first segment is not in the set."""
+    if not strip_prefixes:
+        return file_list
+    strip_lower = {p.lower() for p in strip_prefixes}
+    result: list[tuple[str, str, bool]] = []
+    for src_rel, dst_rel, is_folder in file_list:
+        had_trailing = dst_rel.endswith("/") or dst_rel.endswith("\\")
+        d = dst_rel.replace("\\", "/").strip("/")
+        while "/" in d:
+            first, remainder = d.split("/", 1)
+            if first.lower() in strip_lower:
+                d = remainder
+            else:
+                break
+        if had_trailing and d:
+            d = d + "/"
+        result.append((src_rel, d, is_folder))
+    return result
+
+
+def check_mod_top_level(file_list: list[tuple[str, str, bool]],
+                        required: set[str]) -> bool:
+    """True if at least one file's top-level folder matches a required name."""
+    for _, dst_rel, _ in file_list:
+        top = dst_rel.replace("\\", "/").split("/")[0].lower()
+        if top in required:
+            return True
+    return False
+
+
+def try_auto_strip_top_level(
+    file_list: list[tuple[str, str, bool]],
+    required: set[str],
+    max_strip_depth: int = 20,
+) -> tuple[list[tuple[str, str, bool]], bool]:
+    """Strip leading path segments until at least one file's top-level folder is in
+    *required*. Returns (new_list, True) on success, else (original, False)."""
+    required_lower = {r.lower() for r in required}
+    if check_mod_top_level(file_list, required_lower):
+        return (file_list, True)
+    for strip_depth in range(1, max_strip_depth + 1):
+        new_list: list[tuple[str, str, bool]] = []
+        has_required = False
+        for src_rel, dst_rel, is_folder in file_list:
+            parts = dst_rel.replace("\\", "/").strip("/").split("/")
+            if len(parts) <= strip_depth:
+                continue
+            new_dst = "/".join(parts[strip_depth:])
+            top = parts[strip_depth].lower()
+            if top in required_lower:
+                has_required = True
+            new_list.append((src_rel, new_dst, is_folder))
+        if has_required and new_list:
+            return (new_list, True)
+    return (file_list, False)
+
+
+def check_mod_top_level_file_types(
+    file_list: list[tuple[str, str, bool]],
+    required_exts: set[str],
+) -> bool:
+    """True if at least one top-level file (no sub-folder) has a required ext."""
+    exts_lower = {e.lower() for e in required_exts}
+    for _, dst_rel, is_folder in file_list:
+        if is_folder:
+            continue
+        dst_rel = dst_rel.replace("\\", "/").strip("/")
+        if "/" not in dst_rel:
+            ext = Path(dst_rel).suffix.lower()
+            if ext in exts_lower:
+                return True
+    return False
+
+
+def try_auto_strip_for_file_types(
+    file_list: list[tuple[str, str, bool]],
+    required_exts: set[str],
+    max_strip_depth: int = 20,
+) -> tuple[list[tuple[str, str, bool]], bool]:
+    """Strip leading segments until a top-level file has a required ext. Returns
+    (new_list, True) on success, else (original, False)."""
+    if check_mod_top_level_file_types(file_list, required_exts):
+        return (file_list, True)
+    exts_lower = {e.lower() for e in required_exts}
+    for strip_depth in range(1, max_strip_depth + 1):
+        new_list: list[tuple[str, str, bool]] = []
+        has_required = False
+        for src_rel, dst_rel, is_folder in file_list:
+            parts = dst_rel.replace("\\", "/").strip("/").split("/")
+            if len(parts) <= strip_depth:
+                continue
+            new_dst = "/".join(parts[strip_depth:])
+            if not is_folder and len(parts) == strip_depth + 1:
+                ext = Path(new_dst).suffix.lower()
+                if ext in exts_lower:
+                    has_required = True
+            new_list.append((src_rel, new_dst, is_folder))
+        if has_required and new_list:
+            return (new_list, True)
+    return (file_list, False)
+
+
+def stage_file_list(game, extract_dir: str, *, is_root_install: bool = False,
+                    mod_name: str = "", on_need_prefix=None,
+                    log_fn: LogFn = lambda _m: None
+                    ) -> list[tuple[str, str, bool]] | None:
+    """Build + normalise the (src, dst, is_folder) list for a non-FOMOD mod under
+    *extract_dir*, applying the game's structure rules EXACTLY like the Tk
+    installer (gui/install_mod.py lines ~2454–2570):
+
+      strip_prefixes → mod_install_prefix → required-top-level check →
+      auto-strip folders → auto-strip to a required file type →
+      (unrecognised, not install-as-is) on_need_prefix() → post-strip.
+
+    *on_need_prefix(required, file_list, mod_name) -> str | None* supplies the
+    prefix interactively (the toolkit shows a dialog); returning None cancels the
+    install (this function returns None). With no callback, an unrecognised mod is
+    installed as-is. Returns the final file_list (or None if cancelled)."""
+    file_list = resolve_direct_files(extract_dir)
+
+    strip_prefixes = getattr(game, "mod_folder_strip_prefixes", set())
+    if strip_prefixes and not is_root_install:
+        file_list = apply_strip_prefixes_to_file_list(file_list, strip_prefixes)
+
+    required = getattr(game, "mod_required_top_level_folders", set())
+    required_lower = {r.lower() for r in required}
+
+    install_prefix = getattr(game, "mod_install_prefix", "")
+    if install_prefix and not is_root_install:
+        install_prefix = install_prefix.strip().strip("/").replace("\\", "/")
+        prefix_parts = install_prefix.lower().split("/")
+        new_file_list = []
+        for s, d, f in file_list:
+            d_parts = d.replace("\\", "/").split("/")
+            d_parts_lower = [p.lower() for p in d_parts]
+            if d_parts_lower[0] in required_lower:
+                new_file_list.append((s, d, f))
+                continue
+            match_len = 0
+            for i in range(len(prefix_parts), 0, -1):
+                if d_parts_lower[:i] == prefix_parts[-i:]:
+                    match_len = i
+                    break
+            missing = "/".join(install_prefix.split("/")[:len(prefix_parts) - match_len])
+            if missing:
+                new_file_list.append((s, f"{missing}/{d}", f))
+            else:
+                new_file_list.append((s, d, f))
+        file_list = new_file_list
+        log_fn(f"Auto-prefixed mod files under '{install_prefix}/' (where needed).")
+
+    required_file_types = getattr(game, "mod_required_file_types", set())
+    auto_strip = getattr(game, "mod_auto_strip_until_required", False)
+    install_as_is = getattr(game, "mod_install_as_is_if_no_match", False)
+    did_auto_strip = False
+
+    if required and not check_mod_top_level(file_list, required):
+        if auto_strip:
+            file_list, did_auto_strip = try_auto_strip_top_level(file_list, required)
+            if did_auto_strip:
+                log_fn("Auto-stripped top-level folder(s) so mod matches expected structure.")
+        if not did_auto_strip and required_file_types:
+            if check_mod_top_level_file_types(file_list, required_file_types):
+                did_auto_strip = True
+                log_fn("Mod contains recognised top-level file type(s) — skipping prefix check.")
+            elif auto_strip:
+                file_list, did_auto_strip = try_auto_strip_for_file_types(
+                    file_list, required_file_types)
+                if did_auto_strip:
+                    log_fn("Auto-stripped top-level folder(s) to expose recognised file type(s).")
+        if not did_auto_strip:
+            if install_as_is:
+                log_fn("Mod structure unrecognised — installing as-is (no prefix applied).")
+            else:
+                prefix = on_need_prefix(required, file_list, mod_name) if on_need_prefix else None
+                if prefix is None and on_need_prefix is not None:
+                    log_fn("Install cancelled — mod structure not mapped.")
+                    return None
+                if prefix:
+                    prefix = prefix.strip().strip("/").replace("\\", "/")
+                    file_list = [(s, f"{prefix}/{d}", f) for s, d, f in file_list]
+                    log_fn(f"Remapped mod files under '{prefix}/'.")
+    elif (not required and required_file_types
+          and not check_mod_top_level_file_types(file_list, required_file_types)):
+        if auto_strip:
+            file_list, did_auto_strip = try_auto_strip_for_file_types(
+                file_list, required_file_types)
+            if did_auto_strip:
+                log_fn("Auto-stripped top-level folder(s) to expose recognised file type(s).")
+        if not did_auto_strip:
+            if install_as_is:
+                log_fn("Mod structure unrecognised — installing as-is (no prefix applied).")
+            else:
+                prefix = on_need_prefix(set(), file_list, mod_name) if on_need_prefix else None
+                if prefix is None and on_need_prefix is not None:
+                    log_fn("Install cancelled — mod structure not mapped.")
+                    return None
+                if prefix:
+                    prefix = prefix.strip().strip("/").replace("\\", "/")
+                    file_list = [(s, f"{prefix}/{d}", f) for s, d, f in file_list]
+                    log_fn(f"Remapped mod files under '{prefix}/'.")
+
+    post_strip_prefixes = getattr(game, "mod_folder_strip_prefixes_post", set())
+    if post_strip_prefixes and not is_root_install:
+        file_list = apply_strip_prefixes_to_file_list(file_list, post_strip_prefixes)
+
+    return file_list
+
+
 # ---------------------------------------------------------------- temp location
 def _uncompressed_size(path: str) -> int:
     """Best-effort uncompressed size in bytes. ZIP reads central-directory sizes;
@@ -301,15 +550,17 @@ def _extract_archive(archive_path: str, dest_dir: str, log_fn: LogFn) -> bool:
 # ---------------------------------------------------------------- root detection
 def _single_root_unwrap(extract_dir: Path) -> Path:
     """If the archive extracted into a single wrapper folder (and nothing else),
-    descend into it — the common 'archive contains one top folder' case."""
-    cur = extract_dir
-    for _ in range(8):
-        children = [c for c in cur.iterdir() if c.name not in (".", "..")]
-        if len(children) == 1 and children[0].is_dir():
-            cur = children[0]
-        else:
-            break
-    return cur
+    descend ONE level — matches Tk's `unwrap_single_folder`. Must NOT loop down a
+    chain: e.g. CET ships everything under `bin/x64/`, and descending the whole
+    `bin`→`x64` chain would strip the required `bin/` structure (then the mod
+    installs to the wrong place / triggers the prefix dialog)."""
+    try:
+        children = [c for c in extract_dir.iterdir() if c.name not in (".", "..")]
+    except OSError:
+        return extract_dir
+    if len(children) == 1 and children[0].is_dir():
+        return children[0]
+    return extract_dir
 
 
 def _looks_like_fomod(root: Path) -> Path | None:
@@ -328,7 +579,8 @@ class PreparedInstall:
     caller should run the wizard; otherwise it's a plain install."""
     def __init__(self, archive: Path, game, profile_dir: Path, mod_name: str,
                  extract_dir: Path, src_root: Path,
-                 fomod_base: Path | None, fomod_config, prebuilt_meta=None):
+                 fomod_base: Path | None, fomod_config, prebuilt_meta=None,
+                 on_need_prefix=None):
         self.archive = archive
         self.game = game
         self.profile_dir = profile_dir
@@ -341,6 +593,11 @@ class PreparedInstall:
         # which knows the real mod_id/file_id) — written verbatim instead of
         # parsing the (sometimes wrong) archive filename.
         self.prebuilt_meta = prebuilt_meta
+        # Optional callback on_need_prefix(required, file_list, mod_name) -> str|None
+        # invoked when a non-FOMOD mod's structure doesn't match the game and
+        # auto-strip fails — the toolkit shows the Set-Prefix dialog. None = the
+        # neutral default (install as-is).
+        self.on_need_prefix = on_need_prefix
 
     def is_fomod(self) -> bool:
         return self.fomod_base is not None and self.fomod_config is not None
@@ -351,8 +608,8 @@ class PreparedInstall:
 
 def prepare_archive(archive_path: str, game, profile_dir: Path, *,
                     log_fn: LogFn, progress_fn: Optional[ProgressFn] = None,
-                    preferred_name: str = "", prebuilt_meta=None
-                    ) -> PreparedInstall | None:
+                    preferred_name: str = "", prebuilt_meta=None,
+                    on_need_prefix=None) -> PreparedInstall | None:
     """Extract *archive_path* to a kept temp dir and detect FOMOD. The caller
     either runs the wizard (is_fomod) then `finish_install(prepared, selections)`,
     or just calls `finish_install(prepared, None)` for a plain/default install.
@@ -394,7 +651,8 @@ def prepare_archive(archive_path: str, game, profile_dir: Path, *,
             fomod_base = None
     return PreparedInstall(archive, game, profile_dir, mod_name,
                            extract_dir, src_root, fomod_base, config,
-                           prebuilt_meta=prebuilt_meta)
+                           prebuilt_meta=prebuilt_meta,
+                           on_need_prefix=on_need_prefix)
 
 
 def finish_install(prepared: "PreparedInstall", fomod_selections, *,
@@ -418,6 +676,7 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
         log_fn(f"Replacing existing mod folder: {p.mod_name}")
         shutil.rmtree(dest_root, ignore_errors=True)
 
+    cancelled = False
     try:
         if p.is_fomod():
             ok = _install_fomod(p.fomod_base, p.fomod_config, dest_root,
@@ -426,9 +685,32 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
                 log_fn("FOMOD resolve failed — installing all files verbatim.")
                 _copy_tree(p.src_root, dest_root, log_fn, _pp)
         else:
-            _copy_tree(p.src_root, dest_root, log_fn, _pp)
+            # Non-FOMOD: build + normalise the file list to the game's expected
+            # structure (strip/required-top-level/auto-strip/prefix), EXACTLY like
+            # the Tk installer, then copy. This is what makes e.g. CET land under
+            # bin/x64 instead of installing verbatim. is_root_install mirrors Tk:
+            # it's THIS mod's root_folder meta flag (default False), NOT a game flag.
+            is_root = bool(getattr(p.prebuilt_meta, "root_folder", False)
+                           if p.prebuilt_meta is not None else False)
+            # Stage from the RAW extract dir (like Tk's direct-install path uses
+            # `extract_dir`), NOT the single-folder-unwrapped src_root: e.g. CET
+            # ships everything under bin/x64/, and staging from an unwrapped root
+            # would have stripped the required bin/ folder.
+            stage_root = str(p.extract_dir)
+            file_list = stage_file_list(
+                p.game, stage_root, is_root_install=is_root,
+                mod_name=p.mod_name, on_need_prefix=p.on_need_prefix, log_fn=log_fn)
+            if file_list is None:
+                cancelled = True
+            else:
+                dest_root.mkdir(parents=True, exist_ok=True)
+                _copy_file_list(file_list, stage_root, dest_root, log_fn)
     finally:
         p.cleanup()
+
+    if cancelled:
+        shutil.rmtree(dest_root, ignore_errors=True)
+        return None
 
     if not dest_root.is_dir() or not any(dest_root.iterdir()):
         log_fn(f"Install failed: nothing was staged for '{p.mod_name}'.")

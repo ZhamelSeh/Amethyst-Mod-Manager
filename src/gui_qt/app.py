@@ -1366,6 +1366,53 @@ class MainWindow(QMainWindow):
             self._tabs.close_tab("missing_reqs")
         self._reload_modlist()
 
+    # ---- Show Conflicts (full detachable tab) ------------------------------
+    def _open_show_conflicts_tab(self, mod_name: str):
+        """Open the conflict-detail view for *mod_name* as a full tab. The
+        file-level data is computed on a worker thread inside the view (from
+        filemap.txt + modindex.bin + bsa_index.bin — the app's ConflictData is
+        only mod-level)."""
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._notify("No configured game selected.", "warning")
+            return
+        staging = self._gs.staging_dir()
+        if staging is None:
+            self._notify("No mod staging folder for this profile.", "warning")
+            return
+        cd = getattr(self, "_conflict_data", None)
+        beaten = set()
+        if cd is not None:
+            beaten = (set(cd.overrides.get(mod_name, set()))
+                      | set(cd.bsa_overrides.get(mod_name, set())))
+        strip_prefixes = (getattr(game, "mod_folder_strip_prefixes", set())
+                          | getattr(game, "mod_folder_strip_prefixes_post", set()))
+        plugin_order = [r.name for r in getattr(self._plugin_model, "_rows", [])
+                        if getattr(r, "enabled", False)]
+        plugin_exts = frozenset(x.lower() for x in
+                                (getattr(game, "plugin_extensions", []) or ()))
+        ctx = {
+            "staging_root": staging,
+            "profile_dir": self._gs.profile_dir(),
+            "filemap_path": staging.parent / "filemap.txt",
+            "modindex_path": staging.parent / "modindex.bin",
+            "bsa_index_path": staging.parent / "bsa_index.bin",
+            "strip_prefixes": strip_prefixes,
+            "beaten_mods": beaten,
+            "archive_exts": getattr(game, "archive_extensions", frozenset()),
+            "plugin_order": plugin_order,
+            "plugin_exts": plugin_exts,
+        }
+        # Reuse one tab: rebuild it for the new mod if already open.
+        if self._tabs.has_key("show_conflicts"):
+            self._tabs.close_tab("show_conflicts")
+        from gui_qt.show_conflicts_view import ShowConflictsView
+        view = ShowConflictsView(
+            mod_name, ctx,
+            on_close=lambda: self._tabs.close_tab("show_conflicts"),
+            log_fn=self._append_log)
+        self._tabs.open_tab(view, f"Conflicts: {mod_name}", key="show_conflicts")
+
     # ---- install a Nexus mod by id (used by Missing Requirements cards) ----
     # Mirrors the Nexus browser's install flow: premium check → fetch files →
     # pick MAIN (or file chooser if several) → download → hand to _install_paths.
@@ -2854,6 +2901,8 @@ class MainWindow(QMainWindow):
         self._modlist_view.on_flag_clicked = self._on_modlist_flag_clicked
         # Missing Requirements: right-click item + clicking the ⚠ flag icon.
         self._modlist_view.on_missing_reqs = self._open_missing_reqs_tab
+        # Show Conflicts: right-click item.
+        self._modlist_view.on_show_conflicts = self._open_show_conflicts_tab
         # Enabling the Size column scans mod folder sizes on demand (Tk parity:
         # only walk the disk when Size is actually shown).
         self._modlist_view.on_sizes_requested = self._apply_modlist_sizes

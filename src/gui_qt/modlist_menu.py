@@ -179,7 +179,8 @@ def _build_mod_menu(view, model, row, entry, sel_mods, multi, act, stub, divider
     divider()
     # Group 5: info / conflicts / notes
     stub("Add note")
-    stub("Show Conflicts")
+    act("Show Conflicts", lambda: _show_conflicts(view, entry.name),
+        enabled=_has_conflict(model, row))
     divider()
     # Group 6: remove
     act("Remove mod", lambda: _remove(view, model, row), enabled=not locked)
@@ -235,6 +236,23 @@ def _missing_reqs(view, names):
     cb = getattr(view, "on_missing_reqs", None)
     if cb is not None and names:
         cb(names[0] if len(names) == 1 else set(names))
+
+
+def _has_conflict(model, row) -> bool:
+    """True if the row has a loose OR BSA conflict (so Show Conflicts is useful)."""
+    from gui_qt.modlist_model import COL_CONFLICTS, ConflictRole, BsaConflictRole
+    idx = model.index(row, COL_CONFLICTS)
+    loose = model.data(idx, ConflictRole) or 0
+    bsa = model.data(idx, BsaConflictRole) or 0
+    return bool(loose) or bool(bsa)
+
+
+def _show_conflicts(view, name):
+    """Open the Show Conflicts tab for *name* (window installs the callback in
+    _reload_modlist). No-op if it isn't wired (e.g. headless)."""
+    cb = getattr(view, "on_show_conflicts", None)
+    if cb is not None and name:
+        cb(name)
 
 
 def _mod_nexus_url(view, name: str) -> str:

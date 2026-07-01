@@ -233,6 +233,7 @@ def run_collection_install(
         skipped_mods: "list | None" = None,
         skip_existing: bool = False,
         with_bundled: bool = True,
+        update_context: "dict | None" = None,
         callbacks: "CollectionInstallCallbacks | None" = None,
         control: "CollectionInstallControl | None" = None) -> None:
     """Download then install every mod in *mods* in collection-defined order.
@@ -240,6 +241,10 @@ def run_collection_install(
     Faithful port of ``CollectionsDialog._run_install`` — see module docstring.
     ``overwrite_existing``: None=new-profile install (the wired v1 path); a bool
     selects the append path (ported but not yet exercised by the Qt caller).
+    ``update_context``: when set (a collection UPDATE — continue semantics, so
+    ``overwrite_existing`` stays None), the final modlist write uses the
+    order-preserving ``_reconcile_update_modlist`` (snapshot + schema-neighbour
+    insertion) instead of the new-profile reconcile.
     """
     cb = callbacks or CollectionInstallCallbacks()
     ctl = control or CollectionInstallControl()
@@ -903,8 +908,14 @@ def run_collection_install(
         except Exception as exc:
             log(f"Collection install: error processing bundled assets: {exc}")
 
-    # Step 3: write modlist.txt (new-profile path)
-    if overwrite_existing is None and not _col_pause.is_set():
+    # Step 3: write modlist.txt.
+    #   * update_context set → order-preserving update reconcile (below, after all
+    #     mods install) — skip the fresh new-profile write here.
+    #   * new-profile path → fresh write.
+    #   * append path → append reconcile.
+    if update_context is not None and not _col_pause.is_set():
+        pass  # handled by _reconcile_update_modlist after Step 4
+    elif overwrite_existing is None and not _col_pause.is_set():
         _write_new_profile_modlist(profile_dir, modlist_path, install_order, log)
     elif _is_append_run and not _col_pause.is_set():
         install_order.sort(key=lambda x: x[0])
@@ -925,9 +936,19 @@ def run_collection_install(
             game, profile_dir, plugins_path, collection_schema,
             overwrite_existing, _is_append_run, log, _set_status)
 
-    # Final reconciliation (new-profile path)
-    if (install_order and modlist_path.is_file() and not _col_pause.is_set()
+    # Final reconciliation.
+    if (update_context is not None and install_order and modlist_path.is_file()
+            and not _col_pause.is_set()):
+        # UPDATE path — preserve the user's existing order + separators, insert
+        # newly-installed mods relative to their schema neighbours.
+        try:
+            _reconcile_update_modlist(modlist_path, install_order,
+                                      update_context, log)
+        except Exception as exc:
+            log(f"Collection update: reconcile modlist failed: {exc}")
+    elif (install_order and modlist_path.is_file() and not _col_pause.is_set()
             and overwrite_existing is None):
+        # New-profile path.
         try:
             _folder_to_key: dict[str, int] = {folder: key for key, folder in install_order}
             _existing = read_modlist(modlist_path)
@@ -1599,3 +1620,90 @@ def _append_reconcile_modlist(modlist_path, install_order, pre_existing, log):
     write_modlist(modlist_path, new_entries + kept)
     log(f"Collection append: placed {len(new_entries)} new mod(s), "
         f"preserved {len(kept)} existing entrie(s)")
+
+
+def _reconcile_update_modlist(modlist_path, install_order, update_context, log):
+    """Rebuild modlist.txt after a collection UPDATE install.
+
+    Preserves separators and the user's existing load order for mods that are
+    still in the new revision. New mods (installed during this run that weren't
+    in the pre-update snapshot) are inserted relative to their schema-defined
+    neighbours; mods with no schema position go at the top of the list.
+
+    ``install_order`` is the sorted list of ``(schema_pos, folder_name)`` pairs
+    the installer produced. ``update_context["snapshot"]`` is the pre-removal
+    modlist (order minus the mods removed during the update). Verbatim port of
+    ``CollectionsDialog._reconcile_update_modlist``."""
+    snapshot: "list[ModEntry]" = list(update_context.get("snapshot") or [])
+
+    # Existing snapshot folder names (non-separator) — the mods staying put.
+    snapshot_folder_lower: set[str] = {
+        e.name.lower() for e in snapshot if not e.is_separator
+    }
+
+    # Partition install_order into "already in snapshot" (no-op, order preserved)
+    # vs "new" (need insertion).
+    new_folders: "list[tuple[int, str]]" = [
+        (pos, folder) for pos, folder in install_order
+        if folder.lower() not in snapshot_folder_lower
+    ]
+
+    # Split new folders by whether they have a defined schema position.
+    unplaced: "list[str]" = []
+    placeable: "list[tuple[int, str]]" = []
+    for pos, folder in new_folders:
+        if pos < 0:
+            unplaced.append(folder)
+        else:
+            placeable.append((pos, folder))
+    placeable.sort(key=lambda x: x[0])
+
+    result: list = list(snapshot)  # copy
+    sorted_io = sorted(install_order, key=lambda x: x[0])
+
+    def _find_result_index(folder_lower: str) -> int:
+        for i, e in enumerate(result):
+            if not e.is_separator and e.name.lower() == folder_lower:
+                return i
+        return -1
+
+    for pos, folder in placeable:
+        # Right neighbour: first folder in sorted_io with pos > this pos that is
+        # currently present in result (and not this same folder).
+        insert_idx = None
+        for npos, nfolder in sorted_io:
+            if npos <= pos or nfolder == folder:
+                continue
+            idx = _find_result_index(nfolder.lower())
+            if idx >= 0:
+                insert_idx = idx
+                break
+        if insert_idx is None:
+            # Left neighbour: last folder with pos < this pos in result.
+            left_candidates = [
+                (npos, nfolder) for npos, nfolder in sorted_io
+                if npos < pos and nfolder != folder
+            ]
+            for npos, nfolder in sorted(left_candidates, key=lambda x: -x[0]):
+                idx = _find_result_index(nfolder.lower())
+                if idx >= 0:
+                    insert_idx = idx + 1
+                    break
+        if insert_idx is None:
+            insert_idx = 0
+        result.insert(insert_idx, ModEntry(name=folder, enabled=True, locked=False))
+
+    # Unplaced (no schema position) go at the very top.
+    for folder in reversed(unplaced):
+        result.insert(0, ModEntry(name=folder, enabled=True, locked=False))
+
+    # Force-enable every mod entry we're writing — update never leaves a mod
+    # disabled. Separators keep their locked/enabled state.
+    for e in result:
+        if not e.is_separator:
+            e.enabled = True
+
+    write_modlist(modlist_path, result)
+    log(f"Collection update: reconciled modlist.txt "
+        f"({len(snapshot)} preserved, {len(placeable)} inserted, "
+        f"{len(unplaced)} unplaced at top)")

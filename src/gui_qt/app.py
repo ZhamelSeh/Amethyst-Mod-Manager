@@ -202,6 +202,7 @@ class MainWindow(QMainWindow):
         self._col_install_running = False
         self._col_install_overlay = None
         self._col_install_control = None
+        self._col_install_slug = ""
         self._col_status.connect(self._on_col_status)
         self._col_progress.connect(self._on_col_progress)
         self._col_agg.connect(self._on_col_agg)
@@ -1210,13 +1211,14 @@ class MainWindow(QMainWindow):
             api, collection, game, log_fn=self._append_log,
             revision_number=revision_number)
         view.set_install_handler(
-            lambda chosen, skipped: self._install_collection(collection, view,
-                                                             chosen, skipped))
+            lambda chosen, skipped, intent="install": self._install_collection(
+                collection, view, chosen, skipped, intent))
         title = f"Collection: {collection.name or collection.slug}"
         self._tabs.open_tab(view, title, key=key)
 
     # ---- Collection install (automatic / premium) ------------------------
-    def _install_collection(self, collection, detail_view, chosen, skipped):
+    def _install_collection(self, collection, detail_view, chosen, skipped,
+                            intent="install"):
         """Start an automatic (premium) collection install: gate on premium,
         create a new profile, then run the neutral orchestrator on a daemon
         thread with every callback marshaled through a Signal (UI-thread slots
@@ -1269,7 +1271,7 @@ class MainWindow(QMainWindow):
                              "slug": slug, "dl_path": dl_path,
                              "revision": revision_number, "mods": mods,
                              "skipped": set(skipped), "game": game, "api": api,
-                             "recommend_new": recommend_new})
+                             "recommend_new": recommend_new, "intent": intent})
 
         threading.Thread(target=_premium_worker, daemon=True,
                          name="col-premium").start()
@@ -1312,6 +1314,199 @@ class MainWindow(QMainWindow):
             force_new = bool(info.get("recommend_new"))
             ModeOverlay.show_over(self, profiles, _done, force_new_profile=force_new)
 
+    def _resume_collection_install(self, info):
+        """UI thread: RESUME a paused install — clear the paused flag + registry,
+        then continue into the profile that already claims this collection.
+        Already-installed mods skip by file_id (Tk parity)."""
+        game = info["game"]; slug = info["slug"]
+        from gui.game_helpers import find_profile_with_collection_slug
+        from Utils.profile_state import write_collection_install_paused
+        try:
+            pname = find_profile_with_collection_slug(game.name, slug)
+        except Exception:
+            pname = None
+        if not pname:
+            self._col_install_running = False
+            self._notify("Could not find the paused profile.", "error")
+            return
+        profile_dir = game.get_profile_root() / "profiles" / pname
+        try:
+            write_collection_install_paused(profile_dir, False)
+        except Exception:
+            pass
+        try:
+            from gui_qt.collection_detail_view import _PAUSED_COLLECTIONS
+            _PAUSED_COLLECTIONS.discard(slug)
+        except Exception:
+            pass
+        self._refresh_open_collection_buttons()
+        info["mode_result"] = ("continue", pname, False, False)
+        self._start_collection_pipeline(info)
+
+    def _run_collection_update(self, info):
+        """UI thread: UPDATE an installed collection to the viewed revision.
+        Port of Tk _on_update_collection + _apply_collection_update: compute the
+        diff, confirm via UpdateOverlay, remove stale/bundled/patched mods, stash
+        an order-preserving update_context, then continue-install."""
+        game = info["game"]; slug = info["slug"]; mods = info["mods"]
+        from gui.game_helpers import find_profile_with_collection_slug
+        try:
+            pname = find_profile_with_collection_slug(game.name, slug)
+        except Exception:
+            pname = None
+        if not pname:
+            self._col_install_running = False
+            self._notify("Could not find the installed collection profile.", "error")
+            return
+        profile_dir = game.get_profile_root() / "profiles" / pname
+
+        # Guard: the collection's profile must be the active one (cross-profile
+        # removal is out of scope, matching Tk).
+        active = getattr(game, "_active_profile_dir", None)
+        if active is None or Path(active).resolve() != profile_dir.resolve():
+            self._col_install_running = False
+            self._notify(f"Switch to profile '{pname}' first, then Update.",
+                         "warning")
+            return
+
+        # Compute the diff (old cached manifest vs the new mod list).
+        import json as _json
+        from Utils.modlist import read_modlist
+        from Utils.collection_diff import diff_collection
+        from Utils.profile_state import read_collection_revision
+        old_manifest = {}
+        try:
+            mf = profile_dir / "collection.json"
+            if mf.is_file():
+                old_manifest = _json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            old_manifest = {}
+        modlist_path = profile_dir / "modlist.txt"
+        try:
+            installed_names_lower = {
+                e.name.lower() for e in read_modlist(modlist_path)
+                if not e.is_separator} if modlist_path.is_file() else set()
+        except Exception:
+            installed_names_lower = set()
+        try:
+            staging_path = game.get_effective_mod_staging_path()
+        except Exception:
+            staging_path = None
+        try:
+            diff = diff_collection(
+                old_manifest=old_manifest, new_mods=mods,
+                staging_path=Path(staging_path) if staging_path else Path("."),
+                installed_names_lower=installed_names_lower,
+                collection_slug=slug)
+        except Exception as exc:
+            self._col_install_running = False
+            self._notify(f"Could not compute update diff: {exc}", "error")
+            return
+
+        # Human labels for the update/add buckets via the new mod list.
+        fid_to_name = {getattr(m, "file_id", 0): (getattr(m, "mod_name", "")
+                       or f"file {getattr(m, 'file_id', 0)}") for m in mods}
+        to_update_labels = [
+            f"{old} → {fid_to_name.get(fid, fid)}"
+            for old, fid in zip(diff.to_update_old, diff.to_update_new_fids)]
+        to_add_labels = [fid_to_name.get(fid, str(fid))
+                         for fid in diff.to_install_fids]
+
+        from_rev = read_collection_revision(profile_dir)
+        to_rev = info["revision"]
+
+        def _done(apply_it):
+            if not apply_it:
+                self._col_install_running = False
+                self._notify("Collection update cancelled.", "info")
+                return
+            self._apply_collection_update(info, profile_dir, pname, slug, diff)
+
+        from gui_qt.collection_update_overlay import UpdateOverlay
+        UpdateOverlay.show_over(
+            self, profile_name=pname, from_rev=from_rev, to_rev=to_rev,
+            to_remove=list(diff.to_remove), to_update=to_update_labels,
+            to_add=to_add_labels, orphans=list(diff.orphans), on_done=_done)
+
+    def _apply_collection_update(self, info, profile_dir, pname, slug, diff):
+        """UI thread: user confirmed — snapshot the modlist, remove stale +
+        bundled/patched mods, build update_context, then continue-install."""
+        import configparser
+        from Utils.modlist import read_modlist
+        from Utils import mod_remove
+        game = info["game"]
+        try:
+            snapshot = list(read_modlist(profile_dir / "modlist.txt")) \
+                if (profile_dir / "modlist.txt").is_file() else []
+        except Exception:
+            snapshot = []
+
+        # Bundled/patched mods for THIS collection are force-reinstalled (their
+        # contents/patches may have changed) — port of Tk 1974-2001.
+        slug_lower = (slug or "").strip().lower()
+        bundled_or_patched: set[str] = set()
+        try:
+            staging_path = Path(game.get_effective_mod_staging_path())
+        except Exception:
+            staging_path = None
+        if staging_path is not None and staging_path.is_dir() and slug_lower:
+            for mod_dir in staging_path.iterdir():
+                if not mod_dir.is_dir():
+                    continue
+                meta = mod_dir / "meta.ini"
+                if not meta.is_file():
+                    continue
+                cp = configparser.ConfigParser()
+                try:
+                    cp.read(meta, encoding="utf-8")
+                except Exception:
+                    continue
+                if not cp.has_section("General"):
+                    continue
+                if (cp["General"].get("fromCollection") or "").strip().lower() != slug_lower:
+                    continue
+                if (cp["General"].getboolean("fromCollectionBundled", fallback=False)
+                        or cp["General"].getboolean("fromCollectionPatched", fallback=False)):
+                    bundled_or_patched.add(mod_dir.name.lower())
+
+        all_remove_lower = {n.lower() for n in diff.removals} | bundled_or_patched
+        removed_lower: set[str] = set()
+        if all_remove_lower:
+            to_remove_names = [e.name for e in snapshot
+                               if not e.is_separator
+                               and e.name.lower() in all_remove_lower]
+            if to_remove_names:
+                try:
+                    mod_remove.remove_mods(
+                        game, profile_dir, to_remove_names,
+                        log_fn=lambda m: self._append_log(str(m)))
+                    removed_lower = {n.lower() for n in to_remove_names}
+                except Exception as exc:
+                    self._col_install_running = False
+                    self._notify(f"Update failed during removal: {exc}", "error")
+                    return
+
+        filtered_snapshot = [
+            e for e in snapshot
+            if e.is_separator or e.name.lower() not in removed_lower]
+
+        info["update_context"] = {"snapshot": filtered_snapshot, "schema_order": {}}
+        info["mode_result"] = ("continue", pname, False, False)
+        self._start_collection_pipeline(info)
+
+    def _refresh_open_collection_buttons(self):
+        """Refresh the Install/Update/Resume button on any open collection detail
+        tab (after a pause/resume state change)."""
+        try:
+            from gui_qt.collection_detail_view import CollectionDetailView
+            for view in self.findChildren(CollectionDetailView):
+                try:
+                    view._update_install_btn_state()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _start_collection_pipeline(self, info):
         """UI thread: premium confirmed — create the profile, open the overlay,
         and launch the orchestrator on a daemon thread."""
@@ -1320,6 +1515,8 @@ class MainWindow(QMainWindow):
         slug = info["slug"]; domain = info["domain"]
         revision_number = info["revision"]; mods = info["mods"]
         skipped = info["skipped"]; dl_path = info["dl_path"]
+        self._col_install_slug = slug
+        update_context = info.get("update_context")
 
         # Resolve the install mode chosen in the mode overlay (default: new).
         mode_result = info.get("mode_result") or ("new", None, False, False)
@@ -1407,7 +1604,7 @@ class MainWindow(QMainWindow):
                     old_profile_dir=old_profile_dir, collection_slug=slug,
                     revision_number=revision_number, skipped_fids=skipped,
                     skipped_mods=skipped_mods, overwrite_existing=overwrite_existing,
-                    skip_existing=skip_existing_arg,
+                    skip_existing=skip_existing_arg, update_context=update_context,
                     callbacks=callbacks, control=control)
             except Exception as exc:
                 import traceback
@@ -1609,9 +1806,16 @@ class MainWindow(QMainWindow):
                 self._notify("Automatic collection install requires Nexus Premium "
                              "(manual install coming later).", "warning")
                 return
-            # Premium confirmed — ask the user how to install (New/Append/Continue)
-            # BEFORE creating any profile.
-            self._choose_collection_mode(payload)
+            # Premium confirmed — route by intent.
+            intent = payload.get("intent", "install")
+            if intent == "update":
+                self._run_collection_update(payload)
+            elif intent == "resume":
+                self._resume_collection_install(payload)
+            else:
+                # Ask the user how to install (New/Append/Continue) BEFORE
+                # creating any profile.
+                self._choose_collection_mode(payload)
             return
 
         # Terminal states.
@@ -1662,6 +1866,16 @@ class MainWindow(QMainWindow):
                 ov.finish(f"Paused — {installed} installed.")
                 QTimer.singleShot(1500, self._dismiss_col_overlay)
             self._select_installed_collection_profile(profile_name)
+            # Register the paused slug + refresh any open detail view so its
+            # button flips to "Resume" (Tk parity — _PAUSED_INSTALLS).
+            slug = getattr(self, "_col_install_slug", "") or ""
+            if slug:
+                try:
+                    from gui_qt.collection_detail_view import _PAUSED_COLLECTIONS
+                    _PAUSED_COLLECTIONS.add(slug)
+                except Exception:
+                    pass
+            self._refresh_open_collection_buttons()
             self._notify(f"Install paused — {installed} mod(s) installed.", "info")
             return
 

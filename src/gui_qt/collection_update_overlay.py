@@ -1,0 +1,193 @@
+"""Collection update-confirmation overlay (Qt port of the update half of
+gui/collection_install_dialogs.py :: CollectionUpdateDialog).
+
+Shown when the user clicks "Update Collection": presents the reconciliation diff
+between the installed revision and the revision being viewed (mods to remove /
+update / add / orphan) and asks the user to confirm before the install runs.
+
+Borderless in-window overlay (NOT a top-level QDialog — gaming-mode opens
+top-levels behind the app). All widgets are built ONCE with real parents (no
+per-item unparented widgets that could flash as blank top-level windows — see the
+collection install-overlay fix).
+
+``on_done(True)`` on Apply Update, ``on_done(False)`` on Cancel / Escape.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
+    QScrollArea,
+)
+
+from gui_qt.theme_qt import active_palette, _c
+
+
+class UpdateOverlay(QWidget):
+    CARD_W = 560
+    CARD_H = 460
+
+    def __init__(self, host: QWidget, *, profile_name: str,
+                 from_rev, to_rev, to_remove: "list[str]",
+                 to_update: "list[str]", to_add: "list[str]",
+                 orphans: "list[str]", on_done):
+        super().__init__(host)
+        self._host = host
+        self._on_done = on_done
+        self._done = False
+        self._p = active_palette()
+        self._profile_name = profile_name or ""
+        self._from_rev = from_rev
+        self._to_rev = to_rev
+        self._to_remove = list(to_remove or [])
+        self._to_update = list(to_update or [])
+        self._to_add = list(to_add or [])
+        self._orphans = list(orphans or [])
+
+        self.setObjectName("OverlayBackdrop")
+        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
+        self.setGeometry(host.rect())
+
+        self._card = QFrame(self)
+        self._card.setObjectName("_UpdateCard")
+        self._card.setStyleSheet(
+            f"#_UpdateCard {{ background:{self._c('BG_PANEL')};"
+            f" border:1px solid {self._c('BORDER')}; border-radius:8px; }}")
+        host.installEventFilter(self)
+
+        self._build()
+        self._reposition()
+        self.show()
+        self.raise_()
+        self.setFocus()
+
+    @classmethod
+    def show_over(cls, host, **kwargs):
+        top = host.window() if host is not None else None
+        return cls(top or host, **kwargs)
+
+    def _c(self, k):
+        return _c(self._p, k)
+
+    # -- build --------------------------------------------------------------
+    def _build(self):
+        v = QVBoxLayout(self._card)
+        v.setContentsMargins(20, 16, 20, 16)
+        v.setSpacing(8)
+
+        title = QLabel("Update Collection", self._card)
+        title.setStyleSheet(
+            f"color:{self._c('TEXT_MAIN')}; font-weight:600; font-size:16px;")
+        v.addWidget(title)
+
+        def _rev(r):
+            return f"Rev {r}" if r is not None else "?"
+        summary = QLabel(
+            f"Profile '{self._profile_name}' — {_rev(self._from_rev)} → "
+            f"{_rev(self._to_rev)}", self._card)
+        summary.setStyleSheet(f"color:{self._c('TEXT_DIM')}; font-size:13px;")
+        v.addWidget(summary)
+
+        counts = QLabel(
+            f"{len(self._to_remove)} to remove · {len(self._to_update)} to "
+            f"update · {len(self._to_add)} to add · {len(self._orphans)} orphan(s)",
+            self._card)
+        counts.setStyleSheet(f"color:{self._c('TEXT_DIM')}; font-size:12px;")
+        v.addWidget(counts)
+
+        warn = QLabel(
+            "Removed and updated mods will be reinstalled. Your existing load "
+            "order is preserved where possible.", self._card)
+        warn.setWordWrap(True)
+        warn.setStyleSheet(f"color:{self._c('TEXT_DIM')}; font-size:11px;")
+        v.addWidget(warn)
+
+        # Scrollable body: one labelled section per bucket (built once).
+        scroll = QScrollArea(self._card)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }")
+        body = QFrame()
+        body.setObjectName("_UpdBody")
+        body.setStyleSheet(
+            f"#_UpdBody {{ background:{self._c('BG_LIST')};"
+            f" border:1px solid {self._c('BORDER')}; border-radius:6px; }}")
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(10, 8, 10, 8)
+        blay.setSpacing(8)
+        self._add_section(blay, "Remove", self._to_remove)
+        self._add_section(blay, "Update", self._to_update)
+        self._add_section(blay, "Add", self._to_add)
+        self._add_section(blay, "Orphans", self._orphans)
+        blay.addStretch(1)
+        scroll.setWidget(body)
+        v.addWidget(scroll, 1)
+
+        bar = QHBoxLayout()
+        bar.addStretch(1)
+        cancel = QPushButton("Cancel", self._card)
+        cancel.setObjectName("FormButton")
+        cancel.setCursor(Qt.PointingHandCursor)
+        cancel.clicked.connect(lambda: self._finish(False))
+        bar.addWidget(cancel)
+        apply_btn = QPushButton("Apply Update", self._card)
+        apply_btn.setObjectName("PrimaryButton")
+        apply_btn.setCursor(Qt.PointingHandCursor)
+        apply_btn.clicked.connect(lambda: self._finish(True))
+        bar.addWidget(apply_btn)
+        v.addLayout(bar)
+
+    def _add_section(self, layout, title: str, items: "list[str]"):
+        hdr = QLabel(f"{title} ({len(items)})")
+        hdr.setStyleSheet(
+            f"color:{self._c('TEXT_MAIN')}; font-weight:600; font-size:12px;")
+        layout.addWidget(hdr)
+        if items:
+            lbl = QLabel("\n".join(f"  • {name}" for name in items))
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(
+                f"color:{self._c('TEXT_DIM')}; font-size:12px;"
+                " background:transparent;")
+            layout.addWidget(lbl)
+        else:
+            none_lbl = QLabel("  (none)")
+            none_lbl.setStyleSheet(
+                f"color:{self._c('TEXT_DIM')}; font-size:11px;"
+                " background:transparent;")
+            layout.addWidget(none_lbl)
+
+    # -- lifecycle ----------------------------------------------------------
+    def _finish(self, result: bool):
+        if self._done:
+            return
+        self._done = True
+        try:
+            self._host.removeEventFilter(self)
+        except Exception:
+            pass
+        cb = self._on_done
+        self.hide()
+        self.deleteLater()
+        if cb is not None:
+            cb(result)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._finish(False)
+        else:
+            super().keyPressEvent(event)
+
+    def _reposition(self):
+        self.setGeometry(self._host.rect())
+        w = min(self.CARD_W, self._host.width() - 40)
+        h = min(self.CARD_H, self._host.height() - 40)
+        self._card.setFixedSize(max(400, w), max(300, h))
+        self._card.move((self.width() - self._card.width()) // 2,
+                        (self.height() - self._card.height()) // 2)
+
+    def eventFilter(self, obj, event):
+        if obj is self._host and event.type() == QEvent.Resize:
+            self._reposition()
+        return super().eventFilter(obj, event)

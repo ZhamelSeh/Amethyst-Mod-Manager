@@ -33,6 +33,13 @@ from gui_qt.theme_qt import active_palette, _c
 from Utils.collection_manifest import fmt_size
 
 
+# Slug registry of collections whose install is paused mid-run (mirrors Tk's
+# module-level ``_PAUSED_INSTALLS``). A live pause adds the slug here so an open
+# detail view's button flips to "Resume" without re-reading the profile; a
+# persisted ``collection_install_paused`` flag covers reopen-after-restart.
+_PAUSED_COLLECTIONS: "set[str]" = set()
+
+
 class _RevisionCombo(QComboBox):
     """A QComboBox whose popup is HARD-capped in height + scrolls, so a collection
     with hundreds of revisions never opens a full-screen-tall list. Capping the
@@ -282,6 +289,8 @@ class CollectionDetailView(QWidget):
         install.setCursor(Qt.PointingHandCursor)
         install.clicked.connect(self._on_install_clicked)
         av.addWidget(install)
+        self._install_btn = install
+        self._install_intent = "install"     # install | update | resume
         view = QPushButton("View on Nexus")
         view.setObjectName("FormButton")
         view.setCursor(Qt.PointingHandCursor)
@@ -377,6 +386,78 @@ class CollectionDetailView(QWidget):
         except Exception:
             return None
 
+    def _collection_profile(self):
+        """(profile_name, profile_dir) of the profile holding this collection, or
+        (None, None). Uses slug match so any revision suffix counts."""
+        slug = getattr(self._collection, "slug", "") or ""
+        if not slug or self._game is None:
+            return None, None
+        try:
+            from gui.game_helpers import find_profile_with_collection_slug
+            pname = find_profile_with_collection_slug(self._game.name, slug)
+            if not pname:
+                return None, None
+            return pname, self._game.get_profile_root() / "profiles" / pname
+        except Exception:
+            return None, None
+
+    def _is_paused(self) -> bool:
+        """True if this collection's install is paused (in-memory registry or the
+        persisted ``collection_install_paused`` flag on its profile)."""
+        slug = getattr(self._collection, "slug", "") or ""
+        if slug and slug in _PAUSED_COLLECTIONS:
+            return True
+        _pname, pdir = self._collection_profile()
+        if pdir is None:
+            return False
+        try:
+            from Utils.profile_state import read_collection_install_paused
+            return bool(read_collection_install_paused(pdir))
+        except Exception:
+            return False
+
+    def _resolved_viewing_revision(self):
+        """The revision the user is currently viewing — the explicit dropdown
+        selection, else the highest published revision. None if not loaded yet."""
+        if self._revision_number is not None:
+            try:
+                return int(self._revision_number)
+            except (TypeError, ValueError):
+                return None
+        return self._latest_published_rev(self._revisions_list)
+
+    def _update_available(self) -> bool:
+        """True if an installed copy exists AND is pinned to a different revision
+        than the one being viewed. Legacy installs (revision None) never qualify."""
+        installed = self._installed_revision()
+        if installed is None:
+            return False
+        viewing = self._resolved_viewing_revision()
+        if viewing is None:
+            return False
+        return int(viewing) != int(installed)
+
+    def _update_install_btn_state(self):
+        """Set the install button text + intent based on collection state.
+        Priority: Resume (paused) > Update (revision differs) > Install."""
+        btn = getattr(self, "_install_btn", None)
+        if btn is None:
+            return
+        if self._is_paused():
+            self._install_intent = "resume"
+            btn.setText("Resume Install")
+        elif self._update_available():
+            self._install_intent = "update"
+            btn.setText("Update Collection")
+        else:
+            self._install_intent = "install"
+            btn.setText("Install collection")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Refresh on (re)show so a paused/updated state is reflected on reopen.
+        self._update_install_btn_state()
+
     def _populate_revision_dropdown(self):
         installed = self._installed_revision()
         want = (self._revision_number if self._revision_number is not None
@@ -412,6 +493,7 @@ class CollectionDetailView(QWidget):
             self._rev_selector.setCurrentIndex(current_idx)
         self._rev_updating = False
         self._rev_selector.setVisible(self._rev_selector.count() > 0)
+        self._update_install_btn_state()
 
     def _set_rev_current(self, rev_num):
         """Select the entry for *rev_num* without firing the change handler."""
@@ -432,6 +514,7 @@ class CollectionDetailView(QWidget):
         self._offsite_wrap.setVisible(False)
         self._table.setRowCount(0)
         self._size_lbl.setText("Loading…")
+        self._update_install_btn_state()     # viewing rev changed → maybe Update
         self._start_detail_fetch()
 
     def _fill_table(self):
@@ -589,7 +672,8 @@ class CollectionDetailView(QWidget):
 
     def _on_install_clicked(self):
         chosen, skipped = self.optional_selection()
-        self._log(f"Collection install: {len(chosen)} optional kept, "
+        intent = getattr(self, "_install_intent", "install")
+        self._log(f"Collection {intent}: {len(chosen)} optional kept, "
                   f"{len(skipped)} skipped.")
         if self._on_install is not None:
-            self._on_install(chosen, skipped)
+            self._on_install(chosen, skipped, intent)

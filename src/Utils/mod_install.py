@@ -598,6 +598,10 @@ class PreparedInstall:
         # auto-strip fails — the toolkit shows the Set-Prefix dialog. None = the
         # neutral default (install as-is).
         self.on_need_prefix = on_need_prefix
+        # Set by finish_install when the user chose to Replace an existing mod:
+        # keep its modlist position + carry its endorsed flag onto the new install.
+        self._preserve_position = False
+        self._preserved_endorsed = False
 
     def is_fomod(self) -> bool:
         return self.fomod_base is not None and self.fomod_config is not None
@@ -656,11 +660,20 @@ def prepare_archive(archive_path: str, game, profile_dir: Path, *,
 
 
 def finish_install(prepared: "PreparedInstall", fomod_selections, *,
-                   log_fn: LogFn, progress_fn: Optional[ProgressFn] = None
-                   ) -> str | None:
+                   log_fn: LogFn, progress_fn: Optional[ProgressFn] = None,
+                   on_exists=None) -> str | None:
     """Stage the prepared archive. *fomod_selections* is the wizard's
     {step_idx: {group: [plugins]}} dict (or None → FOMOD defaults / plain copy).
-    Always cleans up the extract dir. Returns the installed mod name."""
+    Always cleans up the extract dir. Returns the installed mod name (None on
+    cancel).
+
+    *on_exists* — optional callback invoked when the destination mod folder
+    already exists: ``on_exists(mod_name, conflict) -> str`` returning one of
+    ``"replace"`` (wipe + reinstall, keep modlist position + endorsed flag),
+    ``"rename:<newname>"`` (install as a NEW mod), or ``"cancel"``. *conflict* is
+    True on a re-prompt when a chosen rename target is itself taken. When
+    *on_exists* is None the existing folder is silently replaced (collection /
+    quick-update path)."""
     p = prepared
     staging_root = Path(p.game.get_effective_mod_staging_path())
     staging_root.mkdir(parents=True, exist_ok=True)
@@ -670,11 +683,46 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
         if progress_fn is not None:
             progress_fn(done, total, phase)
 
-    # Fresh install replaces an existing same-named folder cleanly, so stale
-    # files (e.g. a previous FOMOD selection's variant folders) never linger.
+    # Existing same-named folder: ask the caller what to do (replace / rename /
+    # cancel), or — with no callback — silently replace (collection installs).
     if dest_root.exists():
-        log_fn(f"Replacing existing mod folder: {p.mod_name}")
-        shutil.rmtree(dest_root, ignore_errors=True)
+        if on_exists is None:
+            log_fn(f"Replacing existing mod folder: {p.mod_name}")
+            shutil.rmtree(dest_root, ignore_errors=True)
+        else:
+            conflict = False
+            while dest_root.exists():
+                action = on_exists(p.mod_name, conflict)
+                if action == "cancel" or not action:
+                    log_fn(f"Install cancelled — '{p.mod_name}' already exists.")
+                    p.cleanup()
+                    return None
+                if action == "replace":
+                    # Carry the old install's endorsed flag onto the new one.
+                    try:
+                        from Nexus.nexus_meta import read_meta
+                        p._preserved_endorsed = bool(
+                            read_meta(dest_root / "meta.ini").endorsed)
+                    except Exception:
+                        p._preserved_endorsed = False
+                    log_fn(f"Replacing existing mod folder: {p.mod_name}")
+                    shutil.rmtree(dest_root, ignore_errors=True)
+                    p._preserve_position = True
+                    break
+                if action.startswith("rename:"):
+                    new_name = action.split(":", 1)[1].strip()
+                    if not new_name or new_name == p.mod_name:
+                        conflict = True
+                        continue
+                    p.mod_name = new_name
+                    dest_root = staging_root / p.mod_name
+                    # Loop: if the new name is ALSO taken, re-prompt (conflict).
+                    conflict = dest_root.exists()
+                    # rename installs as a NEW mod (no position preserve).
+                    continue
+                # Unknown action → treat as cancel (safe default).
+                p.cleanup()
+                return None
 
     cancelled = False
     try:
@@ -721,10 +769,12 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
         return None
 
     _write_install_meta(dest_root, p.archive, p.game, log_fn,
-                        prebuilt_meta=getattr(p, "prebuilt_meta", None))
+                        prebuilt_meta=getattr(p, "prebuilt_meta", None),
+                        endorsed=getattr(p, "_preserved_endorsed", False))
     _pp(0, 0, "Indexing")
     _update_indexes(p.game, p.profile_dir, p.mod_name, dest_root, log_fn)
-    _add_to_modlist(p.profile_dir, p.mod_name, log_fn)
+    _add_to_modlist(p.profile_dir, p.mod_name, log_fn,
+                    preserve_position=getattr(p, "_preserve_position", False))
     _add_plugins(p.game, p.profile_dir, dest_root, log_fn)
     log_fn(f"Installed '{p.mod_name}'.")
     return p.mod_name
@@ -816,7 +866,7 @@ def _install_fomod(fomod_base: Path, config, dest_root: Path,
 
 
 def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
-                        prebuilt_meta=None) -> None:
+                        prebuilt_meta=None, endorsed: bool = False) -> None:
     try:
         from Nexus.nexus_meta import (
             write_meta, resolve_nexus_meta_for_archive, NexusModMeta)
@@ -840,6 +890,9 @@ def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
         meta.installation_file = archive.name
         if not getattr(meta, "installed", ""):
             meta.installed = datetime.now().isoformat(timespec="seconds")
+        # Carry the endorsed flag from a replaced install (Tk parity).
+        if endorsed:
+            meta.endorsed = True
         write_meta(meta_path, meta)
     except Exception as exc:
         log_fn(f"meta.ini write skipped ({exc}).")
@@ -875,10 +928,17 @@ def _update_indexes(game, profile_dir: Path, mod_name: str, dest_root: Path,
         log_fn(f"index update skipped ({exc}) — next rebuild will rescan.")
 
 
-def _add_to_modlist(profile_dir: Path, mod_name: str, log_fn: LogFn) -> None:
+def _add_to_modlist(profile_dir: Path, mod_name: str, log_fn: LogFn,
+                    preserve_position: bool = False) -> None:
     try:
-        from Utils.modlist import prepend_mod
-        prepend_mod(profile_dir / "modlist.txt", mod_name, enabled=True)
+        if preserve_position:
+            # Replacing an existing mod — keep its load-order position.
+            from Utils.modlist import ensure_mod_preserving_position
+            ensure_mod_preserving_position(
+                profile_dir / "modlist.txt", mod_name, enabled=True)
+        else:
+            from Utils.modlist import prepend_mod
+            prepend_mod(profile_dir / "modlist.txt", mod_name, enabled=True)
     except Exception as exc:
         log_fn(f"modlist update failed ({exc}).")
 

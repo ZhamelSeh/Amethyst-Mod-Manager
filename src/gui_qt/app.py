@@ -44,6 +44,9 @@ class MainWindow(QMainWindow):
     # Worker asks the UI to show the Set-Prefix overlay; payload carries a
     # result holder + threading.Event the worker blocks on.
     _need_prefix = Signal(object)              # (dict with required/file_list/...)
+    # Worker asks the UI to show the Mod-Already-Exists overlay (same blocking
+    # holder+Event handshake as _need_prefix).
+    _mod_exists = Signal(object)               # (dict with mod_name/conflict/holder/event)
     # Proton-tools installer worker → UI thread.
     _proton_done = Signal(str, bool)           # (title, success)
     # Nexus validate() worker → UI thread (username or None).
@@ -85,6 +88,7 @@ class MainWindow(QMainWindow):
         self._prepared_ready.connect(self._on_prepared_ready)
         self._one_install_done.connect(self._on_one_install_done)
         self._need_prefix.connect(self._on_need_prefix_ui)
+        self._mod_exists.connect(self._on_mod_exists_ui)
         self._proton_busy = False
         self._proton_done.connect(self._on_proton_done)
         self._sort_running = False
@@ -1879,11 +1883,15 @@ class MainWindow(QMainWindow):
         else:
             self._notify(f"{title} — failed (see log).", "error")
 
-    def _install_paths(self, paths: list[str], metas: dict | None = None):
+    def _install_paths(self, paths: list[str], metas: dict | None = None,
+                       previous_mod_name: str | None = None):
         """Queue + install a list of archive paths (shared by the Install Mod
         button and the Downloads tab). FOMODs pause for the wizard mid-queue.
         *metas* optionally maps an archive path → a prebuilt NexusModMeta (the
-        Nexus browser supplies the real mod_id/file_id so meta.ini is correct)."""
+        Nexus browser supplies the real mod_id/file_id so meta.ini is correct).
+        *previous_mod_name* — when set (Change Version updating an existing mod),
+        and a single install lands under a DIFFERENT folder name, offer to remove
+        that previous version (it inherits its modlist slot)."""
         if not paths:
             return
         game = self._gs.game
@@ -1910,6 +1918,7 @@ class MainWindow(QMainWindow):
         self._install_game = game
         self._install_profile_dir = profile_dir
         self._install_metas = dict(metas or {})
+        self._install_prev_name = previous_mod_name
         self._notify(f"Installing {len(paths)} mod(s)…" if len(paths) > 1
                      else f"Installing {Path(paths[0]).name}…", "info")
         self._install_next()
@@ -1947,6 +1956,37 @@ class MainWindow(QMainWindow):
         SetPrefixOverlay.show_over(
             self, payload["mod_name"], payload["required"],
             payload["file_list"], _done)
+
+    def _make_exists_cb(self):
+        """Return an on_exists(mod_name, conflict) callback for finish_install.
+        Runs on the WORKER thread → shows the Mod-Already-Exists overlay on the
+        UI thread and BLOCKS until the user picks (replace / rename:<n> / cancel),
+        mirroring _make_need_prefix_cb."""
+        import threading
+
+        def _cb(mod_name, conflict=False):
+            holder = {"result": "cancel"}
+            ev = threading.Event()
+            self._mod_exists.emit({
+                "mod_name": mod_name, "conflict": bool(conflict),
+                "holder": holder, "event": ev})
+            ev.wait()
+            return holder["result"]
+
+        return _cb
+
+    def _on_mod_exists_ui(self, payload):
+        """UI thread: show the Mod-Already-Exists overlay; unblock the worker."""
+        if self._progress_popup is not None:
+            self._progress_popup.clear()
+        from gui_qt.mod_exists_overlay import ModExistsOverlay
+
+        def _done(result):
+            payload["holder"]["result"] = result or "cancel"
+            payload["event"].set()
+
+        ModExistsOverlay.show_over(
+            self, payload["mod_name"], payload["conflict"], _done)
 
     def _install_next(self):
         """Pop the next queued archive: prepare it on a worker; the prepared
@@ -2028,7 +2068,8 @@ class MainWindow(QMainWindow):
                 name = finish_install(
                     prepared, selections,
                     log_fn=lambda m: self._op_log.emit(str(m)),
-                    progress_fn=lambda d, t, ph=None: self._op_progress.emit(d, t, ph))
+                    progress_fn=lambda d, t, ph=None: self._op_progress.emit(d, t, ph),
+                    on_exists=self._make_exists_cb())
             except Exception as exc:
                 self._op_log.emit(f"Install error ({prepared.mod_name}): {exc}")
                 name = None
@@ -2065,7 +2106,67 @@ class MainWindow(QMainWindow):
             # next queued install — keeps one dialog at a time.
             name = self._maybe_prompt_rename(name)
             self._install_ok.append(name)
+            # Change Version landed a different-named version → offer to remove
+            # the previous version (Tk parity). One-shot per queue.
+            prev = getattr(self, "_install_prev_name", None)
+            if prev and name != prev:
+                self._install_prev_name = None   # don't re-prompt for later items
+                self._maybe_prompt_remove_previous(prev, name)
         self._install_next()   # continue the queue
+
+    def _maybe_prompt_remove_previous(self, old_name: str, new_name: str):
+        """Show the borderless 'Remove previous version?' overlay if both the old
+        and new mods exist. Remove → the new mod inherits the old one's modlist
+        position + enabled state, then the old mod is removed."""
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return
+        if not (staging / old_name).is_dir() or not (staging / new_name).is_dir():
+            return
+        from gui_qt.remove_previous_overlay import RemovePreviousOverlay
+
+        def _done(result):
+            if result == "remove":
+                self._remove_previous_version(old_name, new_name)
+
+        RemovePreviousOverlay.show_over(self, old_name, new_name, _done)
+
+    def _remove_previous_version(self, old_name: str, new_name: str):
+        """New mod inherits old's modlist slot + enabled state; old is removed."""
+        try:
+            from Utils.modlist import read_modlist, write_modlist
+            from Utils.mod_remove import remove_mods
+            pdir = self._gs.profile_dir()
+            game = self._gs.game
+            if pdir is None or game is None:
+                return
+            ml = pdir / "modlist.txt"
+            entries = read_modlist(ml)
+            old_e = next((e for e in entries if e.name == old_name), None)
+            new_e = next((e for e in entries if e.name == new_name), None)
+            if new_e is not None:
+                # New inherits old's enabled state + position, and the OLD entry
+                # is dropped here (remove_mods intentionally does NOT touch
+                # modlist.txt — it leaves the row for the caller to remove).
+                if old_e is not None:
+                    new_e.enabled = old_e.enabled
+                # Pull the new entry out first, THEN locate old's slot in the
+                # remaining list, drop old, and insert new there (so new lands
+                # exactly where old was).
+                rest = [e for e in entries if e.name != new_name]
+                idx = next((i for i, e in enumerate(rest)
+                            if e.name == old_name), 0)
+                rest = [e for e in rest if e.name != old_name]
+                rest.insert(min(idx, len(rest)), new_e)
+                write_modlist(ml, rest)
+            # Delete the old mod's files/plugins/index (NOT its modlist row —
+            # already dropped above).
+            remove_mods(game, pdir, [old_name],
+                        log_fn=lambda m: self._append_log(f"[remove] {m}"))
+        except Exception as exc:
+            self._append_log(f"[install] remove-previous failed: {exc}")
+        self._reload_modlist()
+        self._rebuild_conflicts_async()
 
     def _maybe_prompt_rename(self, name: str) -> str:
         """If 'Rename mod after install' is on, prompt for a new name and rename

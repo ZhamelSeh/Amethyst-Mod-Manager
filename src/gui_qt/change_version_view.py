@@ -362,6 +362,15 @@ class ChangeVersionView(QWidget):
         if not archive:
             return
         self._log(f"Nexus: downloaded → {archive}; installing…")
-        self._install_fn([archive], {archive: meta} if meta is not None else None)
-        # Stay open so the user can install another file; the app's install path
-        # refreshes the modlist on its own.
+        # Pass the mod we're updating so the app can offer "Remove previous
+        # version?" if the new file installs under a different folder name.
+        metas = {archive: meta} if meta is not None else None
+        try:
+            self._install_fn([archive], metas,
+                             previous_mod_name=self._mod_name)
+        except TypeError:
+            # install_fn without the previous_mod_name kwarg (defensive).
+            self._install_fn([archive], metas)
+        # Close the panel now — the install runs asynchronously and its own
+        # completion path refreshes the modlist (+ any "Remove previous?" prompt).
+        self._on_close()

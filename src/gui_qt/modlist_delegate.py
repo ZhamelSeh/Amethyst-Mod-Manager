@@ -22,31 +22,55 @@ from gui_qt.modlist_model import (
 )
 from gui_qt.modlist_data import (
     FLAG_UPDATE, FLAG_ENDORSED, FLAG_ROOT, FLAG_MODIFIED_MF, FLAG_MISSING_REQS,
-    FLAG_COLLECTION_BUNDLED, FLAG_COLLECTION_PATCHED,
+    FLAG_COLLECTION_BUNDLED, FLAG_COLLECTION_PATCHED, FLAG_NOTE, FLAG_XEDIT,
+    FLAG_BUNDLE, FLAG_MODIO_UPDATE, FLAG_PRERTX, FLAG_ROOT_RULE,
 )
 
-# Flag bit → icon filename, painted left-to-right in the Flags column.
+# Flag bit → icon filename, painted left-to-right in the Flags column, in the
+# SAME order as the Tk modlist (gui/modlist_panel.py ~2878): note, bundle,
+# missing-reqs, update, modio-update, endorsed, info (pre-RTX OR collection —
+# mutually exclusive, handled in _flag_icons), modified-MF, xEdit, root.
 _FLAG_ICONS = [
-    (FLAG_UPDATE, "update.png"),
+    (FLAG_NOTE, "note.png"),
+    (FLAG_BUNDLE, "settings.png"),
     (FLAG_MISSING_REQS, "warning.png"),
+    (FLAG_UPDATE, "update.png"),
+    (FLAG_MODIO_UPDATE, "update_modio.png"),
     (FLAG_ENDORSED, "endorsed.png"),
-    (FLAG_ROOT, "root.png"),
-    (FLAG_MODIFIED_MF, "eye2_white.png"),
-    # Collection provenance — both reuse the info icon (Tk parity); the hover
-    # tooltip distinguishes bundled vs patched.
+    # info.png: pre-RTX OR collection bundled/patched — only ONE ever paints (see
+    # _flag_icons). The hover tooltip distinguishes which.
+    (FLAG_PRERTX, "info.png"),
     (FLAG_COLLECTION_BUNDLED, "info.png"),
     (FLAG_COLLECTION_PATCHED, "info.png"),
+    (FLAG_MODIFIED_MF, "eye2_white.png"),
+    (FLAG_XEDIT, "brush.png"),
+    # root.png: meta root_folder OR a custom root-routing rule (same icon).
+    (FLAG_ROOT, "root.png"),
+    (FLAG_ROOT_RULE, "root.png"),
 ]
 
-# Flag bit → hover tooltip text (Tk parity). Only flags with an entry get a tip.
+# The info-icon flags, in precedence order (Tk: pre-RTX wins, else collection).
+_INFO_FLAGS = (FLAG_PRERTX, FLAG_COLLECTION_BUNDLED, FLAG_COLLECTION_PATCHED)
+# The root-icon flags — only one root.png ever paints.
+_ROOT_FLAGS = (FLAG_ROOT, FLAG_ROOT_RULE)
+
+# Flag bit → hover tooltip text (verbatim from the Tk modlist, ~5114). The two
+# root sources have DISTINCT text (meta root_folder vs a custom routing rule);
+# the note/xedit/missing tips are per-mod dynamic (see _flag_tip in the delegate).
 _FLAG_TIPS = {
-    FLAG_UPDATE: "Update available",
+    FLAG_NOTE: "Note",
+    FLAG_BUNDLE: "Click here to open bundle settings",
     FLAG_MISSING_REQS: "Missing requirements",
+    FLAG_UPDATE: "Update available on Nexus Mods",
+    FLAG_MODIO_UPDATE: "Update available on mod.io",
     FLAG_ENDORSED: "Endorsed",
-    FLAG_ROOT: "This mod is sent to the root folder",
-    FLAG_MODIFIED_MF: "Modified in Mod Files tab",
+    FLAG_PRERTX: "Pre-RTX mod",
     FLAG_COLLECTION_BUNDLED: "This mod is a collection bundled mod",
     FLAG_COLLECTION_PATCHED: "This mod has diff patches applied by the collection install",
+    FLAG_MODIFIED_MF: "Modified in Mod Files tab",
+    FLAG_XEDIT: "Contains a plugin modified in xEdit",
+    FLAG_ROOT: "This mod is sent to the root folder",
+    FLAG_ROOT_RULE: "This mod contains files that route to the game root",
 }
 
 # Conflict code → icon (lightning), painted in the Conflicts column (Tk parity).
@@ -351,29 +375,59 @@ class ModRowDelegate(QStyledItemDelegate):
         if names:
             self._paint_icons(p, r, names)
 
+    @staticmethod
+    def _effective_flag_bits(bits):
+        """Collapse the mutually-exclusive icon groups: only ONE info.png (pre-RTX
+        wins over collection bundled/patched) and only ONE root.png ever paint —
+        matching Tk. Returns the active FLAG_ICONS entries after the collapse."""
+        # Info group: keep the first present in precedence order, drop the rest.
+        info_keep = next((f for f in _INFO_FLAGS if bits & f), 0)
+        root_keep = next((f for f in _ROOT_FLAGS if bits & f), 0)
+        out = []
+        for bit, name in _FLAG_ICONS:
+            if bit in _INFO_FLAGS and bit != info_keep:
+                continue
+            if bit in _ROOT_FLAGS and bit != root_keep:
+                continue
+            if bits & bit:
+                out.append((bit, name))
+        return out
+
     def _flag_icons(self, bits):
-        return [name for bit, name in _FLAG_ICONS if bits & bit]
+        return [name for _bit, name in self._effective_flag_bits(bits)]
 
     def _hit_flag_bit(self, pos, r, bits):
         """Which FLAG_* bit's icon (if any) is under *pos* within the Flags cell
         rect *r*. Recomputes the same left-to-right centred geometry as
         _paint_icons so a click lands on the icon the user sees."""
-        names = self._flag_icons(bits)
-        if not names:
+        active = self._effective_flag_bits(bits)
+        if not active:
             return 0
         sz, gap = ICON_SZ, 3
-        total = len(names) * sz + (len(names) - 1) * gap
+        total = len(active) * sz + (len(active) - 1) * gap
         x = r.left() + max(6, (r.width() - total) // 2)
         y = r.top() + (r.height() - sz) // 2
-        # names can repeat (bundled+patched both use info.png); walk the ACTIVE
-        # bits in the same order the icons were painted so the hit maps to the
-        # correct flag even when two share an icon.
-        active_bits = [bit for bit, _n in _FLAG_ICONS if bits & bit]
-        for bit in active_bits:
+        # Walk the collapsed ACTIVE bits in paint order so the hit maps to the
+        # correct flag even when several share an icon (info / root).
+        for bit, _name in active:
             if QRect(x, y, sz, sz).contains(pos):
                 return bit
             x += sz + gap
         return 0
+
+    def _flag_tip(self, hit, index):
+        """Tooltip for the hovered flag *hit*. The Note flag shows the actual
+        note text (Tk parity); everything else uses the static _FLAG_TIPS."""
+        if hit == FLAG_NOTE:
+            try:
+                model = index.model()
+                name = index.data(EntryRole).name
+                note = model.note_for(name) if hasattr(model, "note_for") else ""
+                if note:
+                    return note if len(note) <= 500 else note[:500] + "…"
+            except Exception:
+                pass
+        return _FLAG_TIPS.get(hit)
 
     def helpEvent(self, event, view, opt, index):
         """Show the per-flag tooltip when hovering a flag icon (Tk parity —
@@ -384,9 +438,12 @@ class ModRowDelegate(QStyledItemDelegate):
                 bits = index.data(FlagsRole) or 0
                 if bits:
                     hit = self._hit_flag_bit(event.pos(), opt.rect, bits)
-                    tip = _FLAG_TIPS.get(hit)
+                    tip = self._flag_tip(hit, index)
                     if tip:
-                        QToolTip.showText(event.globalPos(), tip, view)
+                        # Pass the flags-cell rect so Qt hides the tooltip as soon
+                        # as the cursor leaves the cell (instead of keeping it up
+                        # for its full length-based timeout).
+                        QToolTip.showText(event.globalPos(), tip, view, opt.rect)
                         return True
                 QToolTip.hideText()
         except Exception:

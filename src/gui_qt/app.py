@@ -58,7 +58,13 @@ class MainWindow(QMainWindow):
     _oauth_event = Signal(str, object)
     # Check-for-updates worker → UI thread ((updates, missing) | None on error).
     _updates_ready = Signal(object)
+    # Endorse/abstain worker → UI thread ({"ok": n, "endorse": bool}).
+    _endorse_done = Signal(object)
+    # Copy/Move-to-profile worker → UI thread (result dict).
+    _copy_done = Signal(object)
     # Install-a-Nexus-mod-by-id flow (used by Missing Requirements) → UI thread.
+    _qu_resolved = Signal(object, object)         # (queue list, skipped list)
+    _qu_downloaded = Signal(object, object)       # (dl_items list, failed list)
     _req_install_files = Signal(object, object)   # (ctx dict, files|None)
     _req_install_dl = Signal(object, object)      # (archive|None, meta|None)
     # Collection reset-load-order worker → UI thread (result dict).
@@ -192,6 +198,12 @@ class MainWindow(QMainWindow):
         # Check-for-updates: re-entrancy guard + worker→UI signal.
         self._updates_running = False
         self._updates_ready.connect(self._on_updates_ready)
+        # Quick Update: resolve (worker) → download (worker) → install (batch).
+        self._quick_updating = False
+        self._qu_resolved.connect(self._on_qu_resolved)
+        self._qu_downloaded.connect(self._on_qu_downloaded)
+        self._endorse_done.connect(self._on_endorse_done)
+        self._copy_done.connect(self._on_copy_done)
         # Install-a-Nexus-mod-by-id (Missing Requirements) flow.
         self._req_installing = False
         self._req_install_files.connect(self._on_req_install_files)
@@ -2245,6 +2257,214 @@ class MainWindow(QMainWindow):
         # Re-read meta.ini (now updated on disk) → repaint flags + refresh filters.
         self._reload_modlist()
 
+    # ---- Quick Update -----------------------------------------------------
+
+    def _quick_update_mods(self, mod_names):
+        """Auto-install the latest name-matched version for each update-flagged
+        mod (Tk parity, gui/modlist_nexus_actions._quick_update_mods). Mods whose
+        latest file isn't a name match are skipped — the user updates those via
+        Change Version. Three phases, all off the UI thread: resolve the target
+        file_ids (parallel) → download them (parallel, premium-gated) → install
+        the whole batch via _install_paths with the folder name forced (silent
+        Replace-All)."""
+        if getattr(self, "_quick_updating", False):
+            self._notify("A Quick Update is already running.", "info")
+            return
+        if getattr(self, "_install_running", False):
+            self._notify("An install is already in progress.", "warning")
+            return
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._notify("No configured game selected.", "warning")
+            return
+        api = self._ensure_nexus_api()
+        if api is None:
+            self._notify("Log in first: Nexus ▸ Login to Nexus ▸ Login via SSO.",
+                         "warning")
+            return
+        staging = self._gs.staging_dir()
+        if staging is None:
+            self._notify("No mod staging folder for this profile.", "warning")
+            return
+        targets = list(mod_names or [])
+        if not targets:
+            self._notify("No mods with a pending update to quick-update.", "info")
+            return
+
+        self._quick_updating = True
+        domain = getattr(game, "nexus_game_domain", "") or ""
+        self._notify(f"Quick Update — checking {len(targets)} mod(s)…", "info")
+        self._append_log(f"[nexus] Quick Update — checking {len(targets)} mod(s)…")
+
+        import threading
+
+        def _resolve_worker():
+            import concurrent.futures as _cf
+            from Utils.quick_update import resolve_quick_update_target
+            queue = []
+            skipped = []   # (mod_name, reason)
+
+            def _one(nm):
+                return resolve_quick_update_target(api, staging, nm, domain)
+
+            with _cf.ThreadPoolExecutor(max_workers=4) as pool:
+                for nm, (status, payload) in zip(targets, pool.map(_one, targets)):
+                    if status == "queued":
+                        queue.append(payload)
+                    else:
+                        skipped.append((nm, payload))
+                        self._op_log.emit(f"[nexus] {nm} — {payload}, skipped.")
+            self._qu_resolved.emit(queue, skipped)
+
+        threading.Thread(target=_resolve_worker, daemon=True,
+                         name="quick-update-resolve").start()
+
+    def _on_qu_resolved(self, queue, skipped):
+        """UI thread: resolve finished. Nothing to update → summarise. Otherwise
+        gate on premium and download every resolved file in parallel."""
+        if not queue:
+            self._qu_finish(0, [], skipped)
+            return
+        api = self._ensure_nexus_api()
+        game = self._gs.game
+        is_premium = False
+        try:
+            is_premium = bool(api.validate().is_premium)
+        except Exception:
+            pass
+        if not is_premium:
+            self._append_log("[nexus] Premium required for Quick Update direct "
+                             "downloads.")
+            self._qu_finish(
+                0, [(it[0], "Premium required for direct download") for it in queue],
+                skipped)
+            return
+
+        self._append_log(f"[nexus] Quick Update — downloading {len(queue)} mod(s)…")
+        self._notify(f"Quick Update — downloading {len(queue)} mod(s)…", "info")
+
+        from Utils.ui_config import load_collection_settings
+        try:
+            dl_workers = max(1, int(load_collection_settings().get("max_concurrent", 3)))
+        except Exception:
+            dl_workers = 3
+
+        import threading
+
+        def _download_all():
+            import concurrent.futures as _cf
+            from Nexus.nexus_download import NexusDownloader
+            from Nexus.nexus_meta import build_meta_from_download
+            from Utils.config_paths import get_download_cache_dir_for_game
+            dest = get_download_cache_dir_for_game(getattr(game, "name", "") or "")
+            downloader = NexusDownloader(api, download_dir=dest)
+            dl_items = []          # (mod_name, archive_path, prebuilt_meta)
+            failed = []            # (mod_name, reason)
+            lock = threading.Lock()
+
+            def _one(item):
+                mod_name, game_domain, meta, file_id, file_info = item
+                try:
+                    try:
+                        mod_info = api.get_mod(game_domain, meta.mod_id)
+                    except Exception as exc:
+                        with lock:
+                            failed.append((mod_name, f"could not fetch mod info ({exc})"))
+                        return
+                    size = 0
+                    if file_info is not None:
+                        size = (getattr(file_info, "size_in_bytes", None)
+                                or (getattr(file_info, "size_kb", 0) or 0) * 1024 or 0)
+                    result = downloader.download_file(
+                        game_domain=game_domain, mod_id=meta.mod_id,
+                        file_id=file_id, dest_dir=dest,
+                        known_file_name=getattr(file_info, "file_name", "") or "",
+                        expected_size_bytes=int(size),
+                        progress_cb=lambda d, t: None)
+                    if not (result.success and result.file_path):
+                        with lock:
+                            failed.append((mod_name,
+                                           f"download failed — {result.error}"))
+                        return
+                    try:
+                        prebuilt = build_meta_from_download(
+                            game_domain=game_domain, mod_id=meta.mod_id,
+                            file_id=file_id, archive_name=result.file_name,
+                            mod_info=mod_info, file_info=file_info)
+                        prebuilt.has_update = False
+                    except Exception as exc:
+                        self._op_log.emit(
+                            f"[nexus] Warning — could not build metadata: {exc}")
+                        prebuilt = None
+                    with lock:
+                        dl_items.append((mod_name, str(result.file_path), prebuilt))
+                except Exception as exc:
+                    with lock:
+                        failed.append((mod_name, f"download error ({exc})"))
+
+            with _cf.ThreadPoolExecutor(max_workers=dl_workers) as pool:
+                list(pool.map(_one, queue))
+            self._qu_skipped = skipped   # carried to _qu_finish via the installer
+            self._qu_downloaded.emit(dl_items, failed)
+
+        threading.Thread(target=_download_all, daemon=True,
+                         name="quick-update-dl").start()
+
+    def _on_qu_downloaded(self, dl_items, failed):
+        """UI thread: every download finished. Install the batch via _install_paths
+        with the folder name forced per archive (silent Replace-All), then finish."""
+        skipped = getattr(self, "_qu_skipped", [])
+        if not dl_items:
+            self._qu_finish(0, failed, skipped)
+            return
+        paths = [p for _n, p, _m in dl_items]
+        metas = {p: m for _n, p, m in dl_items if m is not None}
+        preferred = {p: n for n, p, _m in dl_items}
+        expected = len(dl_items)
+
+        def _done(ok, total, names):
+            # ok/total here are the archive install results; combine with the
+            # download failures + resolve skips for the batch summary.
+            more_failed = list(failed)
+            if ok < expected:
+                more_failed.append(
+                    (f"{expected - ok} mod(s)", "install failed — see log"))
+            self._qu_finish(ok, more_failed, skipped)
+
+        self._install_paths(paths, metas=metas, preferred_names=preferred,
+                            on_all_done=_done)
+
+    def _qu_finish(self, updated, failed, skipped):
+        """Log the batch summary + toast; warn about mods that couldn't be
+        quick-updated. Re-checks flags happen via _install_paths' _reload_modlist;
+        the resolve/download-only paths (nothing installed) reload here."""
+        self._quick_updating = False
+        self._qu_skipped = []
+        if updated == 0:
+            # No install ran → refresh flags ourselves (installed path already did).
+            self._reload_modlist()
+        self._append_log(
+            f"[nexus] Quick Update — {updated} updated, "
+            f"{len(skipped)} skipped (no name match), {len(failed)} failed.")
+        for name, reason in failed:
+            self._append_log(f"[nexus] Quick Update — {name}: {reason}")
+        if updated:
+            self._notify(f"Quick Update: updated {updated} mod(s)", "success")
+        problems = len(skipped) + len(failed)
+        if not problems:
+            if not updated:
+                self._notify("Quick Update: nothing to update.", "info")
+            return
+        parts = []
+        if skipped:
+            parts.append(f"{len(skipped)} had no name-matched file")
+        if failed:
+            parts.append(f"{len(failed)} failed to download or install")
+        self._notify(
+            f"Quick Update: {problems} mod(s) couldn't be updated — "
+            + " and ".join(parts) + ". See the log; use Change Version manually.",
+            "warning")
+
     # ---- Change Version (plugins-panel-scoped overlay) --------------------
 
     def _open_change_version_tab(self, mod_name: str):
@@ -2424,6 +2644,204 @@ class MainWindow(QMainWindow):
             log_fn=self._append_log)
         self._tabs.open_tab(view, f"Conflicts: {mod_name}", key="show_conflicts")
 
+    def _on_modlist_endorse(self, names, endorse: bool):
+        """Endorse / abstain the given mods on Nexus (right-click). Runs on a
+        worker thread via the shared API, updates each mod's meta.ini `endorsed`
+        flag, then refreshes the modlist so the ★ flag icon updates. Mirrors Tk
+        _vote_selected_mods."""
+        import threading
+        names = [n for n in (names or []) if n]
+        if not names:
+            return
+        api = self._ensure_nexus_api()
+        if api is None:
+            self._notify("Log in first: Nexus ▸ Login to Nexus.", "warning")
+            return
+        game = self._gs.game
+        domain = getattr(game, "nexus_game_domain", "") or ""
+        staging = self._gs.staging_dir()
+        if staging is None or not domain:
+            return
+        verb = "Endorsing" if endorse else "Abstaining from"
+        self._notify(f"{verb} {len(names)} mod(s)…", "info")
+
+        def _worker():
+            from Nexus.nexus_meta import read_meta, write_meta
+            ok = 0
+            for nm in names:
+                meta_path = staging / nm / "meta.ini"
+                if not meta_path.is_file():
+                    continue
+                try:
+                    meta = read_meta(meta_path)
+                    if not meta.mod_id:
+                        continue
+                    if endorse:
+                        api.endorse_mod(domain, meta.mod_id, meta.version or "")
+                    else:
+                        api.abstain_mod(domain, meta.mod_id, meta.version or "")
+                    meta.endorsed = endorse
+                    write_meta(meta_path, meta)
+                    ok += 1
+                except Exception as exc:
+                    self._op_log.emit(f"Nexus: {'endorse' if endorse else 'abstain'} "
+                                      f"failed for '{nm}': {exc}")
+            self._endorse_done.emit({"ok": ok, "endorse": endorse})
+
+        threading.Thread(target=_worker, daemon=True, name="endorse").start()
+
+    def _on_endorse_done(self, payload):
+        """UI thread: report the endorse/abstain result + refresh the ★ flag."""
+        ok = payload.get("ok", 0)
+        verb = "Endorsed" if payload.get("endorse") else "Abstained from"
+        if ok:
+            self._notify(f"{verb} {ok} mod(s).", "success")
+            self._refresh_modlist_flags()
+        else:
+            self._notify("No mods were updated (already in that state or no "
+                         "Nexus id).", "info")
+
+    def _copy_mods_to_profile(self, names, enabled_map, target_profile, move):
+        """Copy (or move) the given mods' staging folders into *target_profile*.
+        Resolves collisions (single → Replace/Rename/Cancel overlay; multi → one
+        Replace-or-skip prompt), copies on a worker thread, and — for a move —
+        removes the sources here afterwards. Port of Tk _copy_mod(s)_to_profile."""
+        from pathlib import Path
+        from Utils import mod_copy
+        game = self._gs.game
+        src_staging = self._gs.staging_dir()
+        src_profile_dir = self._gs.profile_dir()
+        if game is None or src_staging is None or src_profile_dir is None:
+            return
+        try:
+            target_profile_dir = game.get_profile_root() / "profiles" / target_profile
+            target_staging = mod_copy.resolve_target_staging(game, target_profile_dir)
+        except Exception as exc:
+            self._notify(f"Could not resolve target profile: {exc}", "error")
+            return
+        names = [n for n in names if n]
+        if not names:
+            return
+        existing = [n for n in names
+                    if mod_copy.mod_exists_in_profile(target_staging, n)]
+
+        # plan[name] = dest_name (rename) or None (copy as-is / replace after wipe)
+        def _launch(plan, replace_set):
+            self._run_copy_to_profile(
+                names, enabled_map, plan, replace_set, move,
+                src_staging, src_profile_dir, target_staging, target_profile_dir,
+                target_profile, game)
+
+        if not existing:
+            _launch({n: None for n in names}, set())
+            return
+
+        if len(names) == 1 and existing:
+            # Single mod already there → Replace / Rename / Cancel.
+            from gui_qt.mod_exists_overlay import ModExistsOverlay
+            nm = names[0]
+
+            def _resolved(action, _nm=nm):
+                if not action or action == "cancel":
+                    self._notify("Copy cancelled.", "info")
+                    return
+                if action == "replace":
+                    _launch({_nm: None}, {_nm})
+                elif action.startswith("rename:"):
+                    new = action.split(":", 1)[1].strip()
+                    if new:
+                        _launch({_nm: new}, set())
+
+            ModExistsOverlay.show_over(self, nm, False, _resolved)
+        else:
+            # Several already there → one Replace-or-skip prompt (Tk parity).
+            from gui_qt.confirm_overlay import ConfirmOverlay
+
+            def _resolved(replace):
+                if replace:
+                    _launch({n: None for n in names}, set(existing))
+                else:
+                    # Skip existing: copy only the non-colliding ones.
+                    keep = [n for n in names if n not in existing]
+                    if not keep:
+                        self._notify("All selected mods already exist there.", "info")
+                        return
+                    _launch({n: None for n in keep}, set())
+
+            ConfirmOverlay.show_over(
+                self, "Copy to profile",
+                f"{len(existing)} of {len(names)} mod(s) already exist in "
+                f"'{target_profile}'. Replace them? (Cancel skips those.)",
+                _resolved, confirm_label="Replace", cancel_label="Skip",
+                danger=False)
+
+    def _run_copy_to_profile(self, names, enabled_map, plan, replace_set, move,
+                             src_staging, src_profile_dir, target_staging,
+                             target_profile_dir, target_profile, game):
+        """Worker: copy each planned mod, then (move) remove the sources."""
+        import threading
+        from pathlib import Path
+        from Utils import mod_copy
+        self._notify(f"{'Moving' if move else 'Copying'} {len(plan)} mod(s) to "
+                     f"'{target_profile}'…", "info")
+
+        def _worker():
+            copied = []
+            for nm, dest_name in plan.items():
+                try:
+                    if nm in replace_set:
+                        import shutil
+                        shutil.rmtree(target_staging / (dest_name or nm),
+                                      ignore_errors=True)
+                    out = mod_copy.copy_mod_to_profile(
+                        Path(src_staging), Path(src_profile_dir),
+                        Path(target_staging), Path(target_profile_dir),
+                        nm, enabled_map.get(nm, True), dest_name=dest_name)
+                    if out:
+                        copied.append(nm)
+                except Exception as exc:
+                    self._op_log.emit(f"Copy to profile failed for '{nm}': {exc}")
+            removed = False
+            if move and copied:
+                try:
+                    from Utils.mod_remove import remove_mods
+                    remove_mods(game, Path(src_profile_dir), copied,
+                                log_fn=lambda m: self._op_log.emit(str(m)))
+                    removed = True
+                except Exception as exc:
+                    self._op_log.emit(f"Move: could not remove sources: {exc}")
+            self._copy_done.emit({"copied": len(copied), "total": len(plan),
+                                  "move": move, "removed": removed,
+                                  "target": target_profile,
+                                  # names to drop from THIS profile's modlist
+                                  # (remove_mods deliberately leaves modlist.txt
+                                  # to the caller — mirror Tk _finish_copy_popup).
+                                  "removed_names": list(copied) if removed else []})
+
+        threading.Thread(target=_worker, daemon=True, name="copy-to-profile").start()
+
+    def _on_copy_done(self, payload):
+        """UI thread: report the copy/move result. For a move, drop the moved
+        mods' rows from this profile's modlist (remove_mods left modlist.txt to
+        us — mirrors Tk _finish_copy_popup calling _remove_selected_mods), which
+        persists modlist.txt via the model, then reload."""
+        c = payload.get("copied", 0)
+        verb = "Moved" if payload.get("move") else "Copied"
+        self._notify(f"{verb} {c}/{payload.get('total', 0)} mod(s) to "
+                     f"'{payload.get('target', '')}'.",
+                     "success" if c else "info")
+        removed_names = set(payload.get("removed_names") or [])
+        if removed_names:
+            model = self._modlist_model
+            # Remove by name, highest row first (indices shift as we delete).
+            rows = [r for r in range(model.rowCount())
+                    if (e := model.entry(r)) is not None
+                    and not e.is_separator and e.name in removed_names]
+            for r in sorted(rows, reverse=True):
+                model.remove_row(r)          # drops the row + saves modlist.txt
+        if payload.get("removed"):
+            self._reload_modlist()
+
     # ---- install a Nexus mod by id (used by Missing Requirements cards) ----
     # Mirrors the Nexus browser's install flow: premium check → fetch files →
     # pick MAIN (or file chooser if several) → download → hand to _install_paths.
@@ -2543,16 +2961,25 @@ class MainWindow(QMainWindow):
         self._install_paths([archive], {archive: meta} if meta is not None else None)
 
     def _on_modlist_flag_clicked(self, row: int, flag: int):
-        """A flag icon in the modlist Flags column was clicked. Update flag opens
-        Change Version; the warning flag opens Missing Requirements (Tk parity)."""
-        from gui_qt.modlist_data import FLAG_UPDATE, FLAG_MISSING_REQS
+        """A flag icon in the modlist Flags column was clicked → its action
+        (Tk parity, gui/modlist_panel ~3960): update→Change Version,
+        modio-update→open mod.io page, missing→Missing Requirements,
+        note→note editor. (Bundle options deferred — no Qt bundle UI yet.)"""
+        from gui_qt.modlist_data import (
+            FLAG_UPDATE, FLAG_MISSING_REQS, FLAG_NOTE, FLAG_MODIO_UPDATE)
         e = self._modlist_model.entry(row)
         if e is None or e.is_separator:
             return
         if flag == FLAG_UPDATE:
             self._open_change_version_tab(e.name)
+        elif flag == FLAG_MODIO_UPDATE:
+            from gui_qt.modlist_menu import _open_on_modio
+            _open_on_modio(self._modlist_view, e.name)
         elif flag == FLAG_MISSING_REQS:
             self._open_missing_reqs_tab(e.name)
+        elif flag == FLAG_NOTE:
+            from gui_qt.modlist_menu import _open_note_editor
+            _open_note_editor(self._modlist_view, [e.name])
 
     def _on_add_game_select(self, name: str):
         """A configured game was picked in the Add-Game view → switch to it and
@@ -3062,14 +3489,22 @@ class MainWindow(QMainWindow):
             self._notify(f"{title} — failed (see log).", "error")
 
     def _install_paths(self, paths: list[str], metas: dict | None = None,
-                       previous_mod_name: str | None = None):
+                       previous_mod_name: str | None = None,
+                       preferred_names: dict | None = None,
+                       on_all_done=None):
         """Queue + install a list of archive paths (shared by the Install Mod
         button and the Downloads tab). FOMODs pause for the wizard mid-queue.
         *metas* optionally maps an archive path → a prebuilt NexusModMeta (the
         Nexus browser supplies the real mod_id/file_id so meta.ini is correct).
         *previous_mod_name* — when set (Change Version updating an existing mod),
         and a single install lands under a DIFFERENT folder name, offer to remove
-        that previous version (it inherits its modlist slot)."""
+        that previous version (it inherits its modlist slot).
+        *preferred_names* — optional archive-path → forced mod-folder name. Forces
+        the install into that folder and SILENTLY replaces it (no Mod-Already-Exists
+        dialog). Used by Quick Update, where the name match is already confirmed.
+        *on_all_done* — optional no-arg callback fired once the whole batch finishes
+        (after the summary), so a caller can chain post-install work (Quick Update
+        re-checks flags + reports its own summary)."""
         if not paths:
             return
         game = self._gs.game
@@ -3097,6 +3532,8 @@ class MainWindow(QMainWindow):
         self._install_profile_dir = profile_dir
         self._install_metas = dict(metas or {})
         self._install_prev_name = previous_mod_name
+        self._install_preferred = dict(preferred_names or {})
+        self._install_all_done_cb = on_all_done
         self._notify(f"Installing {len(paths)} mod(s)…" if len(paths) > 1
                      else f"Installing {Path(paths[0]).name}…", "info")
         self._install_next()
@@ -3180,6 +3617,7 @@ class MainWindow(QMainWindow):
         import threading
 
         meta = getattr(self, "_install_metas", {}).get(path)
+        forced_name = getattr(self, "_install_preferred", {}).get(path, "")
 
         def worker():
             from Utils.mod_install import prepare_archive
@@ -3189,6 +3627,7 @@ class MainWindow(QMainWindow):
                     log_fn=lambda m: self._op_log.emit(str(m)),
                     progress_fn=lambda d, t, ph=None: self._op_progress.emit(d, t, ph),
                     prebuilt_meta=meta,
+                    preferred_name=forced_name,
                     on_need_prefix=self._make_need_prefix_cb())
             except Exception as exc:
                 self._op_log.emit(f"Prepare error ({Path(path).name}): {exc}")
@@ -3272,6 +3711,13 @@ class MainWindow(QMainWindow):
     def _run_finish_install(self, prepared, selections, bain_selections=None):
         import threading
 
+        # Quick Update (forced folder name) auto-confirms Replace-All — pass
+        # on_exists=None so finish_install silently replaces the existing folder
+        # instead of raising the Mod-Already-Exists overlay (Tk parity).
+        _forced = str(getattr(prepared, "archive", "")) in \
+            getattr(self, "_install_preferred", {})
+        exists_cb = None if _forced else self._make_exists_cb()
+
         def worker():
             from Utils.mod_install import finish_install
             try:
@@ -3279,7 +3725,7 @@ class MainWindow(QMainWindow):
                     prepared, selections,
                     log_fn=lambda m: self._op_log.emit(str(m)),
                     progress_fn=lambda d, t, ph=None: self._op_progress.emit(d, t, ph),
-                    on_exists=self._make_exists_cb(),
+                    on_exists=exists_cb,
                     bain_selections=bain_selections)
             except Exception as exc:
                 self._op_log.emit(f"Install error ({prepared.mod_name}): {exc}")
@@ -3451,6 +3897,13 @@ class MainWindow(QMainWindow):
         # Re-flag Reinstall in the Downloads tab now that meta.ini changed.
         if hasattr(self, "_downloads_view"):
             self._downloads_view.mark_dirty()
+        # A batch owner (Quick Update) reports its own summary; skip the generic
+        # install toast and hand control back to it.
+        cb = getattr(self, "_install_all_done_cb", None)
+        self._install_all_done_cb = None
+        if cb is not None:
+            cb(ok, total, names)
+            return
         if ok == total and ok > 0:
             if ok == 1:
                 self._notify(f"Installed {names[0]}", "success")
@@ -4051,13 +4504,16 @@ class MainWindow(QMainWindow):
              self._mod_categories, self._mod_updates,
              self._mod_fomod, self._mod_bain,
              self._mod_missing_reqs) = read_meta_for_entries(
-                entries, staging, self._ignored_missing_reqs)
+                entries, staging, self._ignored_missing_reqs,
+                profile_dir=self._gs.profile_dir(),
+                is_bg3=(getattr(self._gs.game, "game_id", "") == "baldurs_gate_3"))
 
         self._modlist_model.set_entries(entries)
         self._modlist_model._versions = versions
         self._modlist_model._installed = installed
         self._modlist_model._categories = self._mod_categories
         self._modlist_model.set_flags(flags)
+        self._modlist_model.set_notes(self._read_mod_notes())
         self._modlist_model.set_conflicts({}, {})   # clear stale; recomputed async
         # Persist edits back to this modlist; rebuild conflicts after each save.
         self._modlist_model.modlist_path = ml_path
@@ -4072,8 +4528,23 @@ class MainWindow(QMainWindow):
         self._modlist_view.on_flag_clicked = self._on_modlist_flag_clicked
         # Missing Requirements: right-click item + clicking the ⚠ flag icon.
         self._modlist_view.on_missing_reqs = self._open_missing_reqs_tab
+        # Quick Update: right-click on update-flagged mods (premium direct DL).
+        self._modlist_view.on_quick_update = self._quick_update_mods
         # Show Conflicts: right-click item.
         self._modlist_view.on_show_conflicts = self._open_show_conflicts_tab
+        # Root-Folder toggle wrote meta.ini → refresh the root flag immediately,
+        # then rescan those mods + rebuild filemap (the index caches strip-applied
+        # vs verbatim paths, so it's now stale; the rebuild also refreshes the
+        # filemap-derived root-rule/pre-RTX overlays).
+        self._modlist_view.on_root_folder_changed = \
+            lambda names: (self._refresh_modlist_flags(),
+                           self._rebuild_conflicts_async(rescan_index=True))
+        # Endorse/Abstain: needs the shared Nexus API + a flag refresh.
+        self._modlist_view.on_endorse = self._on_modlist_endorse
+        # A saved note may change the note flag — light flag-only refresh.
+        self._modlist_view.on_notes_changed = self._refresh_modlist_flags
+        # Copy/Move to profile: worker copy + collision overlay + (move) remove.
+        self._modlist_view.on_copy_to_profile = self._copy_mods_to_profile
         # Enabling the Size column scans mod folder sizes on demand (Tk parity:
         # only walk the disk when Size is actually shown).
         self._modlist_view.on_sizes_requested = self._apply_modlist_sizes
@@ -4151,6 +4622,42 @@ class MainWindow(QMainWindow):
         enabled = sum(1 for e in entries if not e.is_separator and e.enabled)
         disabled = sum(1 for e in entries if not e.is_separator and not e.enabled)
         bar.set_stats([("Enabled", enabled), ("Disabled", disabled)])
+
+    def _refresh_modlist_flags(self):
+        """Re-read the meta/profile-derived flags and push them into the model
+        WITHOUT the full modlist reset (keeps selection + scroll). Call after any
+        action that changes a flag (endorse, root toggle, note edit). The
+        filemap-derived overlays (pre-RTX / root-rule) refresh via the
+        conflict-ready path instead."""
+        from gui_qt.modlist_data import read_meta_for_entries
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return
+        entries = [self._modlist_model.entry(r)
+                   for r in range(self._modlist_model.rowCount())]
+        try:
+            (_v, _i, flags, self._mod_categories, self._mod_updates,
+             self._mod_fomod, self._mod_bain,
+             self._mod_missing_reqs) = read_meta_for_entries(
+                entries, staging, self._ignored_missing_reqs,
+                profile_dir=self._gs.profile_dir(),
+                is_bg3=(getattr(self._gs.game, "game_id", "") == "baldurs_gate_3"))
+        except Exception:
+            return
+        self._modlist_model.set_flags(flags)
+        self._modlist_model.set_notes(self._read_mod_notes())
+
+    def _read_mod_notes(self) -> dict:
+        """Per-mod note text for the active profile (Note flag tooltip). {} if
+        none / no profile."""
+        pdir = self._gs.profile_dir()
+        if pdir is None:
+            return {}
+        try:
+            from Utils.profile_state import read_mod_notes
+            return read_mod_notes(pdir)
+        except Exception:
+            return {}
 
     def _refresh_plugin_stats(self):
         """Update the plugins footer stat pills: total / ESL / non-ESL. All the
@@ -4356,6 +4863,9 @@ class MainWindow(QMainWindow):
             return
         self._conflict_data = data
         self._modlist_model.set_conflicts(data.loose_codes, data.bsa_codes)
+        # Filemap-derived flag overlays (info=pre-RTX, root=custom root rule).
+        self._modlist_model.set_prertx_mods(getattr(data, "prertx_mods", set()))
+        self._modlist_model.set_root_rule_mods(getattr(data, "root_rule_mods", set()))
         # Cross-panel highlighting needs the override + owner maps.
         self._modlist_view.set_conflict_maps(
             data.overrides, data.overridden_by,

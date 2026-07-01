@@ -30,6 +30,11 @@ class ConflictData:
     bsa_overrides: dict[str, set] = field(default_factory=dict)
     bsa_overridden_by: dict[str, set] = field(default_factory=dict)
     plugin_owner: dict[str, str] = field(default_factory=dict)
+    # Filemap/index-derived flag inputs (mod names): mods with pre-RTX
+    # (natives/x64) files (info flag) and mods owning root-rule-routed files
+    # (root flag). Computed from modindex.bin in build_conflicts.
+    prertx_mods: set = field(default_factory=set)
+    root_rule_mods: set = field(default_factory=set)
 
 
 class GameState:
@@ -156,7 +161,53 @@ class GameState:
         (data.bsa_codes, data.bsa_overrides,
          data.bsa_overridden_by) = self._build_bsa_conflicts(g, log)
         data.plugin_owner = self._build_plugin_owner(g)
+        data.prertx_mods, data.root_rule_mods = self._build_index_flag_mods(g)
         return data
+
+    def _build_index_flag_mods(self, g) -> "tuple[set, set]":
+        """(prertx_mods, root_rule_mods) from modindex.bin — the info/root flag
+        inputs. pre-RTX = a mod with a file under a remapped source prefix (e.g.
+        natives/x64/); root-rule = a mod owning files matched by a custom routing
+        rule with dest="". Ports gui/modlist_panel pre-RTX detect (~9307) +
+        _compute_root_rule_mods (1699). Cheap read; runs on the conflict worker."""
+        staging = self.staging_dir()
+        if staging is None:
+            return set(), set()
+        try:
+            from Utils.filemap import read_mod_index
+            index = read_mod_index(staging.parent / "modindex.bin")
+        except Exception:
+            index = None
+        if not index:
+            return set(), set()
+        # pre-RTX: any file under a remapped source prefix.
+        prertx: set = set()
+        try:
+            prefixes = [k.lower() for k in
+                        (getattr(g, "mod_deploy_path_remap", {}) or {})]
+        except Exception:
+            prefixes = []
+        if prefixes:
+            for mod_name, entry in index.items():
+                normal = entry[0] if isinstance(entry, tuple) else {}
+                for rel_key in normal:
+                    if any(rel_key.startswith(p) for p in prefixes):
+                        prertx.add(mod_name)
+                        break
+        # root-rule: mods owning files matched by a dest="" custom routing rule.
+        root_rule: set = set()
+        try:
+            rules = list(getattr(g, "custom_routing_rules", None) or [])
+            if any(r.dest == "" and not r.to_prefix for r in rules):
+                from Utils.deploy_custom_rules import mods_matching_root_rules
+                mod_files = {
+                    name: (list(entry[0].values()) + list(entry[1].values()))
+                    for name, entry in index.items()
+                    if isinstance(entry, tuple) and len(entry) >= 2}
+                root_rule = mods_matching_root_rules(mod_files, rules)
+        except Exception:
+            root_rule = set()
+        return prertx, root_rule
 
     def _build_plugin_owner(self, g) -> dict[str, str]:
         """Map plugin filename (lower) → the mod that wins it, from filemap.txt.

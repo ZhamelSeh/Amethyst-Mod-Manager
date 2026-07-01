@@ -61,10 +61,18 @@ class ModListModel(QAbstractTableModel):
         self._conflicts = conflicts or {}
         self._bsa_conflicts: dict[str, int] = {}
         self._flags: dict[str, int] = {}
+        # Per-mod user note text (for the Note flag's hover tooltip). Kept in sync
+        # with the FLAG_NOTE bit; empty when no note.
+        self._notes: dict[str, str] = {}
         # Mods modified in the Mod Files tab (excluded files / strip prefixes).
         # Kept separate from the meta-derived flags so a meta refresh doesn't
         # drop it; OR'd into the FlagsRole bitmask. See modlist_data.FLAG_MODIFIED_MF.
         self._modified_mf: set[str] = set()
+        # Filemap-derived flag overlays (computed during the conflict/filemap
+        # rebuild, not from meta.ini): mods with pre-RTX (natives/x64) files and
+        # mods that own files with a custom root-routing rule. OR'd into FlagsRole.
+        self._prertx_mods: set[str] = set()
+        self._root_rule_mods: set[str] = set()
         # Highlight state: mod names tinted green (wins over selection) / red
         # (loses to selection), and a set of "anchor" mods (orange) — the mod a
         # selected plugin belongs to. Driven by the view's cross-panel wiring.
@@ -116,10 +124,32 @@ class ModListModel(QAbstractTableModel):
                                   self.index(len(self._entries) - 1, COL_FLAGS),
                                   [FlagsRole, Qt.DisplayRole])
 
+    def set_notes(self, notes: dict[str, str]) -> None:
+        """Store per-mod note text (for the Note flag's hover tooltip)."""
+        self._notes = notes or {}
+
+    def note_for(self, name: str) -> str:
+        return self._notes.get(name, "")
+
     def set_modified_mf(self, mods: set[str]) -> None:
         """Set which mods are modified in the Mod Files tab (overlays the
         FLAG_MODIFIED_MF eye icon in the Flags column)."""
         self._modified_mf = set(mods or ())
+        self._emit_flags_changed()
+
+    def set_prertx_mods(self, mods: set[str]) -> None:
+        """Set which mods contain pre-RTX (natives/x64) files — the info icon
+        (filemap-derived overlay)."""
+        self._prertx_mods = set(mods or ())
+        self._emit_flags_changed()
+
+    def set_root_rule_mods(self, mods: set[str]) -> None:
+        """Set which mods own files with a custom root-routing rule — the root
+        icon (filemap-derived overlay)."""
+        self._root_rule_mods = set(mods or ())
+        self._emit_flags_changed()
+
+    def _emit_flags_changed(self) -> None:
         if self._entries:
             self.dataChanged.emit(self.index(0, COL_FLAGS),
                                   self.index(len(self._entries) - 1, COL_FLAGS),
@@ -231,10 +261,15 @@ class ModListModel(QAbstractTableModel):
         if role == FlagsRole:
             if e.is_separator:
                 return 0
-            from gui_qt.modlist_data import FLAG_MODIFIED_MF
+            from gui_qt.modlist_data import (
+                FLAG_MODIFIED_MF, FLAG_PRERTX, FLAG_ROOT_RULE)
             bits = self._flags.get(e.name, 0)
             if e.name in self._modified_mf:
                 bits |= FLAG_MODIFIED_MF
+            if e.name in self._prertx_mods:
+                bits |= FLAG_PRERTX
+            if e.name in self._root_rule_mods:
+                bits |= FLAG_ROOT_RULE
             return bits
         if role == PriorityRole:
             return self._priority_for_row(index.row())
@@ -477,6 +512,16 @@ class ModListModel(QAbstractTableModel):
         sep = ModEntry(name + _SEPARATOR_SUFFIX, True, False, True)
         self.beginInsertRows(QModelIndex(), at, at)
         self._entries.insert(at, sep)
+        self.endInsertRows()
+        self.save()
+
+    def insert_mod(self, row: int, name: str, above: bool = False) -> None:
+        """Insert an (enabled) mod entry named *name* relative to *row*. Used by
+        'Create empty mod below' — the folder/meta.ini are created by the caller."""
+        at = row if above else row + 1
+        entry = ModEntry(name, True, False, False)
+        self.beginInsertRows(QModelIndex(), at, at)
+        self._entries.insert(at, entry)
         self.endInsertRows()
         self.save()
 

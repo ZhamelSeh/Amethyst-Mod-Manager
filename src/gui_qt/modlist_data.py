@@ -12,16 +12,21 @@ from pathlib import Path
 from Utils.modlist import ModEntry
 
 
-# Flag bits for the Flags column — only the ones the Tk app shows there.
-# (FOMOD/BAIN are install methods, NOT flag icons; note.png = a real saved
-#  user note, not FOMOD. brush = xedit-modified — both wired in a later pass.)
+# Flag bits for the Flags column — mirrors the full Tk set (FOMOD/BAIN are
+# install methods, NOT flag icons).
 FLAG_UPDATE = 1 << 0       # has_update & not ignored
 FLAG_ENDORSED = 1 << 1
-FLAG_ROOT = 1 << 2
+FLAG_ROOT = 1 << 2         # meta.root_folder
 FLAG_MODIFIED_MF = 1 << 3  # modified in the Mod Files tab (excluded files/strip)
 FLAG_MISSING_REQS = 1 << 4  # meta.missing_requirements has un-ignored entries
 FLAG_COLLECTION_BUNDLED = 1 << 5  # meta.from_collection_bundled (bundled by a collection)
 FLAG_COLLECTION_PATCHED = 1 << 6  # meta.from_collection_patched (diff-patched by a collection)
+FLAG_NOTE = 1 << 7         # a saved per-profile user note (read_mod_notes)
+FLAG_XEDIT = 1 << 8        # meta.xedit_modified_plugins non-empty (xEdit-edited plugins)
+FLAG_BUNDLE = 1 << 9       # RE/Fluffy bundle (a [Bundle] section in meta.ini)
+FLAG_MODIO_UPDATE = 1 << 10  # BG3 mod.io update (modioFileId != modioLatestFileId)
+FLAG_PRERTX = 1 << 11      # contains pre-RTX (natives/x64) files — filemap-derived
+FLAG_ROOT_RULE = 1 << 12   # owns files with a custom root-routing rule — filemap-derived
 
 
 def _parse_missing_req_names(raw: str) -> list[str]:
@@ -38,7 +43,9 @@ def _parse_missing_req_names(raw: str) -> list[str]:
 
 
 def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
-                          ignored_reqs: frozenset[str] = frozenset()):
+                          ignored_reqs: frozenset[str] = frozenset(),
+                          profile_dir: "Path | None" = None,
+                          is_bg3: bool = False):
     """Return a MetaInfo-ish tuple keyed by mod name.
 
     versions[name]   -> version string ("" if none)
@@ -52,6 +59,8 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
 
     *ignored_reqs* — requirement names the user has dismissed (per-profile); a
     mod is only flagged if it still has missing requirements outside this set.
+    *profile_dir* — the active profile dir; when given, per-mod user notes are
+    read (Note flag). *is_bg3* — enable the BG3-only mod.io update flag.
     """
     versions: dict[str, str] = {}
     installed: dict[str, str] = {}
@@ -67,6 +76,15 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
     except Exception:
         return (versions, installed, flags, categories, updates, fomod, bain,
                 missing_reqs)
+
+    # Per-profile user notes (Note flag) — one read for the whole list.
+    notes: dict[str, str] = {}
+    if profile_dir is not None:
+        try:
+            from Utils.profile_state import read_mod_notes
+            notes = read_mod_notes(profile_dir)
+        except Exception:
+            notes = {}
 
     for e in entries:
         if e.is_separator:
@@ -116,6 +134,32 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
             bits |= FLAG_COLLECTION_BUNDLED
         if getattr(meta, "from_collection_patched", False):
             bits |= FLAG_COLLECTION_PATCHED
+        # xEdit-modified plugins (semicolon-separated list in meta).
+        if (getattr(meta, "xedit_modified_plugins", "") or "").strip():
+            bits |= FLAG_XEDIT
+        # RE/Fluffy bundle mod ([Bundle] section in meta.ini).
+        try:
+            from Utils.re_bundle import read_bundle_spec
+            if read_bundle_spec(meta_path) is not None:
+                bits |= FLAG_BUNDLE
+        except Exception:
+            pass
+        # BG3 mod.io update (installed file id differs from the latest).
+        if is_bg3:
+            try:
+                import configparser as _cp_modio
+                cp = _cp_modio.ConfigParser(interpolation=None)
+                cp.read(str(meta_path), encoding="utf-8")
+                _fid = int(cp.get("General", "modioFileId", fallback="0") or "0")
+                _lfid = int(cp.get("General", "modioLatestFileId", fallback="0") or "0")
+                if _lfid and _fid and _lfid != _fid:
+                    bits |= FLAG_MODIO_UPDATE
+                    updates.add(e.name)
+            except Exception:
+                pass
+        # Per-profile user note.
+        if notes.get(e.name):
+            bits |= FLAG_NOTE
         if bits:
             flags[e.name] = bits
 

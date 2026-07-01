@@ -527,7 +527,8 @@ def _apply_qpalette(app, p: dict) -> None:
 def _make_proxy_style(base):
     """Wrap *base* QStyle in a ProxyStyle that enlarges the tab close indicator
     so the close button fills the tab height (QSS width/height alone is clamped
-    by the style's PM_TabCloseIndicator metric)."""
+    by the style's PM_TabCloseIndicator metric), and shortens the tooltip
+    wake-up delay app-wide (the default ~700ms feels sluggish)."""
     from PySide6.QtWidgets import QProxyStyle, QStyle
 
     class _TabProxyStyle(QProxyStyle):
@@ -536,6 +537,12 @@ def _make_proxy_style(base):
                           QStyle.PM_TabCloseIndicatorHeight):
                 return 22
             return super().pixelMetric(metric, option, widget)
+
+        def styleHint(self, hint, option=None, widget=None, returnData=None):
+            # Show tooltips faster: the default hover-to-show delay is ~700ms.
+            if hint == QStyle.SH_ToolTip_WakeUpDelay:
+                return 250
+            return super().styleHint(hint, option, widget, returnData)
 
     proxy = _TabProxyStyle(base) if base is not None else _TabProxyStyle()
     return proxy

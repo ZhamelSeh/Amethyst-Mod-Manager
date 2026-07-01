@@ -199,22 +199,27 @@ def _format_size(num_bytes: int) -> str:
     return f"{mb / 1024:.2f} GB"
 
 
-def compute_sizes(entries: list[ModEntry], staging_dir: Path) -> dict[str, str]:
-    """Formatted folder size per non-separator mod. Walks the staging dir, so
-    only call it when the Size column is visible (Tk gates the same way)."""
+def compute_sizes(entries: list[ModEntry], staging_dir: Path
+                  ) -> tuple[dict[str, str], dict[str, int]]:
+    """(formatted, raw-bytes) folder size per non-separator mod. Bytes back
+    the Size column sort. Walks the staging dir, so only call it when the Size
+    column is visible (Tk gates the same way)."""
     sizes: dict[str, str] = {}
+    size_bytes: dict[str, int] = {}
     if staging_dir is None:
-        return sizes
+        return sizes, size_bytes
     for e in entries:
         if e.is_separator:
             continue
         mod_dir = staging_dir / e.name
         if not mod_dir.is_dir():
             continue
-        s = _format_size(_dir_size_bytes(mod_dir))
+        b = _dir_size_bytes(mod_dir)
+        s = _format_size(b)
         if s:
             sizes[e.name] = s
-    return sizes
+            size_bytes[e.name] = b
+    return sizes, size_bytes
 
 
 def compute_plugin_stats(rows) -> dict:

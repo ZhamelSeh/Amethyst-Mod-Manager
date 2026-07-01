@@ -466,18 +466,18 @@ def _move_to_separator(view, model, mod_rows, sep_name):
     """Reposition the selected mods directly below *sep_name* (lowest-priority end
     of its group in the reverse-priority display, matching Tk). Rebuilds the body
     without the moved mods, then inserts them right after the separator."""
-    from gui_qt.modlist_model import _BOUNDARY_NAMES
+    from gui_qt.modlist_model import _PINNED_NAMES
     rows = sorted(r for r in mod_rows
                   if not model.entry(r).is_separator
-                  and model.entry(r).name not in _BOUNDARY_NAMES)
+                  and model.entry(r).name not in _PINNED_NAMES)
     if not rows:
         return
     moved_names = {model.entry(r).name for r in rows}
     moved = [model.entry(r) for r in rows]           # preserve selection order
-    # Body = all non-boundary entries, minus the ones we're moving.
-    body = [model.entry(r) for r in range(model.rowCount())
-            if model.entry(r).name not in _BOUNDARY_NAMES
-            and model.entry(r).name not in moved_names]
+    # Body = the NATURAL order minus the moved mods — the display may be a
+    # sorted/inverted permutation and must never be persisted as the new order.
+    body = [e for e in model.natural_entries()
+            if e.name not in _PINNED_NAMES and e.name not in moved_names]
     sep_idx = next((i for i, e in enumerate(body)
                     if e.is_separator and e.name == sep_name), None)
     if sep_idx is None:
@@ -757,25 +757,24 @@ def _sort_selected_alphabetically(view, model, mod_rows):
     """Sort the SELECTED mods A→Z, writing them back into the same row slots the
     selection occupied (other rows + separators stay put). Port of Tk
     _sort_selected_alphabetically."""
-    from gui_qt.modlist_model import _BOUNDARY_NAMES
-    rows = sorted(r for r in mod_rows
-                  if not model.entry(r).is_separator
-                  and model.entry(r).name not in _BOUNDARY_NAMES)
-    if len(rows) < 2:
+    from gui_qt.modlist_model import _PINNED_NAMES
+    sel = [model.entry(r) for r in mod_rows]
+    sel = [e for e in sel
+           if not e.is_separator and e.name not in _PINNED_NAMES]
+    if len(sel) < 2:
         return
     # Sorted copy of just the selected entries.
-    sorted_entries = sorted((model.entry(r) for r in rows),
-                            key=lambda e: e.display_name.casefold())
-    # Rebuild the full body (non-boundary rows in current order); at each selected
-    # slot drop in the next sorted entry. set_entries re-appends boundaries.
+    sorted_entries = sorted(sel, key=lambda e: e.display_name.casefold())
+    # Rebuild the body from the NATURAL order (the display may be a sorted
+    # permutation); at each selected slot drop in the next sorted entry.
+    # set_entries re-appends boundaries.
+    sel_ids = {id(e) for e in sel}
     body: list = []
     it = iter(sorted_entries)
-    row_set = set(rows)
-    for r in range(model.rowCount()):
-        e = model.entry(r)
-        if e.name in _BOUNDARY_NAMES:
+    for e in model.natural_entries():
+        if e.name in _PINNED_NAMES:
             continue
-        body.append(next(it) if r in row_set else e)
+        body.append(next(it) if id(e) in sel_ids else e)
     model.set_entries(body)
     try:
         model.save()

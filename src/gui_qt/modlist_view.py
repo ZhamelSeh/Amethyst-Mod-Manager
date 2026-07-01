@@ -37,6 +37,14 @@ NAME_MIN = COL_MINS[COL_NAME]
 # Category, Installed, Size are hidden until the user enables them.
 _FIRST_RUN_HIDDEN = {COL_CATEGORY, COL_INSTALLED, COL_SIZE}
 
+# Header column → sort key (Tk _DATA_COL_SORT_KEYS; keys persisted by name via
+# column_state's sort_col, which stores the COLUMNS display name).
+_COL_TO_SORTKEY = {
+    COL_NAME: "name", COL_CATEGORY: "category", COL_FLAGS: "flags",
+    COL_CONFLICTS: "conflicts", COL_INSTALLED: "installed",
+    COL_VERSION: "version", COL_PRIORITY: "priority", COL_SIZE: "size",
+}
+
 
 class ModListView(QTreeView):
     def __init__(self, model: ModListModel, parent=None):
@@ -99,6 +107,11 @@ class ModListView(QTreeView):
         for sig in (model.modelReset, model.rowsInserted, model.rowsRemoved,
                     model.rowsMoved, model.layoutChanged):
             sig.connect(_drop_applied)
+        # A sort rebuild reorders rows in place (layoutChanged) — separator
+        # spanning + collapse hiding are row-indexed, so re-apply both.
+        # Connected AFTER _drop_applied so the hidden-set cache is clear first.
+        model.layoutChanged.connect(self._on_model_layout_changed)
+        model.modelReset.connect(self._on_model_layout_changed)
         self.doubleClicked.connect(self._on_double_click)
 
         self._restoring = True
@@ -127,16 +140,76 @@ class ModListView(QTreeView):
         from gui_qt.marker_strip import reposition_marker_strip
         reposition_marker_strip(self)
 
+    def _on_model_layout_changed(self, *_a):
+        """Row order changed in place (sort applied/cleared/re-derived) — the
+        spanning + hidden-row state is row-indexed and must be re-applied."""
+        self._apply_separator_spanning()
+        self.apply_collapse()
+
+    # ---- column-sort header clicks -----------------------------------------
+    def _on_header_sort_clicked(self, logical: int):
+        """Tk header-click cycle: Priority = 2-click toggle (reverse mode ↔
+        off); other columns = ascending → descending → clear."""
+        key = _COL_TO_SORTKEY.get(logical)
+        if key is None:
+            return
+        m = self.model()
+        cur, asc = m.sort_state()
+        if key == "priority":
+            new = (None, True) if cur == "priority" else ("priority", True)
+        elif cur == key:
+            new = (key, False) if asc else (None, True)
+        else:
+            new = (key, True)
+        self._apply_sort(logical, *new)
+
+    def _apply_sort(self, logical: int, key: str | None, ascending: bool):
+        m = self.model()
+        m.set_sort(key, ascending)
+        h = self.header()
+        if key is None:
+            h.setSortIndicator(-1, Qt.AscendingOrder)
+        else:
+            h.setSortIndicator(logical, Qt.AscendingOrder if ascending
+                               else Qt.DescendingOrder)
+        h.viewport().update()   # repaint the custom sort triangles
+        self._schedule_save()
+
+    def sort_triangle_spec(self, logical: int):
+        """TkStyleHeader hook: (active, ascending) for the sort triangle on
+        *logical*, or None for a non-sortable section. Inactive columns show a
+        dim ascending hint; the active column shows the real direction."""
+        key = _COL_TO_SORTKEY.get(logical)
+        if key is None:
+            return None
+        cur, asc = self.model().sort_state()
+        if cur == key:
+            return (True, asc)
+        return (False, True)
+
     def _configure_header(self):
         # Custom Tk-style header: owns all resizing (boundary drag moves the
         # line between two columns, total constant, no overflow). All sections
         # Fixed so Qt never auto-resizes.
         h = TkStyleHeader(self, COL_MINS, COL_DEFAULTS)
         self.setHeader(h)
+        # QTreeView.setHeader() re-configures the header and resets clickable
+        # to follow setSortingEnabled (off — we drive the sort by hand), so
+        # re-enable it AFTER installing or sectionClicked never fires.
+        h.setSectionsClickable(True)
         h.setMinimumSectionSize(min(COL_MINS.values()))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # NOTE: live sorting intentionally NOT enabled — the modlist is
-        # priority-ordered and the Tk app's column-sort has special semantics.
+        # Column sorting is driven by hand (NOT setSortingEnabled — Qt's model
+        # sort can't express the Tk semantics: separators anchored, mods
+        # sorted within their group, reverse-priority layout). Header clicks
+        # cycle the sort; the model derives the display order. The native
+        # indicator stays hidden — TkStyleHeader paints a triangle on EVERY
+        # sortable column (accent-blue on the active one) via
+        # sort_triangle_spec below; setSortIndicator still tracks the state
+        # for persistence.
+        h.setSortIndicatorShown(False)
+        h.setSortIndicator(-1, Qt.AscendingOrder)
+        h.sectionClicked.connect(self._on_header_sort_clicked)
         for col, w in COL_DEFAULTS.items():
             self.setColumnWidth(col, w)
         self._fitting = False
@@ -407,11 +480,11 @@ class ModListView(QTreeView):
         mods in its block (Tk parity)."""
         m = self.model()
         names: set[str] = set()
-        from gui_qt.modlist_model import _BOUNDARY_NAMES
+        from gui_qt.modlist_model import _PINNED_NAMES
         for idx in self.selectionModel().selectedRows():
             e = m.entry(idx.row())
             if e.is_separator:
-                if e.name in _BOUNDARY_NAMES:
+                if e.name in _PINNED_NAMES:
                     continue
                 for r in m.sep_block_rows(idx.row()):
                     names.add(m.entry(r).name)
@@ -484,8 +557,8 @@ class ModListView(QTreeView):
         just itself)."""
         m = self.model()
         e = m.entry(row)
-        from gui_qt.modlist_model import _BOUNDARY_NAMES
-        if e.name in _BOUNDARY_NAMES:
+        from gui_qt.modlist_model import _PINNED_NAMES
+        if e.name in _PINNED_NAMES:
             return None
         if not e.is_separator and e.locked:
             return None
@@ -500,7 +573,7 @@ class ModListView(QTreeView):
         sel = sorted({i.row() for i in self.selectionModel().selectedRows()})
         if row in sel and len(sel) > 1:
             carry = [r for r in sel
-                     if m.entry(r).name not in _BOUNDARY_NAMES
+                     if m.entry(r).name not in _PINNED_NAMES
                      and not (not m.entry(r).is_separator and m.entry(r).locked)]
             return carry or [row]
         return [row]
@@ -522,6 +595,21 @@ class ModListView(QTreeView):
             if (event.position().toPoint() - self._press_pos).manhattanLength() \
                     < self._DRAG_THRESHOLD:
                 return
+            m = self.model()
+            key, _asc = m.sort_state()
+            if key and not m.reverse_mode_active:
+                # Tk parity: dragging under a non-priority sort clears the
+                # sort first (display snaps to natural order), then the drag
+                # proceeds normally. Re-anchor the press to the entry's new row
+                # (selection follows via the persistent-index remap).
+                pressed = m.entry(self._press_row)
+                self._apply_sort(-1, None, True)
+                row = next((r for r in range(m.rowCount())
+                            if m.entry(r) is pressed), -1)
+                if row < 0:
+                    self._press_row = -1
+                    return
+                self._press_row = row
             block = self._drag_block_for(self._press_row)
             if block is None:
                 self._press_row = -1
@@ -585,7 +673,14 @@ class ModListView(QTreeView):
         carrying_block = (len(src) > 1 and m.entry(src[0]).is_separator)
         if carrying_block:
             dest = m._resolve_drop_dest(dest, separator_drag=True)
-        m.move_block(src, dest)
+        if m.reverse_mode_active:
+            # Reverse-priority drag: resolve the drop in display space with the
+            # Tk inverted-mode semantics, then the model uninverts + saves.
+            hidden = {r for r in range(m.rowCount())
+                      if self.isRowHidden(r, self.rootIndex())}
+            m.move_block_display(src, dest, hidden=hidden)
+        else:
+            m.move_block(src, dest)
         # After a structural change, re-apply spanning + collapse hiding.
         self._apply_separator_spanning()
         self.apply_collapse()
@@ -674,7 +769,12 @@ class ModListView(QTreeView):
                 if cur != -1 and cur != visual:
                     h.moveSection(cur, visual)
         if st["sort_col"] in name_to_col:
+            col = name_to_col[st["sort_col"]]
             order = Qt.AscendingOrder if st["ascending"] else Qt.DescendingOrder
-            # Set the indicator only (live sort not enabled yet).
-            self.header().setSortIndicator(name_to_col[st["sort_col"]], order)
+            self.header().setSortIndicator(col, order)
+            # Restore the live sort. The model is empty at this point — the
+            # first set_entries() re-derives the display with this sort.
+            key = _COL_TO_SORTKEY.get(col)
+            if key:
+                self.model().set_sort(key, st["ascending"])
 

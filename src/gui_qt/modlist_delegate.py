@@ -143,6 +143,18 @@ class ModRowDelegate(QStyledItemDelegate):
         # whose child mod is a conflict partner is tinted green/red/orange.
         if e.is_separator:
             from gui_qt.modlist_model import OVERWRITE_NAME, ROOT_FOLDER_NAME
+            from gui_qt.modlist_sort import DIVIDER_NAME
+            if e.name == DIVIDER_NAME:
+                # Reverse-priority float divider: a thin dashed centred line on
+                # a plain row background, no controls (Tk BOUNDARY_NAME row).
+                p.fillRect(r, self.c_row)
+                pen = QPen(self.c_border, 1)
+                pen.setStyle(Qt.PenStyle.DashLine)
+                p.setPen(pen)
+                cy = r.center().y()
+                p.drawLine(r.left() + 8, cy, r.right() - 8, cy)
+                p.restore()
+                return
             sep_hl = index.data(HighlightRole) or 0
             selected = bool(opt.state & QStyle.State_Selected)
             if selected:
@@ -491,9 +503,9 @@ class ModRowDelegate(QStyledItemDelegate):
             return False
 
         if e.is_separator:
-            from gui_qt.modlist_model import _BOUNDARY_NAMES
-            if e.name in _BOUNDARY_NAMES:
-                return False    # boundary seps have no controls
+            from gui_qt.modlist_model import _PINNED_NAMES
+            if e.name in _PINNED_NAMES:
+                return False    # boundary seps / divider have no controls
             # Arrow → collapse/expand; right-side box → lock. Handled by the view
             # (it owns persistence + row hiding); the delegate only hit-tests.
             view = self.parent()

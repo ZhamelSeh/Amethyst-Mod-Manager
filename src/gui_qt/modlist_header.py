@@ -7,10 +7,16 @@ and allows overflow.
 from __future__ import annotations
 
 from PySide6.QtWidgets import QHeaderView
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPointF
+from PySide6.QtGui import QColor, QPolygonF
 
 
 _GRAB_PX = 8   # pixels either side of a boundary that count as "on the line"
+
+# Sort-triangle metrics (painted per section when the view opts in).
+_TRI_W = 12
+_TRI_H = 7
+_TRI_PAD = 4   # gap from the section's right edge
 
 
 class TkStyleHeader(QHeaderView):
@@ -35,6 +41,71 @@ class TkStyleHeader(QHeaderView):
         self._drag_boundary = None   # (left_logical, right_logical)
         self._drag_x = 0
         self._cursor_on = False      # whether SplitHCursor is currently set
+        self._tri_active = None      # lazily-resolved triangle colours
+        self._tri_idle = None
+        self._tri_text = None
+
+    # -- per-section sort triangles ------------------------------------------
+    # Painted when the owning view provides sort_triangle_spec(logical) →
+    # None (no triangle) or (active: bool, ascending: bool). Every sortable
+    # column always shows a triangle; the active sort's is accent-blue and
+    # points ▲/▼ with the direction. Views without the hook (plugins list,
+    # Mod Files tree) are untouched.
+    def paintSection(self, painter, rect, logicalIndex):
+        spec_fn = getattr(self._view, "sort_triangle_spec", None)
+        spec = spec_fn(logicalIndex) if callable(spec_fn) else None
+        if spec is None:
+            painter.save()
+            super().paintSection(painter, rect, logicalIndex)
+            painter.restore()
+            return
+        active, ascending = spec
+        if self._tri_active is None:
+            from gui_qt.theme_qt import active_palette, _c
+            p = active_palette()
+            self._tri_active = QColor(_c(p, "ACCENT"))
+            self._tri_idle = QColor(_c(p, "TEXT_DIM"))
+        # Paint the section chrome (QSS background/borders/hover) with the
+        # label suppressed, then draw the text ourselves elided into the space
+        # LEFT of the triangle strip so the two can never overlap.
+        model = self.model()
+        painter.save()
+        try:
+            setattr(model, "_suppress_header_text", True)
+            super().paintSection(painter, rect, logicalIndex)
+        finally:
+            setattr(model, "_suppress_header_text", False)
+            painter.restore()
+        text = model.headerData(logicalIndex, Qt.Horizontal, Qt.DisplayRole)
+        text = "" if text is None else str(text)
+        strip = _TRI_W + _TRI_PAD + 2        # triangle zone + breathing room
+        avail = rect.adjusted(4, 0, -strip, 0)
+        if text and avail.width() > 4:
+            fm = painter.fontMetrics()
+            elided = fm.elidedText(text, Qt.ElideRight, avail.width())
+            painter.save()
+            # ButtonText is what QHeaderView paints labels with — QSS's
+            # `color:` lands there, so this matches the native look exactly.
+            painter.setPen(self.palette().buttonText().color())
+            painter.drawText(avail, int(self.defaultAlignment()), elided)
+            painter.restore()
+        x = rect.right() - _TRI_PAD - _TRI_W
+        if x < rect.left() + 2:
+            return   # section too narrow
+        cy = rect.center().y()
+        top, bot = cy - _TRI_H // 2, cy - _TRI_H // 2 + _TRI_H
+        if ascending:
+            pts = [QPointF(x, bot), QPointF(x + _TRI_W, bot),
+                   QPointF(x + _TRI_W / 2, top)]
+        else:
+            pts = [QPointF(x, top), QPointF(x + _TRI_W, top),
+                   QPointF(x + _TRI_W / 2, bot)]
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._tri_active if active else self._tri_idle)
+        painter.drawPolygon(QPolygonF(pts))
+        painter.restore()
 
     # -- boundary detection -------------------------------------------------
     def _boundary_at(self, x: int):

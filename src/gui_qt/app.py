@@ -3953,7 +3953,17 @@ class MainWindow(QMainWindow):
         self._modlist_model.save_failed.connect(
             lambda msg: self._notify(msg, "error"))
         self._modlist_view = ModListView(self._modlist_model)
+        # Column-sort rebuilds reorder rows in place (layoutChanged); the
+        # search/filter hidden sets are display-row-indexed and must be
+        # recomputed. Connected AFTER the view (its own layoutChanged hooks
+        # must clear the applied-hidden cache + spanning first).
+        self._modlist_model.layoutChanged.connect(
+            self._on_modlist_layout_changed)
         return self._modlist_view
+
+    def _on_modlist_layout_changed(self, *_a):
+        self._apply_modlist_search()
+        self._apply_modlist_filters()
 
     def _on_mods_enabled_changed(self, changes):
         """Mods were toggled (checkbox / Enable-Disable all / context menu) —
@@ -4589,10 +4599,13 @@ class MainWindow(QMainWindow):
                 profile_dir=self._gs.profile_dir(),
                 is_bg3=(getattr(self._gs.game, "game_id", "") == "baldurs_gate_3"))
 
-        self._modlist_model.set_entries(entries)
+        # Meta dicts BEFORE set_entries — set_entries re-derives the display
+        # order, and an active column sort (version/installed/category) must
+        # see the fresh data.
         self._modlist_model._versions = versions
         self._modlist_model._installed = installed
         self._modlist_model._categories = self._mod_categories
+        self._modlist_model.set_entries(entries)
         self._modlist_model.set_flags(flags)
         self._modlist_model.set_notes(self._read_mod_notes())
         self._modlist_model.set_conflicts({}, {})   # clear stale; recomputed async
@@ -4690,9 +4703,9 @@ class MainWindow(QMainWindow):
         if staging is None:
             return
         from gui_qt.modlist_data import compute_sizes
-        entries = [self._modlist_model.entry(r)
-                   for r in range(self._modlist_model.rowCount())]
-        self._modlist_model.set_sizes(compute_sizes(entries, staging))
+        entries = self._modlist_model.natural_entries()
+        sizes, size_bytes = compute_sizes(entries, staging)
+        self._modlist_model.set_sizes(sizes, size_bytes)
 
     def _refresh_modlist_stats(self):
         """Update the modlist footer stat pills: enabled / disabled mod counts.
@@ -4748,6 +4761,10 @@ class MainWindow(QMainWindow):
                 cur -= subset
                 cur |= fresh
         self._modlist_model.set_flags(flags)
+        # Re-point the model at the (possibly rebuilt) categories dict and
+        # re-sort if the Category column drives the current sort.
+        self._modlist_model._categories = self._mod_categories
+        self._modlist_model._resort_if_key("category")
         self._modlist_model.set_notes(self._read_mod_notes())
 
     def _read_mod_notes(self) -> dict:

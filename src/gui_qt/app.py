@@ -137,6 +137,9 @@ class MainWindow(QMainWindow):
     # Worker blocks on these to show the deferred FOMOD / BAIN pickers (holder+Event).
     _col_fomod = Signal(object)
     _col_bain = Signal(object)
+    # BSA/BA2 pack + unpack workers → UI thread (result dict | error str). See
+    # _on_pack_bsa / _on_unpack_bsa.
+    _bsa_op_done = Signal(object)
 
     _PLAY_BAR_W = 380       # play-bar (header right) fixed width
     _BTN_H = 42          # consistent height for all header buttons (~30% bigger)
@@ -161,6 +164,8 @@ class MainWindow(QMainWindow):
         self._op_progress.connect(self._on_op_progress)
         self._op_log.connect(self._append_log)
         self._op_done.connect(self._on_op_done)
+        self._bsa_op_running = False
+        self._bsa_op_done.connect(self._on_bsa_op_done)
         self._install_running = False
         self._install_done.connect(self._on_install_done)
         self._prepared_ready.connect(self._on_prepared_ready)
@@ -764,14 +769,12 @@ class MainWindow(QMainWindow):
             "Pack BSA", _c(self._pal, "BTN_SUCCESS"), compact=True)
         self._mf_pack_btn.setFixedHeight(self._FOOT_BTN_H)
         self._mf_pack_btn.setEnabled(False)
-        self._mf_pack_btn.clicked.connect(
-            lambda: self._mod_files_view._on_pack())
+        self._mf_pack_btn.clicked.connect(self._on_pack_bsa)
         self._mf_unpack_btn = self._color_button(
             "Unpack BSA", _c(self._pal, "BTN_DANGER"), compact=True)
         self._mf_unpack_btn.setFixedHeight(self._FOOT_BTN_H)
         self._mf_unpack_btn.setEnabled(False)
-        self._mf_unpack_btn.clicked.connect(
-            lambda: self._mod_files_view._on_unpack())
+        self._mf_unpack_btn.clicked.connect(self._on_unpack_bsa)
         self._mf_filters_btn = self._color_button(
             "Filters", _c(self._pal, "BTN_INFO"), compact=True)
         self._mf_filters_btn.setFixedHeight(self._FOOT_BTN_H)
@@ -5420,16 +5423,267 @@ class MainWindow(QMainWindow):
             "filetypes", self._mod_files_view.filetype_items())
 
     def _update_mf_footer_buttons(self):
-        ok = self._mod_files_view.has_mod()
-        for attr in ("_mf_pack_btn", "_mf_unpack_btn"):
-            b = getattr(self, attr, None)
-            if b is not None:
-                b.setEnabled(ok)
+        import Utils.bsa_pack_ops as ops
+        pack_btn = getattr(self, "_mf_pack_btn", None)
+        unpack_btn = getattr(self, "_mf_unpack_btn", None)
+        if pack_btn is None or unpack_btn is None:
+            return
+        mv = self._mod_files_view
+        kind = ops.archive_kind_for_game(getattr(mv, "game", None))
+        # Hide both buttons entirely on games we can't pack for (Tk parity).
+        if kind is None:
+            pack_btn.setVisible(False)
+            unpack_btn.setVisible(False)
+            return
+        upper = kind.upper()
+        pack_btn.setVisible(True)
+        unpack_btn.setVisible(True)
+        pack_btn.setText(f"Pack {upper}")
+        unpack_btn.setText(f"Unpack {upper}")
+        # Pack: any normal mod. Unpack: also needs a matching archive on disk.
+        is_normal = mv.has_mod() and ops.is_packable_mod(getattr(mv, "_mod_name", None))
+        pack_btn.setEnabled(is_normal)
+        has_archive = False
+        if is_normal:
+            mod_dir = self._bsa_mod_dir()
+            has_archive = mod_dir is not None and ops.mod_has_archive(mod_dir, kind)
+        unpack_btn.setEnabled(has_archive)
 
     def _on_mf_expand_clicked(self):
         expanded = self._mod_files_view._toggle_expand_all()
         self._mf_expand_btn.setText("⊟ Collapse all" if expanded
                                     else "⊞ Expand all")
+
+    # -- BSA / BA2 pack + unpack -------------------------------------------
+    def _bsa_mod_dir(self):
+        """Resolve the on-disk staging folder for the Mod Files tab's mod."""
+        mv = self._mod_files_view
+        game = getattr(mv, "game", None)
+        mod_name = getattr(mv, "_mod_name", None)
+        if game is None or not mod_name:
+            return None
+        try:
+            base = Path(game.get_effective_mod_staging_path())
+        except Exception:
+            return None
+        d = base / mod_name
+        return d if d.is_dir() else None
+
+    def _bsa_plugin_exts(self):
+        game = getattr(self._mod_files_view, "game", None)
+        return getattr(game, "plugin_extensions", None) or (".esp", ".esm", ".esl")
+
+    def _on_pack_bsa(self):
+        import Utils.bsa_pack_ops as ops
+        from gui_qt.bsa_pack_overlay import BsaPackOverlay
+
+        if self._bsa_op_running:
+            self._notify("An archive operation is already running.", "warning")
+            return
+        mv = self._mod_files_view
+        game = getattr(mv, "game", None)
+        mod_name = getattr(mv, "_mod_name", None)
+        profile_dir = getattr(mv, "profile_dir", None)
+        kind = ops.archive_kind_for_game(game)
+        if kind is None or not ops.is_packable_mod(mod_name):
+            return
+        mod_dir = self._bsa_mod_dir()
+        if mod_dir is None:
+            self._notify("Mod folder not found.", "warning")
+            return
+        if ops.is_profile_deployed(game, profile_dir):
+            self._notify(
+                f"Profile is deployed — run Restore first, then pack the "
+                f"{kind.upper()}.", "warning")
+            return
+
+        plan = ops.plan_pack(game, mod_dir, mod_name, kind, self._bsa_plugin_exts())
+
+        def on_done(opts):
+            if opts is None:
+                return
+            self._start_pack_bsa(plan, opts)
+
+        BsaPackOverlay.show_over(
+            self, archive_name=plan.archive_path.name,
+            existing=plan.existing_any, kind=kind, on_done=on_done)
+
+    def _start_pack_bsa(self, plan, opts):
+        import threading
+        import Utils.bsa_pack_ops as ops
+        from gui_qt.safe_emit import safe_emit
+
+        mv = self._mod_files_view
+        profile_dir = getattr(mv, "profile_dir", None)
+        index_path = getattr(mv, "index_path", None)
+        mod_name = plan.mod_name
+        delete_loose = bool(opts.get("delete_loose"))
+        split_textures = bool(opts.get("split_textures"))
+        skip_winners = bool(opts.get("skip_winners"))
+
+        excluded = ops.read_excluded_for_mod(profile_dir, mod_name)
+        if skip_winners:
+            excluded |= ops.compute_skip_winners(index_path, profile_dir, mod_name)
+        excluded_now = frozenset(excluded)
+
+        self._bsa_op_running = True
+        self._op_title = f"Pack {plan.kind.upper()}"
+        self._ensure_feedback()
+        self._notify(f"Packing {mod_name}…", "info")
+
+        def worker():
+            def progress(done, total, current):
+                safe_emit(self._op_progress, done, total,
+                          f"{done} / {total}  —  {current[-50:]}")
+            try:
+                res = ops.run_pack(
+                    plan, excluded_keys=excluded_now,
+                    split_textures=split_textures,
+                    progress=progress, cancel=None)
+            except ops.PackCancelled:
+                safe_emit(self._bsa_op_done, {"kind": "pack", "cancelled": True})
+                return
+            except Exception as exc:
+                safe_emit(self._bsa_op_done,
+                          {"kind": "pack", "error": str(exc)})
+                return
+            safe_emit(self._bsa_op_done, {
+                "kind": "pack", "plan": plan, "result": res,
+                "delete_loose": delete_loose, "mod_name": mod_name,
+            })
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_unpack_bsa(self):
+        import Utils.bsa_pack_ops as ops
+        from gui_qt.bsa_unpack_overlay import BsaUnpackOverlay
+
+        if self._bsa_op_running:
+            self._notify("An archive operation is already running.", "warning")
+            return
+        mv = self._mod_files_view
+        game = getattr(mv, "game", None)
+        mod_name = getattr(mv, "_mod_name", None)
+        profile_dir = getattr(mv, "profile_dir", None)
+        if ops.archive_kind_for_game(game) is None or not ops.is_packable_mod(mod_name):
+            return
+        mod_dir = self._bsa_mod_dir()
+        if mod_dir is None:
+            return
+        if ops.is_profile_deployed(game, profile_dir):
+            self._notify(
+                "Profile is deployed — run Restore first, then unpack.",
+                "warning")
+            return
+
+        def on_done(archives):
+            if not archives:
+                return
+            self._start_unpack_bsa(mod_dir, archives)
+
+        BsaUnpackOverlay.show_over(
+            self, mod_name=mod_name, mod_dir=mod_dir,
+            plugin_exts=self._bsa_plugin_exts(), on_done=on_done)
+
+    def _start_unpack_bsa(self, mod_dir, archive_paths):
+        import threading
+        import Utils.bsa_pack_ops as ops
+        from gui_qt.safe_emit import safe_emit
+
+        mod_name = getattr(self._mod_files_view, "_mod_name", None)
+        kind_upper = ops.unpack_kind_label(archive_paths)
+
+        self._bsa_op_running = True
+        self._op_title = f"Unpack {kind_upper}"
+        self._ensure_feedback()
+        self._notify(f"Unpacking {len(archive_paths)} archive(s)…", "info")
+
+        def worker():
+            def progress(done, total, current):
+                safe_emit(self._op_progress, done, total,
+                          f"{done} / {total}  —  {current[-50:]}")
+            try:
+                count, written = ops.run_unpack(
+                    archive_paths, mod_dir, progress=progress, cancel=None)
+            except ops.UnpackCancelled:
+                safe_emit(self._bsa_op_done, {"kind": "unpack", "cancelled": True})
+                return
+            except Exception as exc:
+                safe_emit(self._bsa_op_done,
+                          {"kind": "unpack", "error": str(exc)})
+                return
+            safe_emit(self._bsa_op_done, {
+                "kind": "unpack", "mod_dir": mod_dir, "mod_name": mod_name,
+                "archives": archive_paths, "count": count, "written": written,
+            })
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_bsa_op_done(self, info: dict):
+        """UI-thread completion for pack/unpack workers (see _bsa_op_done)."""
+        import Utils.bsa_pack_ops as ops
+
+        self._bsa_op_running = False
+        if self._progress_popup is not None:
+            QTimer.singleShot(800, self._progress_popup.clear)
+
+        if info.get("cancelled"):
+            self._notify("Cancelled.", "info")
+            return
+        err = info.get("error")
+        if err:
+            verb = "Pack" if info["kind"] == "pack" else "Unpack"
+            self._notify(f"{verb} failed: {err}", "error")
+            return
+
+        mv = self._mod_files_view
+        profile_dir = getattr(mv, "profile_dir", None)
+        mod_name = info.get("mod_name")
+
+        if info["kind"] == "pack":
+            plan = info["plan"]
+            res = info["result"]
+            if info["delete_loose"]:
+                deleted = ops.delete_loose_files(plan.mod_dir, res.packed_keys)
+                tail = f" ({deleted} loose file(s) deleted)" if deleted else ""
+            else:
+                ops.auto_disable_packed_files(profile_dir, mod_name, res.packed_keys)
+                tail = " (packed files disabled)"
+            parts = []
+            if res.main_count:
+                parts.append(f"{res.main_count} → {plan.archive_path.name}")
+            if res.tex_count and plan.archive_textures_path is not None:
+                parts.append(f"{res.tex_count} → {plan.archive_textures_path.name}")
+            summary = "; ".join(parts) or "no files packed"
+            stub = " + stub .esp" if plan.stub_plugin_path is not None else ""
+            self._notify(f"Packed {summary}{stub}{tail}", "success")
+        else:  # unpack
+            for ap in info["archives"]:
+                try:
+                    ap.unlink()
+                except OSError:
+                    pass
+            stem = ops.shared_archive_stem(info["archives"])
+            stub, is_ours = ops.stub_for_unpack(info["mod_dir"], stem)
+            if is_ours:
+                try:
+                    stub.unlink()
+                except OSError:
+                    pass
+            ops.clear_excluded_for_unpack(profile_dir, mod_name, info["written"])
+            self._notify(
+                f"Unpacked {info['count']} file(s) from "
+                f"{len(info['archives'])} archive(s)", "success")
+
+        # Rebuild conflicts/index (Qt equivalent of the Tk filemap rebuild) and
+        # refresh the Mod Files tree so the new state shows.
+        self._rebuild_conflicts_async(rescan_index=True)
+        try:
+            if mod_name is not None:
+                mv.show_mod(mod_name)
+        except Exception:
+            pass
+        self._update_mf_footer_buttons()
 
     def _build_modlist_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel

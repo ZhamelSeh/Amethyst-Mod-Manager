@@ -465,15 +465,11 @@ class ModFilesView(QWidget):
         mflogic.save_exclusions(self.profile_dir, self._mod_name, visible, excluded)
         self.changed.emit()
 
-    # -- right-click / pack (stubs filled in follow-up) ---------------------
+    # -- right-click (context menu stub filled in follow-up) ----------------
+    # Pack / Unpack BSA are driven by the app footer buttons (app._on_pack_bsa /
+    # _on_unpack_bsa), which own the progress popup + filemap rebuild.
     def _on_context_menu(self, pos):
         pass  # wired in a later step
-
-    def _on_pack(self):
-        pass
-
-    def _on_unpack(self):
-        pass
 
     def has_mod(self) -> bool:
         """True when a real mod is shown (the app gates Pack/Unpack on this)."""

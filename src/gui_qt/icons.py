@@ -16,12 +16,16 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "icons"
 _cache: dict[tuple[str, int], QIcon] = {}
 
 
-def icon(name: str, size: int = 18) -> QIcon:
+def icon(name: str, size: int = 18, color: str | None = None) -> QIcon:
     """Return a QIcon for icons/<name> scaled to *size* px (square).
+
+    When *color* is given the opaque pixels are recoloured to it (alpha shape
+    preserved), so a mono glyph like the gear can follow the theme foreground
+    and stay visible in both light and dark modes.
 
     Missing files yield an empty QIcon (button shows text only).
     """
-    key = (name, size)
+    key = (f"{name}#{color or ''}", size)
     cached = _cache.get(key)
     if cached is not None:
         return cached
@@ -33,6 +37,15 @@ def icon(name: str, size: int = 18) -> QIcon:
         if not pm.isNull():
             pm = pm.scaled(QSize(size, size), Qt.KeepAspectRatio,
                            Qt.SmoothTransformation)
+            if color:
+                tinted = QPixmap(pm.size())
+                tinted.fill(Qt.transparent)
+                p = QPainter(tinted)
+                p.drawPixmap(0, 0, pm)          # original (for its alpha shape)
+                p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+                p.fillRect(tinted.rect(), QColor(color))
+                p.end()
+                pm = tinted
         ic = QIcon(pm)
     _cache[key] = ic
     return ic

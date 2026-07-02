@@ -1010,17 +1010,21 @@ class MainWindow(QMainWindow):
         # Settings — icon-only square button on the far right. Opens a Settings
         # tab scoped over the Plugins panel.
         self._settings_button = self._icon_square_button(
-            "settings.png", tooltip="Settings")
+            "settings.png", tooltip="Settings", tint=_c(self._pal, "TEXT_MAIN"))
         self._settings_button.clicked.connect(self._open_settings_tab)
         h.addWidget(self._settings_button)
 
         self._left_header_widget = header
         return header
 
-    def _icon_square_button(self, icon_name: str, tooltip: str = "") -> QToolButton:
-        """A compact square icon-only button (e.g. Settings) for the toolbar."""
+    def _icon_square_button(self, icon_name: str, tooltip: str = "",
+                            tint: str | None = None) -> QToolButton:
+        """A compact square icon-only button (e.g. Settings) for the toolbar.
+
+        *tint* recolours a mono glyph to a theme colour so it stays visible in
+        both light and dark modes (the raw PNGs are white)."""
         b = QToolButton()
-        b.setIcon(icon(icon_name, self._ICON_PX))
+        b.setIcon(icon(icon_name, self._ICON_PX, color=tint))
         b.setIconSize(QSize(self._ICON_PX, self._ICON_PX))
         b.setToolButtonStyle(Qt.ToolButtonIconOnly)
         b.setObjectName("IconButton")
@@ -1131,8 +1135,35 @@ class MainWindow(QMainWindow):
                 self._open_configure_game_tab(game)
             else:
                 self._append_log("[game] no active game to configure")
+        elif which == "custom":
+            self._open_custom_game_tab()
         else:
             self._append_log(f"[game] {which} (not wired yet)")
+
+    def _open_custom_game_tab(self):
+        """Open the Define-Custom-Game form as a (detachable) tab. On save, chain
+        to the Configure-Game tab so the user can set the install path/prefix
+        (a fresh custom game has no path yet → not yet selectable)."""
+        if self._tabs.has_key("custom_game"):
+            self._tabs.focus_key("custom_game")
+            return
+        from gui_qt.custom_game_view import CustomGameView
+
+        def _done(saved_defn, deleted):
+            self._tabs.close_tab("custom_game")
+            if saved_defn is None:
+                return
+            from gui.game_helpers import _load_games, _GAMES
+            names = _load_games()
+            self._gs.game_names = names
+            self._game_selector.set_items(names, current=self._gs.game_name)
+            self._append_log(f"[game] custom game defined: {saved_defn['name']}")
+            game = _GAMES.get(saved_defn["name"])
+            if game is not None:
+                self._open_configure_game_tab(game)
+
+        view = CustomGameView(on_done=_done)
+        self._tabs.open_tab(view, "Define custom game", key="custom_game")
 
     def _open_add_game_tab(self):
         """Open the Add Game card-grid picker as a (detachable) tab."""

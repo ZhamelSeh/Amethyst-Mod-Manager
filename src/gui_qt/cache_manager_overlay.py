@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtCore import Qt, QEvent, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QPushButton,
     QScrollArea, QSizePolicy,
@@ -82,8 +82,10 @@ class CacheManagerOverlay(QWidget):
         self._reposition()
         self.show()
         self.raise_()
-        self._repaint()
-        self._start_size_scan()
+        # Populating the list walks staging roots (orphaned_tmp_dirs) which can
+        # be slow on disk — defer it a tick so the overlay paints instantly.
+        self._total_lbl.setText("Total: calculating…")
+        QTimer.singleShot(0, self._populate)
 
     @classmethod
     def show_over(cls, host, active_game_name: str = "", on_closed=None):
@@ -183,6 +185,12 @@ class CacheManagerOverlay(QWidget):
         outer.addWidget(wrap)
 
     # ---- row list ----------------------------------------------------------
+    def _populate(self):
+        """Rebuild the row list then kick off the async size scan. Runs off the
+        constructor's paint (deferred) so the overlay appears instantly."""
+        self._repaint()
+        self._start_size_scan()
+
     def _repaint(self):
         from Utils.cache_tools import enumerate_game_caches, orphaned_tmp_dirs
         # Clear existing rows (keep the trailing stretch).
@@ -367,8 +375,7 @@ class CacheManagerOverlay(QWidget):
         else:
             self._set_status(
                 f"Cleared {cleared} cache{'s' if cleared != 1 else ''}.", "ok")
-        self._repaint()
-        self._start_size_scan()
+        self._populate()
 
     def _set_status(self, text: str, kind: str = "dim"):
         color = {

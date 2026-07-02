@@ -33,6 +33,19 @@ from gui_qt.theme_qt import active_palette, _c
 from Utils.collection_manifest import fmt_size
 
 
+class _SizeItem(QTableWidgetItem):
+    """Size cell: shows the humanized string (DisplayRole only) but sorts by the
+    raw byte count stashed in UserRole. Setting EditRole to an int made the view
+    render the raw number instead of the formatted text, so keep it off the
+    item and compare via UserRole here."""
+
+    def __lt__(self, other):
+        try:
+            return (self.data(Qt.UserRole) or 0) < (other.data(Qt.UserRole) or 0)
+        except Exception:
+            return super().__lt__(other)
+
+
 # Slug registry of collections whose install is paused mid-run (mirrors Tk's
 # module-level ``_PAUSED_INSTALLS``). A live pause adds the slug here so an open
 # detail view's button flips to "Resume" without re-reading the profile; a
@@ -77,7 +90,7 @@ class _RevisionCombo(QComboBox):
             pass
 
 # Mod-list columns.
-_COLS = ["Name", "Author", "Version", "Size", "Category", "Opt"]
+_COLS = ["Name", "Author", "Version", "Size", "Opt"]
 _COL_SIZE = 3
 
 
@@ -579,13 +592,11 @@ class CollectionDetailView(QWidget):
             self._set_cell(r, 0, m.mod_name or "")
             self._set_cell(r, 1, m.mod_author or "")
             self._set_cell(r, 2, m.version or "")
-            # Size — numeric sort via EditRole int.
-            size_item = QTableWidgetItem()
-            size_item.setData(Qt.DisplayRole, fmt_size(m.size_bytes))
-            size_item.setData(Qt.EditRole, int(m.size_bytes or 0))
+            # Size — humanized text, numeric sort via the raw bytes in UserRole.
+            size_item = _SizeItem(fmt_size(m.size_bytes))
+            size_item.setData(Qt.UserRole, int(m.size_bytes or 0))
             self._table.setItem(r, _COL_SIZE, size_item)
-            self._set_cell(r, 4, m.category_name or "")
-            self._set_cell(r, 5, "✓" if m.optional else "")
+            self._set_cell(r, 4, "✓" if m.optional else "")
         self._table.setSortingEnabled(True)
         self._table.sortItems(0, Qt.AscendingOrder)
 

@@ -123,7 +123,11 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
             bits |= FLAG_ENDORSED
         if meta.root_folder:
             bits |= FLAG_ROOT
-        if getattr(meta, "missing_requirements", ""):
+        # "Ignore requirements" in the Missing Requirements panel adds the OWNING
+        # mod's name to `ignored_reqs` (a whole-mod ignore), so gate on e.name
+        # first. The per-requirement-name filter is kept for any future
+        # requirement-level ignores.
+        if getattr(meta, "missing_requirements", "") and e.name not in ignored_reqs:
             unignored = [n for n in _parse_missing_req_names(meta.missing_requirements)
                          if n not in ignored_reqs]
             if unignored:

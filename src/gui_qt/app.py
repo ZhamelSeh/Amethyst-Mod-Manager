@@ -3624,6 +3624,17 @@ class MainWindow(QMainWindow):
                     self._game_selector.set_current(game.name)
                 elif removed:
                     self._append_log(f"[game] removed instance: {game.name}")
+                    # Don't leave the manager pointed at the now-removed game —
+                    # switch to the first remaining configured game, or fall
+                    # back to the Add-Game picker if none are left.
+                    remaining = [n for n in names
+                                 if n != game.name and n != "No games configured"]
+                    if remaining:
+                        fallback = remaining[0]
+                        self._on_game_changed(fallback)
+                        self._game_selector.set_current(fallback)
+                    else:
+                        self._open_add_game_tab()
 
         page = ConfigureGameView(game, on_done=_done)
         verb = "Reconfigure" if game.is_configured() else "Add"
@@ -5214,8 +5225,22 @@ class MainWindow(QMainWindow):
             return
         from gui_qt.modlist_filter import plugin_filter_hidden_rows
         state = getattr(self, "_plugin_filter_state", None) or {}
-        hide = plugin_filter_hidden_rows(self._plugin_model._rows, state)
+        disabled_mf = self._disabled_plugin_files()
+        hide = plugin_filter_hidden_rows(self._plugin_model._rows, state,
+                                         disabled_mf=disabled_mf)
         self._plugin_view.set_filter_hidden(hide)
+
+    def _disabled_plugin_files(self) -> set:
+        """Plugin filenames (lower) disabled via the Mod Files tab, for the
+        Plugins-tab 'Disabled plugins' filter union."""
+        pdir = self._gs.profile_dir()
+        if pdir is None:
+            return set()
+        try:
+            from Utils.disabled_plugins import disabled_plugin_files
+            return disabled_plugin_files(pdir, self._gs.game)
+        except Exception:
+            return set()
 
     def _sync_text_files_filter_list(self):
         if not self._text_files_filter_panel.isVisible():
@@ -5365,10 +5390,7 @@ class MainWindow(QMainWindow):
         # disabled (greyed) so the panel is complete and they light up later.
         # (FOMOD/BAIN come from meta.is_fomod/is_bain; conflicts, plugins, BSA,
         #  PBR, updates, categories, file types are all wired.)
-        _UNWIRED = {
-            "filter_missing_reqs", "filter_has_disabled_plugins",
-            "filter_has_notes",
-        }
+        _UNWIRED = set()
         items = [(key, label, key not in _UNWIRED)
                  for key, label in STATUS_FILTERS]
         spec = [
@@ -5599,6 +5621,9 @@ class MainWindow(QMainWindow):
         data.fomod_mods = set(getattr(self, "_mod_fomod", set()))
         data.bain_mods = set(getattr(self, "_mod_bain", set()))
         data.modified_mf_mods = self._build_modified_mf_mods()
+        data.disabled_plugins_mods = self._build_disabled_plugins_mods()
+        data.notes_mods = {m for m, note in self._read_mod_notes().items()
+                           if (note or "").strip()}
         # Overlay the "modified in Mod Files" eye flag in the modlist Flags column.
         self._modlist_model.set_modified_mf(data.modified_mf_mods)
         if payload:
@@ -5637,6 +5662,34 @@ class MainWindow(QMainWindow):
                     out.add(mod)
             for mod, prefixes in (read_mod_strip_prefixes(pdir, None) or {}).items():
                 if any(p for p in prefixes):
+                    out.add(mod)
+        except Exception:
+            pass
+        return out
+
+    def _build_disabled_plugins_mods(self) -> set:
+        """Mods that own at least one disabled plugin — union of plugins disabled
+        in plugins.txt and plugins disabled via the Mod Files tab (Tk-parity
+        'Mods with disabled plugins' filter)."""
+        pdir = self._gs.profile_dir()
+        if pdir is None:
+            return set()
+        out: set[str] = set()
+        # Mod Files "Disable" checkbox on a plugin file.
+        try:
+            from Utils.disabled_plugins import mods_with_disabled_plugins
+            out |= mods_with_disabled_plugins(pdir, self._gs.game)
+        except Exception:
+            pass
+        # plugins.txt-disabled plugins → their owning mod (via filemap owner map).
+        try:
+            cd = getattr(self, "_conflict_data", None)
+            owner = dict(getattr(cd, "plugin_owner", {}) or {}) if cd else {}
+            for r in getattr(self._plugin_model, "_rows", []) or []:
+                if getattr(r, "vanilla", False) or getattr(r, "enabled", True):
+                    continue
+                mod = owner.get(getattr(r, "name", "").lower())
+                if mod:
                     out.add(mod)
         except Exception:
             pass
@@ -5740,6 +5793,9 @@ class MainWindow(QMainWindow):
         self._modlist_view.on_reinstall = self._reinstall_mods
         # Show Conflicts: right-click item.
         self._modlist_view.on_show_conflicts = self._open_show_conflicts_tab
+        # Mod removal strips plugins from plugins.txt/loadorder.txt — reload the
+        # plugin panel so the removed plugins disappear without a manual refresh.
+        self._modlist_view.on_mods_removed = self._reload_plugins
         # Root-Folder toggle wrote meta.ini → refresh the root flag immediately,
         # then rescan those mods + rebuild filemap (the index caches strip-applied
         # vs verbatim paths, so it's now stale; the rebuild also refreshes the

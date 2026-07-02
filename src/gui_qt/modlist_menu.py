@@ -925,6 +925,17 @@ def _add_separator(view, model, row, above):
                                _named, ok_label="Add")
 
 
+def _notify_mods_removed(view):
+    """Tell the window a mod (and possibly its plugins) was removed, so the
+    plugin panel can reload. No-op if the callback isn't wired."""
+    cb = getattr(view, "on_mods_removed", None)
+    if callable(cb):
+        try:
+            cb()
+        except Exception as exc:
+            print(f"[gui_qt] on_mods_removed failed: {exc}", flush=True)
+
+
 def _remove(view, model, row):
     """Fully remove a mod: undeploy its files, delete its staging folder, drop
     its index/BSA/plugins entries, then remove the modlist row. (Not just the
@@ -947,6 +958,7 @@ def _remove(view, model, row):
             except Exception as exc:
                 print(f"[gui_qt] mod removal failed: {exc}", flush=True)
         model.remove_row(row)
+        _notify_mods_removed(view)
 
     ConfirmOverlay.show_over(
         view, "Remove mod",
@@ -1060,6 +1072,7 @@ def _remove_mods_multi(view, model, mod_rows):
                 print(f"[gui_qt] mod removal failed: {exc}", flush=True)
         for r in sorted(rows, reverse=True):
             model.remove_row(r)
+        _notify_mods_removed(view)
 
     ConfirmOverlay.show_over(
         view, "Remove mods",

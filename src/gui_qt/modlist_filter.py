@@ -158,26 +158,37 @@ PLUGIN_STATUS_FILTERS = [
     ("filter_ext_esp",        "Extension .esp"),
     ("filter_missing",        "Missing masters"),
     ("filter_dirty",          "Dirty (needs cleaning)"),
+    ("filter_userlist",       "Managed by userlist"),
+    ("filter_bash_tags",      "Bash-tagged"),
 ]
 
 
-def plugin_filter_hidden_rows(rows, state: dict) -> set[int]:
+def plugin_filter_hidden_rows(rows, state: dict, disabled_mf=None) -> set[int]:
     """Rows to HIDE for the plugins-tab filter side panel.
 
     `rows` is the PluginModel row list (each has .name/.enabled/.flags/.vanilla);
     `state` maps each filter_* key → tri-state int (0 off / 1 include / 2 exclude).
+    `disabled_mf` (optional) is the set of plugin filenames (lowercase basename)
+    disabled via the Mod Files tab — a plugin in this set counts as "disabled"
+    even if plugins.txt still enables it (the two sources are unioned).
     Include narrows (keep only rows where the predicate holds); exclude drops
     (hide rows where it holds). AND across includes, OR across excludes — same
     convention as compute_hidden_rows. No active keys → hide nothing.
     """
-    from gui_qt.plugin_state import PF_ESL, PF_MISSING, PF_DIRTY
+    from gui_qt.plugin_state import (
+        PF_ESL, PF_MISSING, PF_DIRTY, PF_TAGS, PF_USERLIST)
+
+    disabled_mf = disabled_mf or set()
+
+    def _disabled_in_mf(r):
+        return r.name.lower() in disabled_mf
 
     def _has(key):
         def pred(r):
             if key == "filter_enabled":
-                return r.enabled or r.vanilla
+                return (r.enabled or r.vanilla) and not _disabled_in_mf(r)
             if key == "filter_disabled":
-                return not r.enabled and not r.vanilla
+                return (not r.enabled and not r.vanilla) or _disabled_in_mf(r)
             if key == "filter_esl_flagged":
                 return bool(r.flags & PF_ESL)
             if key == "filter_esl_not_flagged":
@@ -192,6 +203,10 @@ def plugin_filter_hidden_rows(rows, state: dict) -> set[int]:
                 return bool(r.flags & PF_MISSING)
             if key == "filter_dirty":
                 return bool(r.flags & PF_DIRTY)
+            if key == "filter_userlist":
+                return bool(r.flags & PF_USERLIST)
+            if key == "filter_bash_tags":
+                return bool(r.flags & PF_TAGS)
             return True
         return pred
 

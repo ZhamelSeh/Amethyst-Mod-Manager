@@ -33,9 +33,6 @@ from Utils import ui_config as uc
 # ---------------------------------------------------------------------------
 class SettingsView(QWidget):
     # Carries the cache-size scan result from a daemon worker thread to the UI
-    # thread (queued — thread-safe). A plain QThread crashed on app exit if the
-    # rglob was still running; a daemon thread is safely abandoned instead.
-    _cache_size_ready = Signal(int)
     # pick_folder's callback fires on the portal WORKER thread; marshal the
     # (edit, save_fn, path) result to the GUI thread before touching a widget.
     _folder_picked = Signal(object)
@@ -45,8 +42,6 @@ class SettingsView(QWidget):
         self._window = window          # main window — for _notify, threads
         self._pal = active_palette()
         self.setObjectName("SettingsView")
-        self._cache_scanning = False
-        self._cache_size_ready.connect(self._on_cache_size)
         self._folder_picked.connect(self._on_folder_picked)
 
         outer = QVBoxLayout(self)
@@ -280,7 +275,7 @@ class SettingsView(QWidget):
         # Manage Caches action.
         row = self._next_row(g)
         g.addWidget(QLabel("Caches"), row, 0)
-        self._cache_btn = QPushButton("Manage Caches… (—)")
+        self._cache_btn = QPushButton("Manage Caches…")
         self._cache_btn.setCursor(Qt.PointingHandCursor)
         self._cache_btn.clicked.connect(self._on_manage_caches)
         cwrap = QHBoxLayout()
@@ -288,7 +283,6 @@ class SettingsView(QWidget):
         cwrap.addStretch(1)
         holder = QWidget(); holder.setLayout(cwrap)
         g.addWidget(holder, row, 1)
-        self._refresh_cache_size()
 
     def _build_general(self):
         g = self._section("General")
@@ -392,43 +386,12 @@ class SettingsView(QWidget):
         self._safe_save(save_fn, "")
 
     # ---- Manage Caches ----------------------------------------------------
-    def _refresh_cache_size(self):
-        """Scan the cache size on a daemon thread and push the result to the UI
-        thread via _cache_size_ready. Daemon (not QThread) so app exit mid-scan
-        doesn't abort — the thread is just abandoned, and the queued signal is
-        dropped if the widget is gone."""
-        if self._cache_scanning:
-            return
-        self._cache_scanning = True
-        import threading
-
-        def worker():
-            try:
-                from Utils.cache_tools import total_cache_size
-                size = total_cache_size()
-            except Exception:
-                size = 0
-            try:
-                self._cache_size_ready.emit(size)
-            except RuntimeError:
-                pass   # widget (and its signal) already destroyed
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _on_cache_size(self, size: int):
-        self._cache_scanning = False
-        from Utils.cache_tools import format_size
-        if self._cache_btn is not None:
-            self._cache_btn.setText(f"Manage Caches… ({format_size(size)})")
-
     def _on_manage_caches(self):
-        """Open the borderless per-game cache browser overlay (Tk parity).
-        Re-scans the button's size label when it closes (clears change it)."""
+        """Open the borderless per-game cache browser overlay (Tk parity)."""
         from gui_qt.cache_manager_overlay import CacheManagerOverlay
         active = getattr(getattr(self._window, "_gs", None), "game_name", "") or ""
         CacheManagerOverlay.show_over(
-            self._window, active_game_name=active,
-            on_closed=self._refresh_cache_size)
+            self._window, active_game_name=active)
 
     # ---- helpers ----------------------------------------------------------
     def _rebuild_conflicts(self):

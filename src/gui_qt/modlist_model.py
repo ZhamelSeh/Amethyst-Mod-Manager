@@ -116,6 +116,9 @@ class ModListModel(QAbstractTableModel):
         # dragged. Set via set_separator_state(); persistence lives in the view.
         self._collapsed: set[str] = set()
         self._sep_locks: dict[str, bool] = {}
+        # Custom separator background colours, keyed by the internal
+        # `..._separator` name (matches the Tk / profile_state storage key).
+        self._sep_colors: dict[str, str] = {}
         # Per-row memo for _separator_highlight (block walk is O(block size)
         # and data() asks per paint). Cleared on highlight/collapse/entry edits.
         self._sep_hl_cache: dict[int, int] = {}
@@ -511,9 +514,12 @@ class ModListModel(QAbstractTableModel):
         return self._entries[row]
 
     # ---- separators -------------------------------------------------------
-    def set_separator_state(self, collapsed: set[str], locks: dict[str, bool]):
+    def set_separator_state(self, collapsed: set[str], locks: dict[str, bool],
+                            colors: dict[str, str] | None = None):
         self._collapsed = set(collapsed or set())
         self._sep_locks = dict(locks or {})
+        if colors is not None:
+            self._sep_colors = dict(colors)
         self._sep_hl_cache.clear()
 
     def is_collapsed(self, sep_name: str) -> bool:
@@ -521,6 +527,18 @@ class ModListModel(QAbstractTableModel):
 
     def is_sep_locked(self, sep_name: str) -> bool:
         return bool(self._sep_locks.get(sep_name, False))
+
+    def sep_color(self, sep_name: str) -> str | None:
+        """Custom background colour ("#rrggbb") for a separator, keyed by its
+        internal `..._separator` name, or None if it uses the theme default."""
+        return self._sep_colors.get(sep_name)
+
+    def set_sep_color(self, sep_name: str, color: str | None) -> None:
+        """Set/clear a separator's custom colour (None clears it)."""
+        if color:
+            self._sep_colors[sep_name] = color
+        else:
+            self._sep_colors.pop(sep_name, None)
 
     def toggle_collapse(self, row: int) -> set[str]:
         e = self._entries[row]

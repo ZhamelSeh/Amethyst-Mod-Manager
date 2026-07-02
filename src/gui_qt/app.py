@@ -2569,6 +2569,110 @@ class MainWindow(QMainWindow):
             self._tabs.close_tab("change_version")
         self._reload_modlist()
 
+    # ---- Separator settings (plugins-panel-scoped overlay) ----------------
+
+    def _open_sep_settings_tab(self, sep_name, current_color, current_deploy):
+        """Open the Separator Settings picker (colour + deploy override) as a tab
+        over the plugins panel. Triggered by the right-click 'Separator settings…'
+        item. *sep_name* is the internal `..._separator` name (the storage key)."""
+        from gui_qt.separator_settings_view import SeparatorSettingsView
+        if self._tabs.has_key("sep_settings"):
+            self._tabs.close_tab("sep_settings")
+        view = SeparatorSettingsView(
+            sep_name, current_color, current_deploy,
+            on_save=lambda color, deploy: self._save_sep_settings(
+                sep_name, color, deploy),
+            on_close=self._close_sep_settings_tab)
+        self._tabs.open_scoped_tab(
+            view, "Separator Settings", self._plugins_panel_stack,
+            key="sep_settings")
+
+    def _save_sep_settings(self, sep_name, color, deploy):
+        """Persist a separator's colour + deploy override, repaint the modlist,
+        and rebuild the filemap (a deploy-path change reroutes its mods)."""
+        profile_dir = self._gs.profile_dir()
+        # Colour — model drives the repaint; profile_state persists it.
+        self._modlist_model.set_sep_color(sep_name, color)
+        if profile_dir is not None:
+            try:
+                from Utils.profile_state import (
+                    read_separator_colors, write_separator_colors,
+                    read_separator_deploy_paths, write_separator_deploy_paths)
+                colors = read_separator_colors(profile_dir)
+                if color:
+                    colors[sep_name] = color
+                else:
+                    colors.pop(sep_name, None)
+                write_separator_colors(profile_dir, colors)
+
+                paths = read_separator_deploy_paths(profile_dir)
+                if deploy:
+                    paths[sep_name] = deploy
+                else:
+                    paths.pop(sep_name, None)
+                write_separator_deploy_paths(profile_dir, paths)
+            except Exception as exc:
+                print(f"[gui_qt] separator settings save failed: {exc}",
+                      flush=True)
+        self._modlist_view.viewport().update()
+        # Deploy paths feed the filemap → rebuild so the routing takes effect.
+        self._rebuild_conflicts_async()
+
+    def _close_sep_settings_tab(self):
+        if self._tabs.has_key("sep_settings"):
+            self._tabs.close_tab("sep_settings")
+
+    def _on_separator_renamed(self, old_name, new_name):
+        """Migrate a renamed separator's stored colour + deploy override from the
+        old internal name to the new one, then persist + repaint."""
+        profile_dir = self._gs.profile_dir()
+        # Model colour dict (keyed by internal name) follows the rename.
+        c = self._modlist_model.sep_color(old_name)
+        if c is not None:
+            self._modlist_model.set_sep_color(old_name, None)
+            self._modlist_model.set_sep_color(new_name, c)
+        if profile_dir is not None:
+            try:
+                from Utils.profile_state import (
+                    read_separator_colors, write_separator_colors,
+                    read_separator_deploy_paths, write_separator_deploy_paths)
+                colors = read_separator_colors(profile_dir)
+                if old_name in colors:
+                    colors[new_name] = colors.pop(old_name)
+                    write_separator_colors(profile_dir, colors)
+                paths = read_separator_deploy_paths(profile_dir)
+                if old_name in paths:
+                    paths[new_name] = paths.pop(old_name)
+                    write_separator_deploy_paths(profile_dir, paths)
+            except Exception as exc:
+                print(f"[gui_qt] separator rename migration failed: {exc}",
+                      flush=True)
+        self._modlist_view.viewport().update()
+
+    def _on_separators_removed(self, names):
+        """Drop stored colour + deploy override for removed separators."""
+        profile_dir = self._gs.profile_dir()
+        for nm in names:
+            self._modlist_model.set_sep_color(nm, None)
+        if profile_dir is not None:
+            try:
+                from Utils.profile_state import (
+                    read_separator_colors, write_separator_colors,
+                    read_separator_deploy_paths, write_separator_deploy_paths)
+                colors = read_separator_colors(profile_dir)
+                paths = read_separator_deploy_paths(profile_dir)
+                changed_c = changed_p = False
+                for nm in names:
+                    changed_c |= colors.pop(nm, None) is not None
+                    changed_p |= paths.pop(nm, None) is not None
+                if changed_c:
+                    write_separator_colors(profile_dir, colors)
+                if changed_p:
+                    write_separator_deploy_paths(profile_dir, paths)
+            except Exception as exc:
+                print(f"[gui_qt] separator removal cleanup failed: {exc}",
+                      flush=True)
+
     def _open_missing_reqs_tab(self, target):
         """Open the Missing Requirements panel over the plugins panel. *target* is
         a single mod name (str) or a set of names (multi-select). Triggered by the
@@ -4677,6 +4781,11 @@ class MainWindow(QMainWindow):
         self._modlist_view.on_copy_to_profile = self._copy_mods_to_profile
         # Rename (context menu): folder + modindex + per-mod state migration.
         self._modlist_view.on_rename_mod = self._rename_mod_on_disk
+        # Separator settings (colour + deploy override): open the scoped tab;
+        # rename/remove migrate/drop the stored colour + deploy entries.
+        self._modlist_view.on_separator_settings = self._open_sep_settings_tab
+        self._modlist_view.on_separator_renamed = self._on_separator_renamed
+        self._modlist_view.on_separators_removed = self._on_separators_removed
         # Enabling the Size column scans mod folder sizes on demand (Tk parity:
         # only walk the disk when Size is actually shown).
         self._modlist_view.on_sizes_requested = self._apply_modlist_sizes

@@ -88,6 +88,22 @@ _BSA_CONFLICT_ICONS = {
     2: "archive-conflict-mixed.png",
 }
 
+def _contrasting_text_color(hex_bg: str) -> str:
+    """'#111111' or '#eeeeee' based on the luminance of *hex_bg* so separator
+    text stays readable on a custom colour. Inlined from gui.theme (which pulls
+    in customtkinter/tkinter — unavailable in the Qt app)."""
+    try:
+        hex_bg = hex_bg.lstrip("#")
+        r, g, b = (int(hex_bg[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+        def _lin(c: float) -> float:
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        lum = 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+        return "#111111" if lum > 0.179 else "#eeeeee"
+    except Exception:
+        return "#eeeeee"
+
+
 # Row metrics — ~10% larger than the Tk baseline (30px) for readability.
 ROW_H = 33
 SEP_H = 33
@@ -157,6 +173,10 @@ class ModRowDelegate(QStyledItemDelegate):
                 return
             sep_hl = index.data(HighlightRole) or 0
             selected = bool(opt.state & QStyle.State_Selected)
+            # A custom colour applies only to plain separators, and only when no
+            # selection / cross-panel highlight band overrides it (Tk parity).
+            custom = index.model().sep_color(e.name)
+            sep_text = None
             if selected:
                 p.fillRect(r, self.c_sel)
             elif sep_hl == 2:
@@ -169,10 +189,13 @@ class ModRowDelegate(QStyledItemDelegate):
                 p.fillRect(r, self.c_overwrite_bg)
             elif e.name == ROOT_FOLDER_NAME:
                 p.fillRect(r, self.c_root_bg)
+            elif custom:
+                p.fillRect(r, QColor(custom))
+                sep_text = QColor(_contrasting_text_color(custom))
             else:
                 p.fillRect(r, self.c_sep_bg)
             if index.column() == COL_NAME:
-                self._paint_separator(p, r, e, index)
+                self._paint_separator(p, r, e, index, sep_text)
             p.restore()
             return
 
@@ -240,8 +263,9 @@ class ModRowDelegate(QStyledItemDelegate):
         except Exception:
             return r
 
-    def _paint_separator(self, p, r, e, index):
+    def _paint_separator(self, p, r, e, index, text_color=None):
         model = index.model()
+        text_color = text_color or self.c_sep_text
         # Boundary separators (Overwrite / Root Folder) are pinned + not
         # collapsible/lockable: just a centred name + strikethrough, no controls.
         from gui_qt.modlist_model import (_BOUNDARY_NAMES, ROOT_FOLDER_NAME,
@@ -288,7 +312,7 @@ class ModRowDelegate(QStyledItemDelegate):
             ico.paint(p, a)
 
         # Centred name + "(N)" count over the Mod Name column.
-        p.setPen(self.c_sep_text)
+        p.setPen(text_color)
         p.drawText(name_rect, Qt.AlignVCenter | Qt.AlignHCenter, label)
 
         # Grouped flags/conflicts when collapsed — each under its own column.

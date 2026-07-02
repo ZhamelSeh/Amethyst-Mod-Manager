@@ -307,16 +307,18 @@ class ModListView(QTreeView):
     def load_separator_state(self):
         """Read collapsed/lock state for the active profile into the model and
         apply row hiding. Called by the window after a modlist reload."""
-        collapsed, locks = set(), {}
+        collapsed, locks, colors = set(), {}, {}
         if self.profile_dir is not None:
             try:
                 from Utils.profile_state import (
-                    read_collapsed_seps, read_separator_locks)
+                    read_collapsed_seps, read_separator_locks,
+                    read_separator_colors)
                 collapsed = read_collapsed_seps(self.profile_dir)
                 locks = read_separator_locks(self.profile_dir)
+                colors = read_separator_colors(self.profile_dir)
             except Exception:
                 pass
-        self.model().set_separator_state(collapsed, locks)
+        self.model().set_separator_state(collapsed, locks, colors)
         self._apply_separator_spanning()
         self.apply_collapse()
 

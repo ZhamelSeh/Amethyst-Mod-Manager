@@ -120,13 +120,12 @@ def _build_separator_menu(view, model, row, entry, sel_seps, multi, act, stub, d
         act(f"Remove separators ({n})",
             lambda: _remove_separators_multi(view, model, sel_seps))
         return
-    stub("Change separator color")
     locked = model.is_sep_locked(entry.display_name)
     act("Unlock Separator" if locked else "Lock Separator",
         lambda: _toggle_sep_lock(view, model, row))
     divider()
     act("Rename separator", lambda: _rename(view, model, row))
-    stub("Separator settings…")
+    act("Separator settings…", lambda: _open_sep_settings(view, model, row))
     act("Add separator above", lambda: _add_separator(view, model, row, True))
     act("Add separator below", lambda: _add_separator(view, model, row, False))
     divider()
@@ -853,7 +852,14 @@ def _rename(view, model, row):
         return
     if e.is_separator:
         # No folder on disk — a pure modlist.txt edit is the whole rename.
+        # Migrate the separator's colour + deploy override to the new name so
+        # they follow it (Tk parity), then persist via the window callback.
+        old_name = e.name
         model.rename(row, new.strip())
+        new_name = model.entry(row).name
+        cb = getattr(view, "on_separator_renamed", None)
+        if callable(cb) and old_name != new_name:
+            cb(old_name, new_name)
         return
     # Mods must go through the window: staging folder rename + modindex +
     # per-mod state migration (strip prefixes / disabled plugins / excluded
@@ -903,6 +909,30 @@ def _remove(view, model, row):
     model.remove_row(row)
 
 
+def _open_sep_settings(view, model, row):
+    """Open the Separator Settings tab (colour + deploy override) for this
+    separator. Reads current values keyed by the internal `..._separator` name
+    (Tk storage key) and hands off to the window via the on_separator_settings
+    callback."""
+    e = model.entry(row)
+    if e is None or not e.is_separator:
+        return
+    cb = getattr(view, "on_separator_settings", None)
+    if not callable(cb):
+        return
+    current_color = model.sep_color(e.name)
+    current_deploy = {}
+    profile_dir = getattr(view, "profile_dir", None)
+    if profile_dir is not None:
+        try:
+            from Utils.profile_state import read_separator_deploy_paths
+            current_deploy = read_separator_deploy_paths(profile_dir).get(
+                e.name, {})
+        except Exception:
+            current_deploy = {}
+    cb(e.name, current_color, current_deploy)
+
+
 # ---- new wired handlers (separator remove / multi, mod multi-remove) -------
 
 def _remove_separator(view, model, row):
@@ -914,7 +944,11 @@ def _remove_separator(view, model, row):
             view, "Remove separator",
             f"Remove separator '{e.display_name}'?") != QMessageBox.Yes:
         return
+    removed = e.name
     model.remove_row(row)
+    cb = getattr(view, "on_separators_removed", None)
+    if callable(cb):
+        cb([removed])
 
 
 def _remove_separators_multi(view, model, sep_rows):
@@ -926,10 +960,15 @@ def _remove_separators_multi(view, model, sep_rows):
             f"Remove {len(sep_rows)} separator(s)?") != QMessageBox.Yes:
         return
     # Remove high→low so earlier removals don't shift later row indices.
+    removed = []
     for r in sorted(sep_rows, reverse=True):
         e = model.entry(r)
         if e is not None and e.is_separator:
+            removed.append(e.name)
             model.remove_row(r)
+    cb = getattr(view, "on_separators_removed", None)
+    if callable(cb) and removed:
+        cb(removed)
 
 
 def _set_sep_locks_multi(view, model, sep_rows, lock):

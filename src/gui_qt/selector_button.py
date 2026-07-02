@@ -52,8 +52,12 @@ class SelectorButton(QToolButton):
         self._menu = QMenu(self)
         self.setMenu(self._menu)
         # The text section (left of the split) also opens the menu — a selector
-        # has no separate primary action.
-        self.clicked.connect(self.showMenu)
+        # has no separate primary action. Open on *press* (like the arrow
+        # section does natively): waiting for the release made the body
+        # highlight first and the arrow section catch up later, which read as
+        # lag; on press, aboutToShow sets menuOpen before the next repaint so
+        # both halves light up together with the menu.
+        self.pressed.connect(self.showMenu)
         # A dynamic `menuOpen` property (toggled while the menu is shown) drives
         # the open-state highlight in QSS — reliable across QStyles, unlike the
         # :pressed/:on pseudo-states for a MenuButtonPopup tool button.

@@ -5263,7 +5263,9 @@ class MainWindow(QMainWindow):
         menu = QMenu(b)
         self._populate_menu(menu, items)
         b.setMenu(menu)
-        b.clicked.connect(b.showMenu)   # text section also opens the menu
+        # Open on press (not release) so the menuOpen highlight covers the
+        # whole button in one repaint — mirrors SelectorButton.
+        b.pressed.connect(b.showMenu)
 
         def _set_open(on):
             b.setProperty("menuOpen", on)

@@ -30,7 +30,7 @@ class _HoverPopup(QLabel):
         p = active_palette()
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setStyleSheet(
-            f"QLabel {{ background: {_c(p, 'BG_HEADER')}; color: #ffffff;"
+            f"QLabel {{ background: {_c(p, 'BG_HEADER')}; color: {_c(p, 'TEXT_MAIN')};"
             f" border: 1px solid {accent}; border-radius: 4px;"
             f" padding: 6px 9px; font-size: 13px; }}")
 
@@ -71,7 +71,9 @@ class NexusFooterLabel(QLabel):
         self._get_api = get_api
         self._username: str | None = None
         p = active_palette()
-        self._col_main = "#ffffff"
+        # Theme foreground (dark on light, near-white on dark) so the pill text
+        # reads in both modes; warn/err override it when the budget runs low.
+        self._col_main = _c(p, "TEXT_MAIN")
         self._col_warn = _c(p, "TEXT_WARN")
         self._col_err = _c(p, "TEXT_ERR")
         self._accent = _c(p, "ACCENT")

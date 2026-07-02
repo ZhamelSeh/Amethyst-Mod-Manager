@@ -118,7 +118,7 @@ def build_qss(pal: dict | None = None) -> str:
 
     QToolTip {{
         background: {c('BG_HEADER')};
-        color: #ffffff;
+        color: {c('TEXT_MAIN')};
         border: 1px solid {c('ACCENT')};
         border-radius: 4px;
         padding: 5px 8px;

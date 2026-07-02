@@ -229,7 +229,9 @@ class ModListView(QTreeView):
         from gui_qt.icons import icon
         from PySide6.QtCore import QSize
         btn = QToolButton(header)
-        btn.setIcon(icon("eye1_white.png", 16))
+        # Tint the eye glyph to the theme foreground so it reads in both light
+        # and dark modes (the white PNG is invisible on the light header).
+        btn.setIcon(icon("eye1_white.png", 16, color=_c(active_palette(), "TEXT_MAIN")))
         btn.setIconSize(QSize(16, 16))
         btn.setCursor(Qt.ArrowCursor)
         btn.setFocusPolicy(Qt.NoFocus)

@@ -5669,6 +5669,7 @@ class MainWindow(QMainWindow):
             self._apply_plugin_filters()
         self._refresh_plugin_stats()
         self._refresh_framework_banner()
+        self._apply_plugins_supported()
         # Userlist state → PF_USERLIST/PF_UL_CYCLE bits were already applied by
         # load_plugins; push the membership sets (context-menu predicates), the
         # group map (flags tooltip), and the userlist action callbacks.
@@ -6030,6 +6031,32 @@ class MainWindow(QMainWindow):
             self._notify(f"Sorted — {moved} plugin{'s' if moved != 1 else ''} moved.",
                          "success")
 
+    def _plugins_supported(self) -> bool:
+        """Whether the active game uses plugins (has plugin extensions). Games
+        that return an empty ``plugin_extensions`` (e.g. non-Bethesda) don't
+        track plugins, so the Plugins tab shows no column header/footer."""
+        game = self._gs.game
+        return bool(getattr(game, "plugin_extensions", None)) if game else True
+
+    def _apply_plugins_supported(self):
+        """Hide the plugins column header + footer for games without plugins.
+        Called on game/profile change (via _reload_plugins)."""
+        supported = self._plugins_supported()
+        # Column header: hide for plugin-less games.
+        self._plugin_view.setHeaderHidden(not supported)
+        # Footer (page 0 of the swap stack = the plugin tools) is hidden only
+        # while the Plugins sub-tab is active; other tabs keep their own footer.
+        self._refresh_plugin_footer_visibility()
+
+    def _refresh_plugin_footer_visibility(self):
+        """Show the footer stack unless we're on the Plugins tab of a game that
+        doesn't use plugins."""
+        stack = getattr(self, "_plugin_footer_stack", None)
+        if stack is None:
+            return
+        on_plugins_tab = self._plugin_stack.currentIndex() == 0
+        stack.setVisible(self._plugins_supported() or not on_plugins_tab)
+
     def _refresh_framework_banner(self):
         """Re-detect modding frameworks and update the Plugins-tab banner. Called
         on game/profile change + after each filemap rebuild (same as Tk)."""
@@ -6193,13 +6220,7 @@ class MainWindow(QMainWindow):
         self._plugin_view = PluginView(self._plugin_model)
         from gui_qt.framework_banner import FrameworkBanner
         self._framework_banner = FrameworkBanner()
-        _plugins_page = QWidget()
-        _pl = QVBoxLayout(_plugins_page)
-        _pl.setContentsMargins(0, 0, 0, 0)
-        _pl.setSpacing(0)
-        _pl.addWidget(self._framework_banner)
-        _pl.addWidget(self._plugin_view, 1)
-        self._plugin_stack.addWidget(_plugins_page)
+        self._plugin_stack.addWidget(self._plugin_view)
         # Page 1: the real Mod Files view.
         from gui_qt.mod_files_view import ModFilesView
         self._mod_files_view = ModFilesView()
@@ -6229,6 +6250,8 @@ class MainWindow(QMainWindow):
 
         tabs = QHBoxLayout()
         tabs.setSpacing(2)
+        # Centre the tab strip within the panel (stretch on both sides).
+        tabs.addStretch(1)
         self._plugin_tab_labels = []
         for i, t in enumerate(self._plugin_tab_names):
             lbl = QLabel(t)
@@ -6237,6 +6260,9 @@ class MainWindow(QMainWindow):
             tabs.addWidget(lbl)
             self._plugin_tab_labels.append(lbl)
         tabs.addStretch(1)
+        # Framework-status banner ABOVE the tabs so it's visible on every
+        # sub-tab (one colored row per framework the game declares).
+        v.addWidget(self._framework_banner)
         v.addLayout(tabs)
         v.addWidget(self._plugin_stack, 1)
         self._select_plugin_tab(0)
@@ -6254,6 +6280,8 @@ class MainWindow(QMainWindow):
             fstack.setCurrentIndex(
                 1 if idx == 1 else 2 if idx == data_idx
                 else 3 if idx == dl_idx else 4 if idx == tf_idx else 0)
+            # Plugin-less games hide the plugin tools footer on the Plugins tab.
+            self._refresh_plugin_footer_visibility()
         # Deferred build: only (re)build a tab's contents when it's shown.
         dv = getattr(self, "_data_view", None)
         if dv is not None:
@@ -6268,10 +6296,13 @@ class MainWindow(QMainWindow):
             tfv.set_visible_tab(idx == tf_idx)
         for i, lbl in enumerate(self._plugin_tab_labels):
             sel = i == idx
+            # Theme foreground (dim when unselected) so the tab strip reads on
+            # the light panel too; selected tab gets the accent underline.
+            col = _c(self._pal, "TEXT_MAIN" if sel else "TEXT_DIM")
             lbl.setStyleSheet(
-                "padding:4px 8px;" + (
-                    f"color:#fff; border-bottom:2px solid {_c(self._pal,'ACCENT')};"
-                    if sel else f"color:{_c(self._pal,'TEXT_DIM')};"))
+                f"padding:4px 8px; color:{col};" + (
+                    f"border-bottom:2px solid {_c(self._pal,'ACCENT')};"
+                    if sel else ""))
 
     # --------------------------------------------------------------- widgets
     def _action_button(self, text: str, icon_name: str,

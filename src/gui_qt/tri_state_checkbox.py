@@ -43,7 +43,24 @@ class TriStateCheckBox(QAbstractButton):
                  include_color: str | None = None, two_state: bool = False):
         super().__init__(parent)
         self._state = STATE_OFF
-        self._include = include_color or _INCLUDE
+        # Resolve neutral colours from the active palette so the label + empty
+        # box read in both light and dark modes (the module defaults are dark).
+        try:
+            from gui_qt.theme_qt import active_palette, _c
+            pal = active_palette()
+            self._include = include_color or _c(pal, "ACCENT")
+            self._box_bg = _c(pal, "BG_ROW")
+            self._box_border = _c(pal, "BORDER_FAINT")
+            self._box_border_hover = _c(pal, "ACCENT")
+            self._text_color = _c(pal, "TEXT_MAIN")
+            self._text_disabled = _c(pal, "TEXT_DIM")
+        except Exception:
+            self._include = include_color or _INCLUDE
+            self._box_bg = _BG
+            self._box_border = _BORDER
+            self._box_border_hover = _BORDER_HOVER
+            self._text_color = _TEXT
+            self._text_disabled = _TEXT_DISABLED
         # two_state: cycle off <-> include only (no exclude). Used where a plain
         # on/off check is wanted but the row must look identical to the tri-state
         # filter rows (e.g. the Nexus categories panel).
@@ -98,8 +115,8 @@ class TriStateCheckBox(QAbstractButton):
             fill = QColor(_EXCLUDE)
             border = QColor(_EXCLUDE)
         else:
-            fill = QColor(_BG)
-            border = QColor(_BORDER_HOVER if hover else _BORDER)
+            fill = QColor(self._box_bg)
+            border = QColor(self._box_border_hover if hover else self._box_border)
 
         if not enabled:
             fill.setAlpha(90)
@@ -115,7 +132,7 @@ class TriStateCheckBox(QAbstractButton):
             self._draw_minus(p, box)
 
         # Label
-        p.setPen(QColor(_TEXT if enabled else _TEXT_DISABLED))
+        p.setPen(QColor(self._text_color if enabled else self._text_disabled))
         text_rect = self.rect().adjusted(_BOX + _GAP, 0, -2, 0)
         p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self.text())
         p.end()

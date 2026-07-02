@@ -23,13 +23,13 @@ class _StatPill(QLabel):
     """One rounded pill: 'Label: value' (borderless). Text is left-aligned with a
     left inset matching the footer buttons, so first letters can line up."""
 
-    def __init__(self, accent: str, parent=None):
+    def __init__(self, accent: str, parent=None, text_color: str = "#ffffff"):
         super().__init__(parent)
         self._accent = accent
         self.setObjectName("StatPill")
         self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.setStyleSheet(
-            f"QLabel#StatPill {{ color: #ffffff; border-radius: 4px;"
+            f"QLabel#StatPill {{ color: {text_color}; border-radius: 4px;"
             f" padding: 2px {_PILL_TEXT_INSET}px; }}")
 
 
@@ -45,6 +45,8 @@ class StatsBar(QWidget):
         super().__init__(parent)
         p = active_palette()
         self._accent = _c(p, "ACCENT")
+        # Theme foreground so pill text reads on the light BottomBar too.
+        self._text_color = _c(p, "TEXT_MAIN")
         self._row = QHBoxLayout(self)
         self._row.setContentsMargins(0, 0, 0, 0)
         self._row.setSpacing(spacing)
@@ -70,7 +72,7 @@ class StatsBar(QWidget):
         the value (used for the placeholder)."""
         # Grow / shrink the reused pill pool to match the stat count.
         while len(self._pills) < len(stats):
-            pill = _StatPill(self._accent)
+            pill = _StatPill(self._accent, text_color=self._text_color)
             self._pills.append(pill)
             # Insert before the trailing stretch (which is the last item).
             self._row.insertWidget(self._row.count() - 1, pill)

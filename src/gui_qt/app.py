@@ -1067,7 +1067,10 @@ class MainWindow(QMainWindow):
                 ]),
             ]),
         ]:
-            b = self._menu_action_button(label, ico, items)
+            # Proton's logo is a mono glyph — tint it white like the Settings
+            # icon so it stays visible. The others are full-colour logos.
+            tint = _c(self._pal, "TEXT_MAIN") if label == "Proton" else None
+            b = self._menu_action_button(label, ico, items, tint=tint)
             b.setFixedHeight(self._BTN_H)
             b.setToolTip(label)
             b._full_label = label
@@ -6079,13 +6082,15 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- widgets
     def _action_button(self, text: str, icon_name: str,
-                       compact: bool = False) -> QToolButton:
+                       compact: bool = False,
+                       tint: str | None = None) -> QToolButton:
         """Flat toolbar-style button with icon + label (mockup look).
-        *compact* uses the smaller footer icon size."""
+        *compact* uses the smaller footer icon size. *tint* recolours a mono
+        glyph to a theme colour (like the Settings icon)."""
         px = self._FOOT_ICON_PX if compact else self._ICON_PX
         b = QToolButton()
         b.setText(text)
-        b.setIcon(icon(icon_name, px))
+        b.setIcon(icon(icon_name, px, color=tint))
         b.setIconSize(QSize(px, px))
         b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         b.setObjectName("FooterButton" if compact else "ActionButton")
@@ -6111,13 +6116,14 @@ class MainWindow(QMainWindow):
                 menu.addAction(label)   # inert label (placeholder)
 
     def _menu_action_button(self, text: str, icon_name: str,
-                            items: "list[tuple]") -> QToolButton:
+                            items: "list[tuple]",
+                            tint: str | None = None) -> QToolButton:
         """Like _action_button but a split button with a dropdown menu.
         *items* is a list of (label, callback|None); None inserts a separator.
         If the second element is a list of (label, callback) pairs it becomes a
         submenu instead. Highlights (button + arrow) while the menu is open via
         the `menuOpen` property, mirroring SelectorButton."""
-        b = self._action_button(text, icon_name)
+        b = self._action_button(text, icon_name, tint=tint)
         b.setProperty("split", True)
         b.setPopupMode(QToolButton.MenuButtonPopup)
         menu = QMenu(b)

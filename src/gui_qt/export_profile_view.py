@@ -51,6 +51,72 @@ def _source_button_qss(source: str) -> str:
             f"QPushButton:hover {{ background:{hover}; }}")
 
 
+def _card_qss(p) -> str:
+    """Full stylesheet for the borderless overlay card and its contents.
+
+    Everything is scoped by object name / type so nothing leaks onto the
+    dimmed backdrop (``#CardBackdrop``) or renders with a stray black fill."""
+    c = lambda k: _c(p, k)
+    return f"""
+    #CardBackdrop {{ background: rgba(0,0,0,150); }}
+    #OverlayCard {{
+        background: {c('BG_HEADER')};
+        border: 1px solid {c('BORDER')};
+        border-radius: 10px;
+    }}
+    #OverlayCard QLabel {{ background: transparent; }}
+    #CardTitle {{ color: {c('TEXT_MAIN')}; font-weight: 700; font-size: 16px; }}
+    #CardSub {{ color: {c('TEXT_DIM')}; font-size: 13px; }}
+    /* Radio rows — a subtle pill that lights up on hover / selection. */
+    #CardOption {{
+        background: {c('BG_DEEP')};
+        border: 1px solid transparent;
+        border-radius: 6px;
+    }}
+    #CardOption:hover {{ border: 1px solid {c('BORDER')}; }}
+    #CardOption QRadioButton {{
+        background: transparent;
+        color: {c('TEXT_MAIN')};
+        padding: 8px 10px;
+        font-size: 13px;
+    }}
+    #CardOption QRadioButton::indicator {{ width: 15px; height: 15px; }}
+    #OverlayCard QLineEdit {{
+        background: {c('BG_DEEP')};
+        color: {c('TEXT_MAIN')};
+        border: 1px solid {c('BORDER')};
+        border-radius: 5px;
+        padding: 5px 8px;
+    }}
+    #OverlayCard QLineEdit:focus {{ border: 1px solid {c('ACCENT')}; }}
+    #OverlayCard QListWidget {{
+        background: {c('BG_DEEP')};
+        border: 1px solid {c('BORDER')};
+        border-radius: 6px;
+    }}
+    /* Buttons — Apply (green #GameSelectBtn) inherits the app QSS; give
+       Cancel a real neutral style so it isn't a plain black rectangle. */
+    #CardCancelBtn {{
+        background: {c('BG_ROW')};
+        color: {c('TEXT_MAIN')};
+        border: 1px solid {c('BORDER')};
+        border-radius: 5px;
+        padding: 6px 16px;
+        font-weight: 600;
+    }}
+    #CardCancelBtn:hover {{ background: {c('BG_ROW_HOVER')}; }}
+    #GameSelectBtn {{
+        background: {c('BTN_SUCCESS')};
+        color: #ffffff;
+        border: none;
+        border-radius: 5px;
+        padding: 6px 18px;
+        font-weight: 600;
+    }}
+    #GameSelectBtn:hover {{ background: {c('BTN_SUCCESS_HOV')}; }}
+    """
+
+
 # ---------------------------------------------------------------------------
 # Borderless overlay base (mirrors nexus_file_chooser.NexusFileChooser) — a
 # dimmed, click-absorbing backdrop with a centered card, anchored to the
@@ -67,16 +133,17 @@ class _CardOverlay(QWidget):
         self._host = host
         self._done = False
         p = active_palette()
-        self.setStyleSheet("background: rgba(0,0,0,140);")
+        # Scope the dim backdrop to *this* widget by object name — an
+        # unqualified ``background`` rule is inherited by every child widget
+        # (radios/buttons render black otherwise).
+        self.setObjectName("CardBackdrop")
+        self.setStyleSheet(_card_qss(p))
         self.setGeometry(host.rect())
         self._card = QFrame(self)
-        self._card.setObjectName("HeaderBar")
-        self._card.setStyleSheet(
-            f"#HeaderBar {{ background:{_c(p,'BG_DEEP')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
+        self._card.setObjectName("OverlayCard")
         self._body = QVBoxLayout(self._card)
-        self._body.setContentsMargins(16, 14, 16, 14)
-        self._body.setSpacing(8)
+        self._body.setContentsMargins(20, 18, 20, 18)
+        self._body.setSpacing(10)
 
     def _show_over(self):
         self._host.installEventFilter(self)
@@ -125,19 +192,18 @@ class _CardOverlay(QWidget):
 # ---------------------------------------------------------------------------
 
 def _card_title(text: str) -> QLabel:
-    p = active_palette()
     lbl = QLabel(text)
-    lbl.setStyleSheet(
-        f"color:{_c(p,'TEXT_MAIN')}; font-weight:600; font-size:16px;")
+    lbl.setObjectName("CardTitle")
     lbl.setWordWrap(True)
     return lbl
 
 
 def _card_button_bar(overlay, ok_text, on_ok, cancel_text="Cancel"):
-    p = active_palette()
     bar = QHBoxLayout()
+    bar.setSpacing(8)
     bar.addStretch(1)
     cancel = QPushButton(cancel_text)
+    cancel.setObjectName("CardCancelBtn")
     cancel.setCursor(Qt.PointingHandCursor)
     cancel.clicked.connect(overlay._cancel)
     bar.addWidget(cancel)
@@ -154,12 +220,11 @@ class _SourceOverlay(_CardOverlay):
     (Nexus / Direct+URL / Bundle / Ignore). ``on_pick(source, url)`` on Apply."""
 
     CARD_W = 480
-    CARD_H = 320
+    CARD_H = 400
 
     def __init__(self, host, mod_name, current_source, current_url, on_pick):
         super().__init__(host)
         self._on_pick = on_pick
-        p = active_palette()
         self._body.addWidget(_card_title(f"Source — {mod_name}"))
 
         self._group = QButtonGroup(self)
@@ -171,19 +236,25 @@ class _SourceOverlay(_CardOverlay):
             ("ignore", "Ignore",     "Exclude this mod from the export entirely"),
         ):
             rb = QRadioButton(f"{label}   — {desc}")
-            rb.setStyleSheet(f"color:{_c(p,'TEXT_MAIN')};")
             rb.setChecked(value == current_source)
             self._group.addButton(rb)
             self._radios[value] = rb
             rb.toggled.connect(self._on_toggle)
-            self._body.addWidget(rb)
+            # Wrap in a styled pill row (#CardOption) for a cleaner look.
+            row = QFrame()
+            row.setObjectName("CardOption")
+            row_l = QVBoxLayout(row)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.addWidget(rb)
+            self._body.addWidget(row)
 
         url_row = QHBoxLayout()
         ulbl = QLabel("Download URL:")
-        ulbl.setStyleSheet(f"color:{_c(p,'TEXT_DIM')};")
+        ulbl.setObjectName("CardSub")
         url_row.addWidget(ulbl)
         self._url = QLineEdit(current_url)
         self._url.setPlaceholderText("https://…")
+        self._url.setMinimumHeight(30)
         url_row.addWidget(self._url, 1)
         self._url_row_w = QWidget()
         self._url_row_w.setLayout(url_row)
@@ -230,10 +301,9 @@ class _VersionOverlay(_CardOverlay):
     def __init__(self, host, mod_name, options, current_label, on_pick):
         super().__init__(host)
         self._on_pick = on_pick
-        p = active_palette()
         self._body.addWidget(_card_title(f"Version — {mod_name}"))
         sub = QLabel("Preferred version (file id — version):")
-        sub.setStyleSheet(f"color:{_c(p,'TEXT_DIM')}; font-size:13px;")
+        sub.setObjectName("CardSub")
         self._body.addWidget(sub)
 
         self._list = QListWidget()
@@ -278,10 +348,9 @@ class _LoadSettingsOverlay(_CardOverlay):
         super().__init__(host)
         self._on_pick = on_pick
         self._files = list(files)
-        p = active_palette()
         self._body.addWidget(_card_title("Load export settings"))
         sub = QLabel("Select a saved settings file:")
-        sub.setStyleSheet(f"color:{_c(p,'TEXT_DIM')}; font-size:13px;")
+        sub.setObjectName("CardSub")
         self._body.addWidget(sub)
         self._list = QListWidget()
         for f in self._files:

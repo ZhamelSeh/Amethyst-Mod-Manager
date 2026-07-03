@@ -3727,12 +3727,17 @@ class MainWindow(QMainWindow):
             self._notify("A copy/move is already in progress.", "info")
             return
         self._copy_running = True
+        self._op_title = "Moving" if move else "Copying"
+        self._ensure_feedback()
         self._notify(f"{'Moving' if move else 'Copying'} {len(plan)} mod(s) to "
                      f"'{target_profile}'…", "info")
+        total = len(plan)
+        self._op_progress.emit(0, total, f"to '{target_profile}'")
 
         def _worker():
             copied = []
-            for nm, dest_name in plan.items():
+            for done, (nm, dest_name) in enumerate(plan.items()):
+                self._op_progress.emit(done, total, nm)
                 try:
                     if nm in replace_set:
                         import shutil
@@ -3746,6 +3751,7 @@ class MainWindow(QMainWindow):
                         copied.append(nm)
                 except Exception as exc:
                     self._op_log.emit(f"Copy to profile failed for '{nm}': {exc}")
+            self._op_progress.emit(total, total, "finishing")
             removed = False
             if move and copied:
                 try:
@@ -3771,6 +3777,8 @@ class MainWindow(QMainWindow):
         us — mirrors Tk _finish_copy_popup calling _remove_selected_mods), which
         persists modlist.txt via the model, then reload."""
         self._copy_running = False
+        if self._progress_popup is not None:
+            QTimer.singleShot(1200, self._progress_popup.clear)
         c = payload.get("copied", 0)
         verb = "Moved" if payload.get("move") else "Copied"
         self._notify(f"{verb} {c}/{payload.get('total', 0)} mod(s) to "

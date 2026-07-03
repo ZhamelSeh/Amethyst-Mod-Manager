@@ -64,21 +64,42 @@ _QM_SUFFIX = ".qm"
 
 # Display names for codes QLocale can't name nicely (or where we want an
 # override). QLocale.nativeLanguageName() handles the common cases; this is a
-# fallback map, not the source of truth for which languages exist.
+# fallback map, not the source of truth for which languages exist. Keyed by the
+# exact <code> in the .qm filename (so pt and pt_BR can differ).
 _DISPLAY_OVERRIDES: dict[str, str] = {
     "en": "English",
+    "es": "Español",
+    "pt": "Português (Portugal)",
+    "pt_BR": "Português (Brasil)",
+    "pt_PT": "Português (Portugal)",
 }
 
 
+def _title(s: str) -> str:
+    s = (s or "").strip()
+    return s[:1].upper() + s[1:] if s else s
+
+
 def _display_name(code: str) -> str:
-    """Human-readable, in-language name for a locale code (e.g. de -> Deutsch)."""
+    """Human-readable, in-language name for a locale code (e.g. de -> Deutsch).
+
+    For region variants (a code with an underscore, e.g. pt_BR) the native
+    territory is appended so they read distinctly in the picker
+    ("Português (Brasil)" vs "Português (Portugal)").
+    """
     if code in _DISPLAY_OVERRIDES:
         return _DISPLAY_OVERRIDES[code]
     loc = QLocale(code)
-    name = loc.nativeLanguageName() or QLocale.languageToString(loc.language())
-    # nativeLanguageName is lowercased for some locales ("français"); title it.
-    name = name.strip()
-    return name[:1].upper() + name[1:] if name else code
+    name = _title(loc.nativeLanguageName()
+                  or QLocale.languageToString(loc.language()))
+    if not name:
+        return code
+    # If the code carries a region (pt_BR), disambiguate with the territory.
+    if "_" in code or "-" in code:
+        territory = (loc.nativeTerritoryName() or "").strip()
+        if territory:
+            return f"{name} ({territory})"
+    return name
 
 
 def available_languages() -> list[tuple[str, str]]:

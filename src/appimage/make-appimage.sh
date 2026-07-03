@@ -74,9 +74,11 @@ fi
 
 # ── quick-sharun env ─────────────────────────────────────────────────
 # DEPLOY_PYTHON=1   pulls /usr/bin/python3 + stdlib + site-packages (PySide6)
-# DEPLOY_QT=1       Qt plugins (platforms/wayland/imageformats/styles/tls).
-#                   Auto-detection via traced libQt6Core would fire anyway;
-#                   forcing it is cheap insurance.
+# DEPLOY_QT=1       Qt plugin deployment. NOTE: quick-sharun's auto-detection
+#                   does NOT fire for PySide6 — it dlopens Qt at runtime so
+#                   libQt6Core never enters the wrapper's ldd trace. We force
+#                   it here AND hand quick-sharun the Qt libs/plugins directly
+#                   (see the resolution block before the quick-sharun call).
 # ALWAYS_SOFTWARE=1 forces software rendering (matches upstream)
 # ANYLINUX_LIB=1    builds anylinux.so (LD_PRELOAD env-scrubber for child procs)
 export ARCH VERSION OUTPATH APPDIR
@@ -140,6 +142,40 @@ echo "=== Installing $PKG_FILE ==="
 # which are already present in the container.
 pacman -U --noconfirm --overwrite '*' --nodeps "$PKG_FILE"
 
+# ── Resolve the system Qt6 libs + plugins for PySide6 ────────────────
+# PySide6 dlopens Qt at runtime from its own extension modules, so
+# quick-sharun's ldd trace of the (shell → python3) wrapper never sees
+# libQt6Gui.so and skips its Qt-plugin deployment entirely — the AppImage
+# then dies with "Could not find the Qt platform plugin 'xcb'". We fix
+# this by handing quick-sharun the Qt GUI/Widgets/Network libs (so its
+# `*libQt*Gui.so*` case fires and pulls platforms/imageformats/etc.) plus
+# the platform plugins directly (so its `*/qt*/plugins/*.so` case writes
+# qt.conf). Arch's pyside6 depends on qt6-base and uses the SYSTEM Qt at
+# /usr/lib/libQt6*.so + /usr/lib/qt6/plugins/, so those paths are stable.
+QT_PLUGIN_DIR=""
+for _d in /usr/lib/qt6/plugins /usr/lib/qt/plugins; do
+    [ -d "$_d/platforms" ] && { QT_PLUGIN_DIR="$_d"; break; }
+done
+[ -n "$QT_PLUGIN_DIR" ] || { echo "ERROR: qt6 platform plugins not found (is qt6-base installed?)" >&2; exit 1; }
+
+_qt_args=()
+# Core Qt libs PySide6 needs — Gui triggers the platform-plugin block.
+for _l in libQt6Core libQt6Gui libQt6Widgets libQt6DBus libQt6Network; do
+    for _so in /usr/lib/"$_l".so*; do
+        [ -e "$_so" ] && _qt_args+=("$_so")
+    done
+done
+# Platform + platform-integration plugins (xcb for X11, wayland for
+# Wayland) + the theme/style/image plugins the GUI loads at runtime.
+# Passing the platform .so files directly makes quick-sharun emit qt.conf.
+for _sub in platforms platformthemes platforminputcontexts wayland-shell-integration \
+            wayland-decoration-client wayland-graphics-integration-client \
+            xcbglintegrations imageformats iconengines styles tls; do
+    for _so in "$QT_PLUGIN_DIR/$_sub"/*.so; do
+        [ -e "$_so" ] && _qt_args+=("$_so")
+    done
+done
+
 echo "=== Running quick-sharun ==="
 # Stdlib extension modules in lib-dynload are dlopened at runtime, so
 # quick-sharun's per-binary ldd trace never sees their DT_NEEDED entries
@@ -148,6 +184,8 @@ echo "=== Running quick-sharun ==="
 #   libssl/libcrypto -> _ssl.so      (HTTPS — Nexus, GitHub, updates)
 #   libuuid          -> _uuid.so     (uuid.uuid4 used by Nexus SSO)
 #   libmpdec         -> _decimal.so  (transitive deps may import decimal)
+# The Qt libs/plugins in $_qt_args are dlopened by PySide6 for the same
+# reason — see the resolution block above.
 quick-sharun \
     /usr/bin/mod-manager               \
     /usr/share/amethyst-mod-manager    \
@@ -157,6 +195,7 @@ quick-sharun \
     /usr/lib/libcrypto.so*             \
     /usr/lib/libuuid.so*               \
     /usr/lib/libmpdec.so*              \
+    "${_qt_args[@]}"                   \
     $( [ -f "$AUX_DIR/bin/bsdtar" ] && printf %s "$AUX_DIR/bin/bsdtar" )
 
 # Rewrite the wrapper's /usr/share path to "$APPDIR"/share — quick-sharun's

@@ -181,7 +181,14 @@ class MainWindow(QMainWindow):
         self._sort_plugins_ready.connect(self._on_sort_plugins_ready)
         self._filter_data_gen = 0
         self._filter_data_ready.connect(self._on_filter_data_ready)
-        self.setWindowTitle("Amethyst Mod Manager")
+        try:
+            from version import __version__ as _mm_version
+        except Exception:
+            _mm_version = ""
+        self.setWindowTitle(
+            f"Amethyst Mod Manager - v{_mm_version}" if _mm_version
+            else "Amethyst Mod Manager"
+        )
         self.setMinimumSize(1280, 800)   # Steam Deck is the floor
         self.resize(1280, 800)
         # Centre on the primary screen. The WM otherwise defaults the window to
@@ -7149,6 +7156,55 @@ class MainWindow(QMainWindow):
         self._tabs.open_tab(view, "Log", key="log")
 
 
+def _apply_app_identity(app) -> None:
+    """Set the application/window icon and Wayland desktop-file association.
+
+    Three things have to happen for the icon to show in the window title bar
+    AND the taskbar across from-source, AppImage and Flatpak runs:
+
+    1. QApplication.setWindowIcon() — the window's own icon. Works everywhere
+       (including a plain from-source run that has no installed .desktop file)
+       because we load the PNG straight off disk. This alone fixes the title
+       bar; X11 taskbars also read it.
+    2. setDesktopFileName() — on Wayland the compositor won't show a taskbar
+       icon from the window itself; it looks up an INSTALLED .desktop file
+       (by app_id) and uses that entry's Icon=. AppImage and Flatpak install
+       such a file, so we point Qt at it. The basename differs per target.
+    3. setApplicationName()/DisplayName — helps the X11 WM_CLASS / labels.
+    """
+    import os
+    from pathlib import Path
+    from PySide6.QtGui import QIcon
+
+    app.setApplicationName("Amethyst Mod Manager")
+    app.setApplicationDisplayName("Amethyst Mod Manager")
+
+    # Window icon: bundled Logo.png sits next to the other icons (src/icons/).
+    # gui_qt/ is a sibling of icons/, so parent.parent/icons/Logo.png.
+    logo = Path(__file__).resolve().parent.parent / "icons" / "Logo.png"
+    if logo.is_file():
+        ic = QIcon(str(logo))
+        if not ic.isNull():
+            app.setWindowIcon(ic)
+
+    # Desktop-file name for the Wayland taskbar association. Flatpak installs
+    # io.github.Amethyst.ModManager.desktop; the AppImage installs
+    # mod-manager.desktop. Detect which we're in so the compositor finds the
+    # matching installed entry (and its Icon=). From source there's no
+    # installed .desktop, so this is a harmless no-op (the window icon above
+    # still covers the title bar).
+    #
+    # NB: match FLATPAK_ID against OUR id, not just "is any FLATPAK_ID set" —
+    # running from source inside another flatpak (e.g. a flatpak VS Code /
+    # terminal) sets FLATPAK_ID to that host app, and /.flatpak-info exists
+    # for any flatpak-sandboxed parent, so neither is a reliable "we are the
+    # Amethyst flatpak" signal on its own.
+    if os.environ.get("FLATPAK_ID") == "io.github.Amethyst.ModManager":
+        app.setDesktopFileName("io.github.Amethyst.ModManager")
+    elif os.environ.get("APPDIR") or os.environ.get("APPIMAGE"):
+        app.setDesktopFileName("mod-manager")
+
+
 def run() -> int:
     import sys
     from PySide6.QtWidgets import QApplication
@@ -7157,6 +7213,7 @@ def run() -> int:
     from Utils.ui_config import ensure_ini_version
     ensure_ini_version()
     app = QApplication(sys.argv)
+    _apply_app_identity(app)
     apply_theme(app)
     win = MainWindow(app)
     win.show()

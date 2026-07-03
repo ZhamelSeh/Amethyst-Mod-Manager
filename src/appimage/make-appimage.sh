@@ -160,7 +160,12 @@ done
 
 _qt_args=()
 # Core Qt libs PySide6 needs — Gui triggers the platform-plugin block.
-for _l in libQt6Core libQt6Gui libQt6Widgets libQt6DBus libQt6Network; do
+# XcbQpa (X11) and WaylandClient are the platform abstraction libs that
+# libqxcb.so / libqwayland.so link against; quick-sharun would trace them
+# transitively, but listing them explicitly removes any doubt. OpenGL is
+# pulled in by Qt Widgets' GL paths.
+for _l in libQt6Core libQt6Gui libQt6Widgets libQt6DBus libQt6Network \
+          libQt6XcbQpa libQt6WaylandClient libQt6OpenGL; do
     for _so in /usr/lib/"$_l".so*; do
         [ -e "$_so" ] && _qt_args+=("$_so")
     done
@@ -168,11 +173,20 @@ done
 # Platform + platform-integration plugins (xcb for X11, wayland for
 # Wayland) + the theme/style/image plugins the GUI loads at runtime.
 # Passing the platform .so files directly makes quick-sharun emit qt.conf.
+#
+# libqgtk3.so (GTK theme integration) is EXCLUDED: it links libgtk-3, which
+# we deliberately don't bundle, so quick-sharun aborts with "missing
+# libraries" when it tries to trace it. We keep libqxdgdesktopportal.so
+# (the portal-based theme, no GTK dep).
 for _sub in platforms platformthemes platforminputcontexts wayland-shell-integration \
             wayland-decoration-client wayland-graphics-integration-client \
             xcbglintegrations imageformats iconengines styles tls; do
     for _so in "$QT_PLUGIN_DIR/$_sub"/*.so; do
-        [ -e "$_so" ] && _qt_args+=("$_so")
+        [ -e "$_so" ] || continue
+        case "${_so##*/}" in
+            libqgtk3.so) continue ;;
+        esac
+        _qt_args+=("$_so")
     done
 done
 

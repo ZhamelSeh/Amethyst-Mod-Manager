@@ -786,8 +786,13 @@ def _sort_selected_alphabetically(view, model, mod_rows):
            if not e.is_separator and e.name not in _PINNED_NAMES]
     if len(sel) < 2:
         return
-    # Sorted copy of just the selected entries.
-    sorted_entries = sorted(sel, key=lambda e: e.display_name.casefold())
+    # Mods with loose-file conflicts are left in their existing relative order
+    # (sorting them could break a hand-tuned load order); they sink to the
+    # bottom of the selection. Only conflict-free mods are sorted A→Z.
+    conflicted = [e for e in sel if model.loose_conflict_code(e.name)]
+    sortable = [e for e in sel if not model.loose_conflict_code(e.name)]
+    sorted_entries = (sorted(sortable, key=lambda e: e.display_name.casefold())
+                      + conflicted)
     # Rebuild the body from the NATURAL order (the display may be a sorted
     # permutation); at each selected slot drop in the next sorted entry.
     # set_entries re-appends boundaries.

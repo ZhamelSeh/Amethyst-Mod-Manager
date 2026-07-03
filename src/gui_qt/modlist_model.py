@@ -303,6 +303,11 @@ class ModListModel(QAbstractTableModel):
                                   [ConflictRole, BsaConflictRole, Qt.DisplayRole])
         self._resort_if_key("conflicts")
 
+    def loose_conflict_code(self, name: str) -> int:
+        """Loose-file conflict code for *name* (0 when the mod has no loose
+        conflict; BSA-only conflicts don't count)."""
+        return self._conflicts.get(name, 0)
+
     def _separator_highlight(self, row: int, e) -> int:
         """A separator is tinted ONLY when collapsed AND one of its child mods is
         a highlight partner (Tk parity — an expanded block tints the child mod

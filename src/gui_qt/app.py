@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
     _col_dl = Signal(str, object)              # ("start"|"update"|"finish", payload)
     _col_extract = Signal(str, object)         # ("queue"|"add"|"remove", payload)
     _col_row = Signal(int)                     # file_id installed
+    _col_manual = Signal(object)               # manual-mode current-mod payload dict
     _col_finished = Signal(str, object)        # ("done"|"paused"|"cancelled", payload)
     _col_import_done = Signal(object)          # (profile_name, installed, total, skipped)
     _import_file_picked = Signal(object)       # portal picker result (Path|None) → UI thread
@@ -320,6 +321,7 @@ class MainWindow(QMainWindow):
         self._col_dl.connect(self._on_col_dl)
         self._col_extract.connect(self._on_col_extract)
         self._col_row.connect(self._on_col_row)
+        self._col_manual.connect(self._on_col_manual)
         self._col_finished.connect(self._on_col_finished)
         self._col_import_done.connect(self._on_import_bundle_done)
         self._import_file_picked.connect(self._on_import_file_picked)
@@ -1814,14 +1816,15 @@ class MainWindow(QMainWindow):
         view.title_resolved.connect(
             lambda name, k=key: self._tabs.set_tab_title(k, f"Collection: {name}"))
 
-    # ---- Collection install (automatic / premium) ------------------------
+    # ---- Collection install (premium auto / non-premium manual) ----------
     def _install_collection(self, collection, detail_view, chosen, skipped,
                             intent="install"):
-        """Start an automatic (premium) collection install: gate on premium,
-        create a new profile, then run the neutral orchestrator on a daemon
-        thread with every callback marshaled through a Signal (UI-thread slots
-        update the overlay). Deferred FOMOD/BAIN mods block the worker on a
-        wizard via _col_fomod / _col_bain (same handshake as _make_exists_cb)."""
+        """Start a collection install: check premium (premium → automatic
+        downloads, non-premium → manual per-mod download prompts), create a new
+        profile, then run the neutral orchestrator on a daemon thread with every
+        callback marshaled through a Signal (UI-thread slots update the
+        overlay). Deferred FOMOD/BAIN mods block the worker on a wizard via
+        _col_fomod / _col_bain (same handshake as _make_exists_cb)."""
         import threading
         if self._col_install_running:
             self._notify("A collection install is already running.", "warning")
@@ -1874,6 +1877,7 @@ class MainWindow(QMainWindow):
                 force_manual = False
             self._col_finished.emit(
                 "_premium", {"ok": is_premium and not force_manual,
+                             "manual": not (is_premium and not force_manual),
                              "collection": collection, "domain": domain,
                              "slug": slug, "dl_path": dl_path,
                              "revision": revision_number, "mods": mods,
@@ -2195,15 +2199,25 @@ class MainWindow(QMainWindow):
 
         old_profile_dir = getattr(game, "_active_profile_dir", None)
 
-        # Overlay + control.
-        from gui_qt.collection_install_overlay import CollectionInstallOverlay
+        # Overlay + control. Manual (non-premium) installs get the per-mod
+        # download-prompt card; premium gets the download/extract progress
+        # overlay. Both expose the same slot surface to the _on_col_* handlers.
         from Utils.collection_install import CollectionInstallControl
         control = CollectionInstallControl()
         self._col_install_control = control
+        manual_mode = bool(info.get("manual"))
         title = f"Installing collection: {collection.name or slug}"
-        self._col_install_overlay = CollectionInstallOverlay.show_over(
-            self, title, on_pause=self._on_col_pause_clicked,
-            on_cancel=self._on_col_cancel_clicked)
+        if manual_mode:
+            from gui_qt.collection_manual_overlay import CollectionManualOverlay
+            self._col_install_overlay = CollectionManualOverlay.show_over(
+                self, collection.name or slug, profile_dir.name, len(mods),
+                control.manual_queue, on_pause=self._on_col_pause_clicked,
+                on_cancel=self._on_col_cancel_clicked)
+        else:
+            from gui_qt.collection_install_overlay import CollectionInstallOverlay
+            self._col_install_overlay = CollectionInstallOverlay.show_over(
+                self, title, on_pause=self._on_col_pause_clicked,
+                on_cancel=self._on_col_cancel_clicked)
 
         callbacks = self._build_collection_callbacks()
 
@@ -2223,6 +2237,7 @@ class MainWindow(QMainWindow):
                     skipped_mods=skipped_mods, overwrite_existing=overwrite_existing,
                     skip_existing=skip_existing_arg, update_context=update_context,
                     collection_schema_cache=local_manifest,
+                    manual_mode=manual_mode,
                     callbacks=callbacks, control=control)
             except Exception as exc:
                 import traceback
@@ -2272,6 +2287,7 @@ class MainWindow(QMainWindow):
             on_extract_add=lambda f, n: self._col_extract.emit("add", (f, n)),
             on_extract_remove=lambda f: self._col_extract.emit("remove", f),
             on_row_installed=lambda f: self._col_row.emit(int(f)),
+            on_manual_mod=lambda d: self._col_manual.emit(dict(d)),
             on_log=lambda m: self._op_log.emit(str(m)),
             on_done=lambda i, s, t, p: self._col_finished.emit("done", (i, s, t, p)),
             on_paused=lambda i, p: self._col_finished.emit("paused", (i, p)),
@@ -2321,6 +2337,12 @@ class MainWindow(QMainWindow):
     def _on_col_row(self, file_id):
         if self._col_install_overlay is not None:
             self._col_install_overlay.row_installed(file_id)
+
+    def _on_col_manual(self, payload):
+        """Manual-mode producer prompts the next mod (on_manual_mod)."""
+        ov = self._col_install_overlay
+        if ov is not None and hasattr(ov, "update_mod"):
+            ov.update_mod(payload)
 
     # ---- deferred FOMOD / BAIN blocking handshake ------------------------
     def _make_col_fomod_cb(self):
@@ -2465,12 +2487,13 @@ class MainWindow(QMainWindow):
     def _on_col_finished(self, kind, payload):
         """UI thread: handle the premium gate result AND the terminal states."""
         if kind == "_premium":
-            if not payload.get("ok"):
-                self._col_install_running = False
-                self._notify("Automatic collection install requires Nexus Premium "
-                             "(manual install coming later).", "warning")
-                return
-            # Premium confirmed — route by intent.
+            if payload.get("manual"):
+                # Non-premium (or [dev] force_manual_install): same pipeline,
+                # but the manual overlay + sequential wait-for-download
+                # producer replace the automatic download pool.
+                self._notify("Nexus Premium not detected — manual download "
+                             "mode.", "info")
+            # Route by intent (identical for premium and manual).
             intent = payload.get("intent", "install")
             if intent == "update":
                 self._run_collection_update(payload)

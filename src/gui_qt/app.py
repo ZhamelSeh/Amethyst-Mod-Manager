@@ -596,34 +596,42 @@ class MainWindow(QMainWindow):
 
     def _open_text_editor_tab(self, path, rel_str, find_kw=None):
         """Open a text file in a save-capable editor as a MODLIST-PANEL-SCOPED tab
-        (the other panels stay live). Reuses one editor — clicking another file
-        swaps it in place. The tab title gets a '*' while there are unsaved edits.
+        (the other panels stay live). Each distinct file gets its OWN tab so
+        several can be open at once; re-opening the same file focuses its tab.
+        The tab title gets a '*' while there are unsaved edits.
         *find_kw* (the active content-search keyword) is pre-highlighted."""
         from pathlib import Path as _P
         from gui_qt.text_editor import TextEditor
+        p = _P(path)
         name = rel_str.replace("\\", "/").rsplit("/", 1)[-1]
-        existing = getattr(self, "_text_editor_widget", None)
-        if existing is not None and self._tabs.has_key("tf_text_editor"):
-            existing.load_file(_P(path), name)
+        key = "tf_text_editor:" + str(p.resolve() if p.exists() else p)
+        editors = getattr(self, "_text_editor_widgets", None)
+        if editors is None:
+            editors = self._text_editor_widgets = {}
+        # Same file already open → just focus it (and re-apply the search).
+        if key in editors and self._tabs.has_key(key):
+            widget = editors[key]
             if find_kw:
-                existing.find_text(find_kw)
-            self._tabs.focus_key("tf_text_editor")
-            self._tabs.set_tab_title("tf_text_editor", name)
+                widget.find_text(find_kw)
+            self._tabs.focus_key(key)
             return
-        widget = TextEditor(_P(path), name)
-        self._text_editor_widget = widget
-        widget.dirty_changed.connect(self._on_text_editor_dirty)
+        widget = TextEditor(p, name)
+        widget.setProperty("_te_key", key)
+        editors[key] = widget
+        widget.dirty_changed.connect(
+            lambda dirty, w=widget: self._on_text_editor_dirty(w, dirty))
         widget.saved.connect(self._on_text_editor_saved)
+        widget.destroyed.connect(lambda *_a, k=key: self._text_editor_widgets.pop(k, None))
         self._tabs.open_scoped_tab(
-            widget, name, self._modlist_panel_stack, key="tf_text_editor")
+            widget, name, self._modlist_panel_stack, key=key)
         if find_kw:
             widget.find_text(find_kw)
 
-    def _on_text_editor_dirty(self, dirty):
-        w = getattr(self, "_text_editor_widget", None)
-        if w is not None and self._tabs.has_key("tf_text_editor"):
+    def _on_text_editor_dirty(self, widget, dirty):
+        key = widget.property("_te_key")
+        if key and self._tabs.has_key(key):
             self._tabs.set_tab_title(
-                "tf_text_editor", (w.name + " *") if dirty else w.name)
+                key, (widget.name + " *") if dirty else widget.name)
 
     def _on_text_editor_saved(self):
         # File content changed on disk → the Text Files content search may shift.

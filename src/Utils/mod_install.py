@@ -763,6 +763,15 @@ class PreparedInstall:
         # (installed, active, loose) file sets its conditions evaluate against.
         self.saved_fomod_selections = None
         self.fomod_context = (set(), set(), set())
+        # RE / Fluffy bundle detection (games with mod_supports_bundles, probed
+        # at prepare time when the archive is neither FOMOD nor BAIN): the
+        # grouped BundleLayout + the single-folder-unwrapped dir its variant
+        # paths live under. multi_mods is the sibling shape — every top-level
+        # folder has a modinfo.ini but there's no bundle grouping, so each
+        # folder installs as its own independent mod.
+        self.bundle_layout = None
+        self.bundle_root = None
+        self.multi_mods = None
         # Set by finish_install when the user chose to Replace an existing mod:
         # keep its modlist position + carry its endorsed flag onto the new install.
         self._preserve_position = False
@@ -773,6 +782,12 @@ class PreparedInstall:
 
     def is_bain(self) -> bool:
         return bool(self.bain_subpkgs)
+
+    def is_bundle(self) -> bool:
+        return self.bundle_layout is not None
+
+    def is_multi_mod(self) -> bool:
+        return bool(self.multi_mods)
 
     def cleanup(self):
         shutil.rmtree(self.extract_dir, ignore_errors=True)
@@ -897,6 +912,32 @@ def prepare_archive(archive_path: str, game, profile_dir: Path, *,
             prepared.saved_bain_selections = _read_saved_bain_selections(
                 game, mod_name, log_fn)
             log_fn(f"BAIN package detected — {len(subpkgs)} sub-package(s).")
+
+    # RE / Fluffy bundle & multi-mod probe (Tk parity: gui/install_mod.py chain
+    # FOMOD → BAIN → bundle → multi-mod → plain). Only for games that opt in via
+    # mod_supports_bundles; the two shapes are mutually exclusive by definition
+    # (detect_multi_mod rules itself out when any modinfo.ini carries
+    # nameasbundle/AddonFor).
+    if (fomod_result is None and not prepared.bain_subpkgs
+            and getattr(game, "mod_supports_bundles", False)):
+        try:
+            from Utils.re_bundle import detect_re_bundle, detect_multi_mod
+            bundle_root = unwrap_single_folder(str(extract_dir))
+            layout = detect_re_bundle(bundle_root)
+            if layout is not None:
+                prepared.bundle_layout = layout
+                prepared.bundle_root = bundle_root
+                log_fn(f"Bundle detected: '{layout.bundle_name}' — "
+                       f"{len(layout.groups)} group(s), "
+                       f"{layout.variant_count} option(s).")
+            else:
+                multi = detect_multi_mod(bundle_root)
+                if multi:
+                    prepared.multi_mods = multi
+                    prepared.bundle_root = bundle_root
+                    log_fn(f"Multi-mod archive detected: {len(multi)} mod(s).")
+        except Exception as exc:
+            log_fn(f"Bundle detection failed ({exc}); will install verbatim.")
     return prepared
 
 
@@ -926,10 +967,23 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
         if progress_fn is not None:
             progress_fn(done, total, phase)
 
+    # Multi-mod archives install several independent mods — route them to their
+    # own loop (the single-mod exists-prompt below is keyed on the archive name,
+    # which never becomes a mod folder for this shape).
+    if p.is_multi_mod():
+        return _install_multi_mod(p, log_fn, _pp)
+
+    # Reinstall/update of an RE bundle: carry the user's saved option selection
+    # (and order) onto the freshly detected spec before the folder is wiped —
+    # captured only on replace, a rename installs as a NEW mod (Tk parity).
+    old_bundle_spec = None
+
     # Existing same-named folder: ask the caller what to do (replace / rename /
     # cancel), or — with no callback — silently replace (collection installs).
     if dest_root.exists():
         if on_exists is None:
+            if p.is_bundle():
+                old_bundle_spec = _read_old_bundle_spec(dest_root)
             log_fn(f"Replacing existing mod folder: {p.mod_name}")
             shutil.rmtree(dest_root, ignore_errors=True)
         else:
@@ -948,6 +1002,8 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
                             read_meta(dest_root / "meta.ini").endorsed)
                     except Exception:
                         p._preserved_endorsed = False
+                    if p.is_bundle():
+                        old_bundle_spec = _read_old_bundle_spec(dest_root)
                     log_fn(f"Replacing existing mod folder: {p.mod_name}")
                     shutil.rmtree(dest_root, ignore_errors=True)
                     p._preserve_position = True
@@ -998,6 +1054,39 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
                    f"{len(file_list)} file(s) to install.")
             dest_root.mkdir(parents=True, exist_ok=True)
             _copy_file_list(file_list, p.bain_root, dest_root, log_fn)
+        elif p.is_bundle():
+            # RE / Fluffy bundle: installs as ONE normal mod. The original
+            # option folders are tucked into a hidden <mod>/.mm_bundle/ library
+            # (skipped by the file scanner); the selected options are
+            # materialised (hardlinked) onto the mod root. The structure +
+            # selection live in meta.ini's [Bundle] section; the Bundle Options
+            # tab re-materialises on change. Downstream (scan/filemap/deploy/
+            # update) sees a normal mod.
+            from Utils.re_bundle import (layout_to_spec, merge_bundle_spec,
+                                         write_bundle_spec,
+                                         materialize_selection, BUNDLE_LIB_DIR)
+            layout = p.bundle_layout
+            spec = layout_to_spec(layout)
+            log_fn(f"Installing bundle '{layout.bundle_name}' as one mod "
+                   f"'{p.mod_name}'.")
+            if old_bundle_spec is not None:
+                spec = merge_bundle_spec(spec, old_bundle_spec)
+                log_fn("Bundle: preserved existing option selection across "
+                       "reinstall/update.")
+            # Stash every extracted top-level folder under <mod>/.mm_bundle/.
+            lib_dir = dest_root / BUNDLE_LIB_DIR
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            for child in sorted(Path(p.bundle_root).iterdir()):
+                if child.is_dir():
+                    _copy_file_list(resolve_direct_files(str(child)),
+                                    str(child), lib_dir / child.name, log_fn)
+            # Persist the spec + materialise the selection. _write_install_meta
+            # below preserves the [Bundle] section (write_meta keeps foreign
+            # sections intact).
+            write_bundle_spec(dest_root / "meta.ini", spec)
+            materialize_selection(dest_root, spec)
+            log_fn(f"Bundle: {len(spec.selected_folders())} of "
+                   f"{layout.variant_count} option(s) active.")
         else:
             # Non-FOMOD: build + normalise the file list to the game's expected
             # structure (strip/required-top-level/auto-strip/prefix), EXACTLY like
@@ -1687,6 +1776,53 @@ def _install_fomod(fomod_base: Path, config, dest_root: Path,
     # produced the src→dst mapping.
     _copy_file_list(files, str(fomod_base), dest_root, log_fn)
     return any(dest_root.iterdir())
+
+
+def _read_old_bundle_spec(dest_root: Path):
+    """The [Bundle] spec of an existing install about to be replaced (or None)."""
+    try:
+        from Utils.re_bundle import read_bundle_spec
+        return read_bundle_spec(dest_root / "meta.ini")
+    except Exception:
+        return None
+
+
+def _install_multi_mod(p: "PreparedInstall", log_fn: LogFn, _pp) -> str | None:
+    """Install a multi-mod archive: each top-level folder (all carrying a
+    modinfo.ini, no bundle grouping) becomes its own independent mod with its
+    own meta/index/modlist row (Tk parity). Existing same-named folders are
+    silently replaced. Returns the first installed name (None if nothing
+    staged)."""
+    staging_root = Path(p.game.get_effective_mod_staging_path())
+    staging_root.mkdir(parents=True, exist_ok=True)
+    installed: list[str] = []
+    try:
+        for m_name, m_path in p.multi_mods:
+            file_list = stage_file_list(p.game, m_path, mod_name=m_name,
+                                        log_fn=log_fn)
+            if not file_list:
+                log_fn(f"  '{m_name}': nothing to install — skipped.")
+                continue
+            m_dest = staging_root / m_name
+            if m_dest.exists():
+                log_fn(f"Replacing existing mod folder: {m_name}")
+                shutil.rmtree(m_dest, ignore_errors=True)
+            m_dest.mkdir(parents=True, exist_ok=True)
+            _copy_file_list(file_list, m_path, m_dest, log_fn)
+            _write_install_meta(m_dest, p.archive, p.game, log_fn,
+                                prebuilt_meta=getattr(p, "prebuilt_meta", None))
+            _update_indexes(p.game, p.profile_dir, m_name, m_dest, log_fn)
+            _add_to_modlist(p.profile_dir, m_name, log_fn)
+            _add_plugins(p.game, p.profile_dir, m_dest, log_fn)
+            log_fn(f"  Installed '{m_name}' → {m_dest}")
+            installed.append(m_name)
+    finally:
+        p.cleanup()
+    if not installed:
+        log_fn(f"Install failed: nothing was staged for '{p.mod_name}'.")
+        return None
+    log_fn(f"Installed {len(installed)} mod(s) from archive.")
+    return installed[0]
 
 
 def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,

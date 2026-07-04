@@ -32,7 +32,7 @@ from gui_qt.modlist_data import (
 # mutually exclusive, handled in _flag_icons), modified-MF, xEdit, root.
 _FLAG_ICONS = [
     (FLAG_NOTE, "note.png"),
-    (FLAG_BUNDLE, "settings.png"),
+    (FLAG_BUNDLE, "bundle_settings.png#ffffff"),
     (FLAG_MISSING_REQS, "warning.png"),
     (FLAG_UPDATE, "update.png"),
     (FLAG_MODIO_UPDATE, "update_modio.png"),
@@ -493,7 +493,12 @@ class ModRowDelegate(QStyledItemDelegate):
         x = r.left() + max(6, (r.width() - total) // 2)
         y = r.top() + (r.height() - sz) // 2
         for name in names:
-            ic = icon(name, sz)
+            # A "file.png#rrggbb" name carries a tint colour (e.g. the bundle
+            # flag recolours its glyph white to read on any row). Re-attach the
+            # "#" — QColor requires it, and a bare "ffffff" is invalid (→ black).
+            fname, sep, hexpart = name.partition("#")
+            color = ("#" + hexpart) if sep else None
+            ic = icon(fname, sz, color)
             if not ic.isNull():
                 ic.paint(p, QRect(x, y, sz, sz))
             x += sz + gap

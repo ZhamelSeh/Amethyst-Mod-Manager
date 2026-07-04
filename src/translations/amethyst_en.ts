@@ -2329,6 +2329,10 @@ The original exe is kept as {0}.</translation>
         <translation>Install Selected</translation>
     </message>
     <message>
+        <source>Move Selected</source>
+        <translation>Move Selected</translation>
+    </message>
+    <message>
         <source>Remove Selected</source>
         <translation>Remove Selected</translation>
     </message>
@@ -2347,6 +2351,14 @@ The original exe is kept as {0}.</translation>
     <message>
         <source>Removed {0} archive(s)</source>
         <translation>Removed {0} archive(s)</translation>
+    </message>
+    <message>
+        <source>Cannot use that folder: {0}</source>
+        <translation>Cannot use that folder: {0}</translation>
+    </message>
+    <message>
+        <source>Moved {0} archive(s)</source>
+        <translation>Moved {0} archive(s)</translation>
     </message>
     <message>
         <source>Find in files:</source>
@@ -3888,6 +3900,25 @@ or an encrypted file when no keyring is available).</translation>
     <message>
         <source>Test &amp;&amp; Save</source>
         <translation>Test &amp;&amp; Save</translation>
+    </message>
+</context>
+<context>
+    <name>MoveDownloadsOverlay</name>
+    <message>
+        <source>Move {0} archive(s) to…</source>
+        <translation>Move {0} archive(s) to…</translation>
+    </message>
+    <message>
+        <source>Choose a configured download location.</source>
+        <translation>Choose a configured download location.</translation>
+    </message>
+    <message>
+        <source>No configured download locations.</source>
+        <translation>No configured download locations.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 <context>

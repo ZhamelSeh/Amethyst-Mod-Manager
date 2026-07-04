@@ -951,6 +951,11 @@ class MainWindow(QMainWindow):
         self._dl_install_btn.setEnabled(False)
         self._dl_install_btn.clicked.connect(
             lambda: self._downloads_view.install_selected())
+        self._dl_move_btn = self._color_button(
+            self.tr("Move Selected"), _c(self._pal, "BTN_INFO"), compact=True)
+        self._dl_move_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._dl_move_btn.setEnabled(False)
+        self._dl_move_btn.clicked.connect(self._on_downloads_move)
         self._dl_remove_btn = self._color_button(
             self.tr("Remove Selected"), _c(self._pal, "BTN_DANGER"), compact=True)
         self._dl_remove_btn.setFixedHeight(self._FOOT_BTN_H)
@@ -965,6 +970,7 @@ class MainWindow(QMainWindow):
         self._dl_filters_btn.setFixedHeight(self._FOOT_BTN_H)
         self._dl_filters_btn.clicked.connect(self._toggle_downloads_filters)
         btns.addWidget(self._dl_install_btn)
+        btns.addWidget(self._dl_move_btn)
         btns.addWidget(self._dl_remove_btn)
         btns.addWidget(self._dl_locations_btn)
         btns.addWidget(self._dl_filters_btn)
@@ -981,6 +987,7 @@ class MainWindow(QMainWindow):
     def _update_downloads_footer(self):
         n = self._downloads_view.checked_count()
         for attr, label in (("_dl_install_btn", self.tr("Install Selected")),
+                            ("_dl_move_btn", self.tr("Move Selected")),
                             ("_dl_remove_btn", self.tr("Remove Selected"))):
             b = getattr(self, attr, None)
             if b is not None:
@@ -1020,6 +1027,70 @@ class MainWindow(QMainWindow):
             f"Permanently delete {len(paths)} archive(s) from disk?\n\n"
             + names + more,
             _confirmed, confirm_label="Delete")
+
+    def _on_downloads_move(self):
+        """Move the checked archives between the *configured* download locations.
+        Opens a borderless overlay listing those locations (Downloads / Mod
+        Manager cache / extras) rather than a native folder browser."""
+        paths = self._downloads_view.checked_paths()
+        if not paths:
+            return
+        game_name = getattr(self._gs, "game_name", None)
+        from gui_qt.move_downloads_overlay import MoveDownloadsOverlay
+        MoveDownloadsOverlay.show_over(
+            self, len(paths), game_name,
+            lambda dest: self._move_downloads_to(paths, dest))
+
+    def _move_downloads_to(self, paths, dest):
+        if not dest or not paths:
+            return
+        dest_dir = Path(dest)
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._notify(self.tr("Cannot use that folder: {0}").format(exc), "error")
+            return
+
+        # Anything that would overwrite an existing file at the destination needs
+        # confirmation before we clobber it.
+        clashes = [p for p in paths
+                   if (dest_dir / Path(p).name).exists()
+                   and Path(dest_dir / Path(p).name).resolve() != Path(p).resolve()]
+
+        def _do_move():
+            import shutil
+            moved = 0
+            for p in paths:
+                src = Path(p)
+                target = dest_dir / src.name
+                try:
+                    if src.resolve() == target.resolve():
+                        continue  # already there
+                except OSError:
+                    pass
+                try:
+                    if target.exists():
+                        target.unlink()
+                    shutil.move(str(src), str(target))
+                    moved += 1
+                except OSError as exc:
+                    print(f"[gui_qt] move failed: {p} -> {target}: {exc}", flush=True)
+            self._notify(self.tr("Moved {0} archive(s)").format(moved), "info")
+            self._downloads_view.clear_checks()
+            self._downloads_view.refresh()
+
+        if clashes:
+            names = "\n".join(Path(p).name for p in clashes[:20])
+            more = f"\n… and {len(clashes) - 20} more" if len(clashes) > 20 else ""
+            from gui_qt.confirm_overlay import ConfirmOverlay
+            ConfirmOverlay.show_over(
+                self, "Overwrite archives",
+                f"{len(clashes)} file(s) already exist in that folder and will be "
+                f"overwritten:\n\n" + names + more,
+                lambda ok: _do_move() if ok else None,
+                confirm_label="Overwrite")
+        else:
+            _do_move()
 
     def _text_files_footer(self) -> QWidget:
         """Search Content / Filters + search, shown under the plugins column when

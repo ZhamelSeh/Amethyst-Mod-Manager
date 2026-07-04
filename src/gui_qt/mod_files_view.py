@@ -396,15 +396,26 @@ class ModFilesView(QWidget):
             # ourselves; the native branch click is disabled).
             self._tree.setExpanded(index, not self._tree.isExpanded(index))
         elif col == COL_NAME and not node.is_dir:
-            self._maybe_open_image(node)
+            self._maybe_open_file(node)
 
-    def _maybe_open_image(self, node: _Node):
-        """Single-click an image/.dds file → open the panel-scoped preview (Tk
-        parity). Delegates to the host-supplied callback."""
-        from gui_qt.image_preview import PREVIEW_EXTS
+    def _maybe_open_file(self, node: _Node):
+        """Single-click a file → open a panel-scoped preview when we know how to
+        show it: an image/.dds preview, or a BSA/BA2 content tree. Delegates to
+        the host-supplied callback."""
         if node.rel_str is None:
             return
-        if Path(node.rel_str).suffix.lower() not in PREVIEW_EXTS:
+        ext = Path(node.rel_str).suffix.lower()
+        from gui_qt.bsa_preview import ARCHIVE_EXTS
+        if ext in ARCHIVE_EXTS:
+            target = self._disk_path_for(node)
+            if target is None or not target.is_file():
+                return
+            cb = getattr(self, "on_open_archive", None)
+            if cb is not None:
+                cb(target, node.rel_str)
+            return
+        from gui_qt.image_preview import PREVIEW_EXTS
+        if ext not in PREVIEW_EXTS:
             return
         target = self._disk_path_for(node)
         if target is None or not target.is_file():

@@ -562,6 +562,28 @@ class MainWindow(QMainWindow):
         self._tabs.open_scoped_tab(
             widget, name, self._modlist_panel_stack, key="mf_image_preview")
 
+    def _open_bsa_preview_tab(self, path, rel_str):
+        """Open a BSA/BA2 archive's contents as a MODLIST-PANEL-SCOPED tab: it
+        shows in the modlist region (in the shared top tab bar) while the Mod
+        Files tree in the plugins panel stays live. Reuses one preview tab —
+        clicking another archive swaps it in place. Replaces the old Tk Archive
+        tab; the TOC is read without decompressing any file data."""
+        from pathlib import Path as _P
+        from gui_qt.bsa_preview import BsaPreview
+        name = rel_str.replace("\\", "/").rsplit("/", 1)[-1]
+        existing = getattr(self, "_bsa_preview_widget", None)
+        if existing is not None and self._tabs.has_key("mf_bsa_preview"):
+            existing.set_archive(_P(path), name)
+            self._tabs.focus_key("mf_bsa_preview")
+            self._tabs.set_tab_title("mf_bsa_preview", name)
+            return
+        widget = BsaPreview(_P(path), name)
+        widget.close_requested.connect(
+            lambda: self._tabs.close_tab("mf_bsa_preview"))
+        self._bsa_preview_widget = widget
+        self._tabs.open_scoped_tab(
+            widget, name, self._modlist_panel_stack, key="mf_bsa_preview")
+
     def _open_text_editor_tab(self, path, rel_str, find_kw=None):
         """Open a text file in a save-capable editor as a MODLIST-PANEL-SCOPED tab
         (the other panels stay live). Reuses one editor — clicking another file
@@ -7525,6 +7547,7 @@ class MainWindow(QMainWindow):
         self._mod_files_view = ModFilesView()
         self._mod_files_view.changed.connect(self._on_mod_files_changed)
         self._mod_files_view.on_open_image = self._open_image_preview_tab
+        self._mod_files_view.on_open_archive = self._open_bsa_preview_tab
         self._plugin_stack.addWidget(self._mod_files_view)
         # Page 2: the real Text Files view.
         from gui_qt.text_files_view import TextFilesView

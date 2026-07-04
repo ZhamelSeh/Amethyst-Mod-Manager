@@ -6059,6 +6059,74 @@ Output is written directly into your mod list as the '{0}' mod.</translation>
         <source>  (none)</source>
         <translation>  (none)</translation>
     </message>
+    <message>
+        <source>A new version of Amethyst Mod Manager is available on the AUR.
+
+Current: {0}
+AUR:     {1}
+
+Update via your AUR helper, e.g.
+  yay -Syu amethyst-mod-manager</source>
+        <translation>A new version of Amethyst Mod Manager is available on the AUR.
+
+Current: {0}
+AUR:     {1}
+
+Update via your AUR helper, e.g.
+  yay -Syu amethyst-mod-manager</translation>
+    </message>
+    <message>
+        <source>Pre-release</source>
+        <translation>Pre-release</translation>
+    </message>
+    <message>
+        <source>Stable</source>
+        <translation>Stable</translation>
+    </message>
+    <message>
+        <source>You're running a pre-release. Switch to the latest {0} build?
+
+Current:     {1}
+{2}: {3}
+
+This will downgrade your installation.</source>
+        <translation>You're running a pre-release. Switch to the latest {0} build?
+
+Current:     {1}
+{2}: {3}
+
+This will downgrade your installation.</translation>
+    </message>
+    <message>
+        <source>A new version of Amethyst Mod Manager is available.
+
+Current: {0}
+Latest:  {1}</source>
+        <translation>A new version of Amethyst Mod Manager is available.
+
+Current: {0}
+Latest:  {1}</translation>
+    </message>
+    <message>
+        <source>Switch to stable</source>
+        <translation>Switch to stable</translation>
+    </message>
+    <message>
+        <source>Update via installer</source>
+        <translation>Update via installer</translation>
+    </message>
+    <message>
+        <source>Open AUR page</source>
+        <translation>Open AUR page</translation>
+    </message>
+    <message>
+        <source>Open releases page</source>
+        <translation>Open releases page</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Later</translation>
+    </message>
 </context>
 <context>
     <name>UserlistBar</name>

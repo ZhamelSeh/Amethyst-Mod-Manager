@@ -365,7 +365,8 @@ class SettingsView(QWidget):
             g, self.tr("Use pre-release versions"),
             uc.load_allow_prerelease, uc.save_allow_prerelease,
             help=self.tr("Also offer beta and release-candidate app builds when checking "
-                 "for updates."))
+                 "for updates."),
+            on_changed=self._on_prerelease_toggle)
 
     def _build_appearance(self):
         g = self._section(self.tr("Appearance"))
@@ -454,6 +455,18 @@ class SettingsView(QWidget):
         active = getattr(getattr(self._window, "_gs", None), "game_name", "") or ""
         CacheManagerOverlay.show_over(
             self._window, active_game_name=active)
+
+    def _on_prerelease_toggle(self, value: bool):
+        """Re-run the app update check immediately (Tk parity).
+
+        When *unticking* (opting out), pass force_downgrade_prompt=True so the
+        user is offered a switch to the latest stable even if it's older than
+        the pre-release they're currently running. When *ticking*, no force —
+        the normal upgrade check already handles "is there a newer build?".
+        """
+        check = getattr(self._window, "_check_for_app_update", None)
+        if callable(check):
+            check(force_downgrade_prompt=not value, force_fresh=True)
 
     # ---- helpers ----------------------------------------------------------
     def _rebuild_conflicts(self):

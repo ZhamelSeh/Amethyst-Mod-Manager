@@ -125,6 +125,9 @@ class MainWindow(QMainWindow):
     _oauth_event = Signal(str, object)
     # Check-for-updates worker → UI thread ((updates, missing) | None on error).
     _updates_ready = Signal(object)
+    # App self-update check worker → UI thread
+    # ((current, latest, mode, is_prerelease, is_downgrade)).
+    _app_update_found = Signal(object)
     # Endorse/abstain worker → UI thread ({"ok": n, "endorse": bool}).
     _endorse_done = Signal(object)
     # "Endorse AMM" worker → UI thread ({"state": str, "message": str}).
@@ -374,6 +377,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         QTimer.singleShot(3000, self._start_gh_sync)
+        # App self-update check (Tk parity: after(2000, …)). AppImage/flatpak
+        # compare against GitHub releases, everything else against the AUR.
+        self._update_overlay = None
+        self._app_update_found.connect(self._on_app_update_found)
+        QTimer.singleShot(2000, self._check_for_app_update)
         # First-run onboarding: show it (as a fullscreen tab) when the flag is
         # unset/0 OR no games are configured (Tk parity — re-appears after the
         # last game is removed). Deferred so the window finishes building first.
@@ -1538,6 +1546,88 @@ class MainWindow(QMainWindow):
         # UI translations (.qm) → config languages/ folder. New/updated ones
         # apply on next launch (Qt can't hot-swap installed translators safely).
         sync_languages(on_changed=lambda: safe_emit(self._languages_synced))
+
+    def _check_for_app_update(self, force_downgrade_prompt: bool = False,
+                              force_fresh: bool = False):
+        """Run in background: fetch latest version and prompt if newer.
+
+        AppImage installs compare against GitHub releases and offer the
+        auto-installer.  System installs (e.g. AUR) compare against the AUR
+        package version and show instructions to update via the AUR helper.
+
+        When *force_downgrade_prompt* is True (e.g. the user just toggled the
+        pre-release channel off while running a beta), the AppImage/Flatpak
+        branches will surface the latest stable even if it's older than the
+        currently-running version, with downgrade-aware copy.
+
+        When *force_fresh* is True (or implied by force_downgrade_prompt), the
+        ETag-cache throttle is bypassed so a manual user action triggers an
+        immediate re-check instead of waiting out the 1-hour throttle window.
+        """
+        import threading
+        from gui_qt.safe_emit import safe_emit
+        from version import __version__
+        from Utils.ui_config import load_allow_prerelease
+        from Utils.version_check import (
+            is_appimage, is_flatpak,
+            _fetch_latest_version, _fetch_aur_version, _is_newer_version,
+        )
+
+        force_fresh = bool(force_fresh or force_downgrade_prompt)
+
+        def _do_check():
+            allow_pre = load_allow_prerelease()
+            if is_appimage() or is_flatpak():
+                mode = "appimage" if is_appimage() else "flatpak"
+                result = _fetch_latest_version(
+                    allow_prerelease=allow_pre, force=force_fresh)
+                if result is None:
+                    return
+                latest, is_pre = result
+                newer = _is_newer_version(__version__, latest)
+                if newer or (force_downgrade_prompt and latest != __version__):
+                    safe_emit(self._app_update_found,
+                              (__version__, latest, mode, is_pre, not newer))
+            else:
+                aur_ver = _fetch_aur_version(force=force_fresh)
+                if aur_ver is None:
+                    return
+                if _is_newer_version(__version__, aur_ver):
+                    safe_emit(self._app_update_found,
+                              (__version__, aur_ver, "aur", False, False))
+
+        threading.Thread(target=_do_check, daemon=True).start()
+
+    def _on_app_update_found(self, payload):
+        """Show the update banner over the modlist panel (UI thread)."""
+        current, latest, mode, is_prerelease, is_downgrade = payload
+        from gui_qt.update_overlay import UpdateOverlay
+
+        # Dismiss any prior banner so re-checking (e.g. after toggling the
+        # pre-release setting) doesn't stack multiple overlays.
+        prior = getattr(self, "_update_overlay", None)
+        if prior is not None:
+            try:
+                prior.close_overlay()
+            except Exception:
+                pass
+            self._update_overlay = None
+
+        def _on_update():
+            from Utils.version_check import run_installer
+            run_installer(allow_prerelease=is_prerelease)
+            # closeEvent handles the rest of the shutdown (NxmIPC etc.); the
+            # installer waits 2s before replacing the running AppImage.
+            self.close()
+
+        def _cleared(overlay):
+            if getattr(self, "_update_overlay", None) is overlay:
+                self._update_overlay = None
+
+        self._update_overlay = UpdateOverlay(
+            self._modlist_panel_stack, current, latest, mode=mode,
+            is_prerelease=is_prerelease, is_downgrade=is_downgrade,
+            on_update=_on_update, on_close=_cleared)
 
     def _apply_language(self, code: str):
         """Switch UI language (from the Settings/onboarding picker). A live

@@ -148,6 +148,7 @@ class MainWindow(QMainWindow):
     _col_row = Signal(int)                     # file_id installed
     _col_manual = Signal(object)               # manual-mode current-mod payload dict
     _col_finished = Signal(str, object)        # ("done"|"paused"|"cancelled", payload)
+    _appended_col_removed = Signal(str, bool)  # appended-collection remove worker → UI
     _col_import_done = Signal(object)          # (profile_name, installed, total, skipped)
     _import_file_picked = Signal(object)       # portal picker result (Path|None) → UI thread
     _install_files_picked = Signal(object)     # portal picker result (list[Path]) → UI thread
@@ -342,6 +343,7 @@ class MainWindow(QMainWindow):
         self._col_row.connect(self._on_col_row)
         self._col_manual.connect(self._on_col_manual)
         self._col_finished.connect(self._on_col_finished)
+        self._appended_col_removed.connect(self._on_appended_col_removed)
         self._col_import_done.connect(self._on_import_bundle_done)
         self._import_file_picked.connect(self._on_import_file_picked)
         self._install_files_picked.connect(self._on_install_files_picked)
@@ -1366,6 +1368,13 @@ class MainWindow(QMainWindow):
         self._reload_modlist()
         self._reload_plugins()
         self._update_deployed_profile_highlight()
+        # Appended-collections section tracks the ACTIVE profile.
+        view = getattr(self, "_collections_view", None)
+        if view is not None:
+            try:
+                view.refresh_appended()
+            except Exception:
+                pass
         # Keep the Profile Settings ★ marker in sync if that tab is open.
         if self._tabs.has_key("profile_settings"):
             v = getattr(self, "_profile_settings_view", None)
@@ -1874,11 +1883,104 @@ class MainWindow(QMainWindow):
         from gui_qt.collections_browser_view import CollectionsBrowserView
         view = CollectionsBrowserView(
             api, domain, game, log_fn=self._append_log,
-            on_open_detail=self._open_collection_detail_tab)
+            on_open_detail=self._open_collection_detail_tab,
+            get_profile_dir=lambda: self._gs.profile_dir(),
+            on_remove_appended=self._remove_appended_collection)
         self._collections_view = view
         view.destroyed.connect(
             lambda *_: setattr(self, "_collections_view", None))
         self._tabs.open_tab(view, self.tr("Collections"), key="collections")
+
+    def _remove_appended_collection(self, record):
+        """Remove an appended collection from the active profile: every mod it
+        installed (meta.ini fromCollection / manifest fileid ownership — other
+        collections' and manual mods are never touched) plus its
+        installed_collections/ record. Confirm → daemon worker (deploy mutex)
+        → _appended_col_removed → reload."""
+        import threading
+        from Utils.installed_collections import resolve_owned_mod_names
+        game = self._gs.game
+        pdir = self._gs.profile_dir()
+        if game is None or pdir is None:
+            return
+        if self._deploy_running:
+            self._notify(self.tr("A deploy or removal is already running — try again when it finishes."),
+                         "warning")
+            return
+        if self._col_install_running:
+            self._notify(self.tr("A collection install is running — try again when it finishes."),
+                         "warning")
+            return
+        # The tab can outlive a profile switch — only act on records that still
+        # exist under the CURRENT profile.
+        rec_path = record.get("path")
+        try:
+            valid = (rec_path is not None and Path(rec_path).is_file()
+                     and Path(rec_path).parent.parent.resolve()
+                     == Path(pdir).resolve())
+        except Exception:
+            valid = False
+        if not valid:
+            view = getattr(self, "_collections_view", None)
+            if view is not None:
+                view.refresh_appended()
+            return
+        name = str((record.get("card") or {}).get("name")
+                   or record.get("slug") or "")
+        names = resolve_owned_mod_names(game, pdir, record)
+        if names:
+            body = self.tr("Remove '{0}' and its {1} mod(s) from this profile?\n\n"
+                           "Their files are deleted from the staging folder — "
+                           "this cannot be undone.").format(name, len(names))
+        else:
+            body = self.tr("No installed mods from '{0}' were found in this "
+                           "profile.\n\nRemove the appended-collection entry?"
+                           ).format(name)
+
+        def _confirmed(ok):
+            if not ok or self._deploy_running:
+                return
+            self._deploy_running = True
+
+            def _worker():
+                from gui_qt.safe_emit import safe_emit
+                from Utils.installed_collections import remove_appended_collection
+                done_ok = True
+                try:
+                    remove_appended_collection(
+                        game, pdir, record, names,
+                        log_fn=lambda m: self._op_log.emit(f"[collection] {m}"))
+                except Exception as exc:
+                    done_ok = False
+                    self._op_log.emit(f"[collection] remove appended failed: {exc}")
+                finally:
+                    self._deploy_running = False
+                    safe_emit(self._appended_col_removed, name, done_ok)
+
+            threading.Thread(target=_worker, daemon=True,
+                             name="appended-col-remove").start()
+
+        from gui_qt.confirm_overlay import ConfirmOverlay
+        ConfirmOverlay.show_over(self, self.tr("Remove appended collection"),
+                                 body, _confirmed,
+                                 confirm_label=self.tr("Remove"))
+
+    def _on_appended_col_removed(self, name, ok):
+        """UI thread: appended-collection removal finished — reload + toast."""
+        self._reload_modlist(rescan_index=True)
+        self._reload_plugins()
+        view = getattr(self, "_collections_view", None)
+        if view is not None:
+            try:
+                view.refresh_appended()
+            except Exception:
+                pass
+        if ok:
+            self._notify(self.tr("Removed appended collection '{0}'.").format(name),
+                         "success")
+        else:
+            self._notify(self.tr("Could not remove '{0}' — see the log.").format(name),
+                         "error")
 
     def _open_current_collection(self):
         """Open the detail tab for the collection installed in the active profile.
@@ -2323,6 +2425,22 @@ class MainWindow(QMainWindow):
                 self._stamp_collection_profile(
                     profile_dir, domain, slug, revision_number, skipped)
 
+        # Card display fields for the appended-collections record
+        # (installed_collections/<slug>.json — see Utils.installed_collections).
+        append_card_info = None
+        if overwrite_existing is not None:
+            import dataclasses
+            try:
+                append_card_info = dataclasses.asdict(collection)
+            except Exception:
+                append_card_info = {
+                    k: getattr(collection, k, None)
+                    for k in ("id", "slug", "name", "summary", "user_name",
+                              "endorsements", "total_downloads", "mod_count",
+                              "tile_image_url", "game_domain")}
+            if not append_card_info.get("game_domain"):
+                append_card_info["game_domain"] = domain
+
         old_profile_dir = getattr(game, "_active_profile_dir", None)
 
         # Overlay + control. Manual (non-premium) installs get the per-mod
@@ -2364,6 +2482,7 @@ class MainWindow(QMainWindow):
                     skip_existing=skip_existing_arg, update_context=update_context,
                     collection_schema_cache=local_manifest,
                     manual_mode=manual_mode,
+                    append_card_info=append_card_info,
                     callbacks=callbacks, control=control)
             except Exception as exc:
                 import traceback

@@ -244,6 +244,7 @@ def run_collection_install(
         with_bundled: bool = True,
         update_context: "dict | None" = None,
         manual_mode: bool = False,
+        append_card_info: "dict | None" = None,
         callbacks: "CollectionInstallCallbacks | None" = None,
         control: "CollectionInstallControl | None" = None) -> None:
     """Download then install every mod in *mods* in collection-defined order.
@@ -251,6 +252,13 @@ def run_collection_install(
     Faithful port of ``CollectionsDialog._run_install`` — see module docstring.
     ``overwrite_existing``: None=new-profile install (the wired v1 path); a bool
     selects the append path (ported but not yet exercised by the Qt caller).
+    ``append_card_info``: display fields for the collection (NexusCollection as
+    a dict) — on append runs the manifest is recorded to
+    ``<profile>/installed_collections/<slug>.json`` (instead of clobbering the
+    profile's primary ``collection.json``) so the Collections browser can list
+    and cleanly remove appended collections. Written up-front, so a cancelled
+    or paused append still leaves the record and Remove cleans up the partial
+    install.
     ``update_context``: when set (a collection UPDATE — continue semantics, so
     ``overwrite_existing`` stays None), the final modlist write uses the
     order-preserving ``_reconcile_update_modlist`` (snapshot + schema-neighbour
@@ -318,7 +326,15 @@ def run_collection_install(
             log(f"Collection install: could not download collection.json: {exc} — "
                 "continuing with GraphQL order")
 
-    if collection_schema:
+    if _is_append_run:
+        # Append: record under installed_collections/ — do NOT clobber the
+        # profile's primary collection.json (the update path diffs against it).
+        from Utils.installed_collections import record_appended_collection
+        record_appended_collection(
+            profile_dir, slug=_slug, revision=revision_number,
+            card=append_card_info or {}, manifest=collection_schema or {},
+            log_fn=log)
+    elif collection_schema:
         try:
             (profile_dir / "collection.json").write_text(
                 json.dumps(collection_schema, indent=2), encoding="utf-8")

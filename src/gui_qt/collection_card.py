@@ -30,13 +30,15 @@ class CollectionCard(QWidget):
     """View-only collection card. *entry* is a NexusCollection; *on_view(entry)*
     opens its Nexus page; *on_context(entry, global_pos)* is the right-click menu."""
 
-    def __init__(self, entry, on_view, on_context=None, parent=None):
+    def __init__(self, entry, on_view, on_context=None, on_remove=None,
+                 parent=None):
         super().__init__(parent)
         self.setObjectName("GameCard")
         # QWidget (unlike QFrame) only paints its stylesheet border/background
         # when WA_StyledBackground is set.
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setFixedSize(CARD_W, CARD_H)
+        # A second (Remove) button needs extra height on this card only.
+        self.setFixedSize(CARD_W, CARD_H + (34 if on_remove is not None else 0))
         self.entry = entry
         self._on_context = on_context
         p = active_palette()
@@ -114,6 +116,19 @@ class CollectionCard(QWidget):
         view.setCursor(Qt.PointingHandCursor)
         view.clicked.connect(lambda: on_view(entry))
         bl.addWidget(view)
+
+        if on_remove is not None:
+            from gui_qt.theme_qt import _lighten
+            danger = _c(p, "BTN_DANGER")
+            remove = QPushButton(self.tr("Remove"))
+            remove.setCursor(Qt.PointingHandCursor)
+            remove.setStyleSheet(
+                f"QPushButton {{ background:{danger};"
+                f" color:#ffffff; border:none; border-radius:4px;"
+                f" padding:4px 10px; }}"
+                f"QPushButton:hover {{ background:{_lighten(danger)}; }}")
+            remove.clicked.connect(lambda: on_remove(entry))
+            bl.addWidget(remove)
 
         v.addWidget(body, 1)
 

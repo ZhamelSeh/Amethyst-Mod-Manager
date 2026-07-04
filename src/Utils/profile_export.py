@@ -371,7 +371,7 @@ def write_amethyst(out_path, manifest: dict, *, staging_root=None,
                 if fp.is_file():
                     zf.write(fp, (Path("profile") / fp.name).as_posix())
             # Bundle whole profile subfolders
-            for sub in ("ini files", "Saves"):
+            for sub in ("ini files", "Saves", "installed_collections"):
                 sub_dir = pdir / sub
                 if not sub_dir.is_dir():
                     continue

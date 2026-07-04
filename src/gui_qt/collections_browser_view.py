@@ -42,6 +42,7 @@ class CollectionsBrowserView(QWidget):
     _results_ready = Signal(object, str, object)   # (entries, status, token)
 
     def __init__(self, api, domain, game, log_fn=None, on_open_detail=None,
+                 get_profile_dir=None, on_remove_appended=None,
                  parent=None):
         super().__init__(parent)
         self._api = api
@@ -50,12 +51,16 @@ class CollectionsBrowserView(QWidget):
         self._log = log_fn or (lambda m: None)
         # Card View opens the detail tab when provided; else falls back to the URL.
         self._on_open_detail = on_open_detail
+        # Appended-collections section: current profile dir provider + remove cb.
+        self._get_profile_dir = get_profile_dir
+        self._on_remove_appended = on_remove_appended
 
         # state
         self._page = 0
         self._query = ""
         self._entries = []
         self._cards: list[CollectionCard] = []
+        self._appended_cards: list[CollectionCard] = []
         self._cols = 0
         self._fetch_token = 0           # guards against stale async results
 
@@ -107,12 +112,43 @@ class CollectionsBrowserView(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # "Collections appended to this profile" — records from the current
+        # profile's installed_collections/ folder; hidden when there are none.
+        self._appended_host = QWidget()
+        av = QVBoxLayout(self._appended_host)
+        av.setContentsMargins(16, 12, 16, 0)
+        av.setSpacing(6)
+        appended_title = QLabel(self.tr("Collections appended to this profile"))
+        appended_title.setStyleSheet(
+            f"color:{_c(p,'TEXT_MAIN')}; font-weight:600;")
+        av.addWidget(appended_title)
+        appended_grid_host = QWidget()
+        self._appended_grid = QGridLayout(appended_grid_host)
+        self._appended_grid.setContentsMargins(0, 0, 0, 0)
+        self._appended_grid.setSpacing(12)
+        self._appended_grid.setAlignment(Qt.AlignTop)
+        av.addWidget(appended_grid_host)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{_c(p,'BORDER')};")
+        av.addWidget(sep)
+        self._appended_host.hide()
+
         self._grid_host = QWidget()
         self._grid = QGridLayout(self._grid_host)
         self._grid.setContentsMargins(16, 12, 16, 12)
         self._grid.setSpacing(12)
         self._grid.setAlignment(Qt.AlignTop)
-        self._scroll.setWidget(self._grid_host)
+
+        scroll_body = QWidget()
+        sb = QVBoxLayout(scroll_body)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(0)
+        sb.addWidget(self._appended_host)
+        sb.addWidget(self._grid_host)
+        sb.addStretch(1)
+        self._scroll.setWidget(scroll_body)
         self._scroll.installEventFilter(self)
         outer.addWidget(self._scroll, 1)
 
@@ -224,6 +260,7 @@ class CollectionsBrowserView(QWidget):
         self._reload()
 
     def _reload(self):
+        self.refresh_appended()
         if not self._domain:
             self._status.setText(self.tr("No Nexus domain for this game."))
             return
@@ -283,6 +320,65 @@ class CollectionsBrowserView(QWidget):
         self._next_btn.setEnabled(
             (not self._query) and len(self._entries) >= self._page_size())
 
+    # -- appended-collections section ----------------------------------------
+    def refresh_appended(self):
+        """Rebuild the 'Collections appended to this profile' section from the
+        current profile's installed_collections/ records (hidden when empty)."""
+        for c in self._appended_cards:
+            c.setParent(None)
+        self._appended_cards.clear()
+        records = []
+        pdir = None
+        if self._get_profile_dir is not None:
+            try:
+                pdir = self._get_profile_dir()
+            except Exception:
+                pdir = None
+        if pdir:
+            from Utils.installed_collections import list_appended_collections
+            records = list_appended_collections(pdir, log_fn=self._log)
+        if not records:
+            self._appended_host.hide()
+            return
+        import dataclasses
+        from Nexus.nexus_api import NexusCollection
+        fields = {f.name for f in dataclasses.fields(NexusCollection)}
+        primary_view = self._on_open_detail or self._on_view
+        for rec in records:
+            data = {k: v for k, v in (rec.get("card") or {}).items()
+                    if k in fields and v is not None}
+            try:
+                entry = NexusCollection(**data)
+            except Exception:
+                entry = NexusCollection()
+            if not entry.slug:
+                entry.slug = str(rec.get("slug") or "")
+            if not entry.name:
+                entry.name = entry.slug
+            on_remove = None
+            if self._on_remove_appended is not None:
+                on_remove = lambda _e, rec=rec: self._on_remove_appended(rec)
+            card = CollectionCard(entry, primary_view,
+                                  on_context=self._show_card_menu,
+                                  on_remove=on_remove)
+            self._appended_cards.append(card)
+            if entry.tile_image_url:
+                self._thumbs.request(entry.id, entry.tile_image_url)
+        self._appended_host.show()
+        self._relayout_appended(self._cols_for_width())
+
+    def _relayout_appended(self, cols: int):
+        while self._appended_grid.count():
+            self._appended_grid.takeAt(0)
+        for i, card in enumerate(self._appended_cards):
+            self._appended_grid.addWidget(card, i // cols, 1 + (i % cols),
+                                          Qt.AlignTop | Qt.AlignHCenter)
+            card.show()
+        for c in range(self._appended_grid.columnCount()):
+            self._appended_grid.setColumnStretch(c, 0)
+        self._appended_grid.setColumnStretch(0, 1)
+        self._appended_grid.setColumnStretch(cols + 1, 1)
+
     # -- cards / grid -------------------------------------------------------
     def _rebuild_cards(self):
         for c in self._cards:
@@ -316,10 +412,12 @@ class CollectionsBrowserView(QWidget):
             self._grid.setColumnStretch(c, 0)
         self._grid.setColumnStretch(0, 1)
         self._grid.setColumnStretch(cols + 1, 1)
+        if self._appended_cards:
+            self._relayout_appended(cols)
         self._cols = cols
 
     def _on_thumb(self, coll_id, pm):
-        for card in self._cards:
+        for card in self._cards + self._appended_cards:
             if card.entry.id == coll_id:
                 card.set_thumbnail(pm)
 

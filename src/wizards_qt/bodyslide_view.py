@@ -173,7 +173,7 @@ class BodySlideView(WizardViewBase):
             import subprocess
             from Utils.bodyslide_tools import apply_output_redirect
             from Utils.exe_launch import (
-                resolve_tool_prefix, shutdown_prefix_wineserver,
+                resolve_tool_prefix, run_tool_logged, shutdown_prefix_wineserver,
             )
             from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"{name} Wizard: {m}")
@@ -230,18 +230,25 @@ class BodySlideView(WizardViewBase):
                         gl_log = None
 
                 _wlog(f"launching {deployed} via Proton (cwd={deployed.parent})")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(deployed), env=env),
-                    env=env,
-                    cwd=str(deployed.parent),
-                    stdout=(gl_log or subprocess.DEVNULL),
-                    stderr=(gl_log or subprocess.DEVNULL),
-                )
                 safe_emit(self._run_status_sig,
                           f"{name} is running.\nClose it when you are done, "
                           "then click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                if gl_log is not None:
+                    # GL trace mode: keep the raw file redirect (verbose OpenGL
+                    # channels the log-panel stream would flood).
+                    proc = subprocess.Popen(
+                        proton_run_command(proton_script, "run",
+                                           str(deployed), env=env),
+                        env=env,
+                        cwd=str(deployed.parent),
+                        stdout=gl_log,
+                        stderr=gl_log,
+                    )
+                    proc.wait()
+                else:
+                    run_tool_logged(proton_script, deployed, env,
+                                    log_fn=_wlog, label=name)
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog(f"{deployed.name} closed.")

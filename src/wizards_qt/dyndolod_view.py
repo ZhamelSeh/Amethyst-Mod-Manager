@@ -519,11 +519,9 @@ class DynDOLODView(QWidget):
         proton_name, prefix_mode = self._proton_name, self._prefix_mode
 
         def worker():
-            import subprocess
             from Utils.exe_launch import (
-                resolve_tool_prefix, shutdown_prefix_wineserver,
+                resolve_tool_prefix, run_tool_logged, shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             from Utils.wine_paths import to_wine_path
             from Utils.xedit_tools import prepare_xedit_prefix
             _wlog = lambda m: self._log(f"{name} Wizard: {m}")
@@ -559,17 +557,10 @@ class DynDOLODView(QWidget):
 
                 self._log(f"{name} Wizard: launching {exe} via Proton")
                 self._log(f"  args: {data_arg}  {output_arg}  -sse")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe),
-                                       data_arg, output_arg, "-sse",
-                                       env=env),
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(
+                    proton_script, exe, env, log_fn=_wlog,
+                    extra_args=[data_arg, output_arg, "-sse"], label=name)
 
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)

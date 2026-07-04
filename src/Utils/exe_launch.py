@@ -863,6 +863,67 @@ def resolve_tool_prefix(exe: Path, game, proton_name: str, prefix_mode: str,
     return proton_script, compat_data, env
 
 
+def run_tool_logged(
+    proton_script: Path,
+    exe: Path,
+    env: dict,
+    log_fn=_noop_log,
+    *,
+    extra_args: "list[str] | None" = None,
+    cwd: "Path | None" = None,
+    label: str | None = None,
+    winedebug: str = "+err,+warn,fixme-all",
+) -> int:
+    """Launch *exe* through Proton and stream its output to *log_fn*.
+
+    Replaces the old ``Popen(..., stdout=DEVNULL, stderr=DEVNULL)`` pattern the
+    wizard tools all used, which silently swallowed crash traces (e.g.
+    WitcherScriptMerger dying instantly with no visible cause). We now:
+
+      * force ``WINEDEBUG`` (unless the caller already set one in *env*) so
+        Wine-side load failures are emitted, and
+      * merge the tool's stdout+stderr and pump it line-by-line to *log_fn*.
+
+    Blocks until the process exits (call from a worker thread) and returns the
+    exit code. *proton_script* and *env* come from ``resolve_tool_prefix``;
+    *extra_args* are appended after the exe (e.g. xEdit's data-path flag).
+    """
+    from Utils.steam_finder import proton_run_command
+
+    label = label or exe.name
+    # Only set WINEDEBUG when the caller hasn't chosen its own channels
+    # (BodySlide sets +wgl,+opengl for its GL trace and must win).
+    env.setdefault("WINEDEBUG", winedebug)
+
+    cmd = proton_run_command(proton_script, "run", str(exe), env=env)
+    if extra_args:
+        cmd = cmd + list(extra_args)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            cwd=str(cwd) if cwd is not None else str(exe.parent),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True,
+        )
+    except OSError as exc:
+        log_fn(f"{label}: failed to launch — {exc}")
+        raise
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        line = line.rstrip("\n")
+        if line:
+            log_fn(f"{label}: {line}")
+    rc = proc.wait()
+    if rc != 0:
+        log_fn(f"{label}: exited with code {rc}")
+    return rc
+
+
 def launch_winetricks_in_prefix(wineprefix: Path, log_fn=_noop_log) -> None:
     """Launch the winetricks GUI against *wineprefix* (a .../pfx dir),
     downloading winetricks/cabextract on demand."""

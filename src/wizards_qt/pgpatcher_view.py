@@ -346,13 +346,11 @@ class PGPatcherView(WizardViewBase):
         mo2_dummy_dir, mo2_game_type = self._mo2_dummy_dir, self._mo2_game_type
 
         def worker():
-            import subprocess
             from Utils.bethesda_registry import maybe_register_for_game
             from Utils.exe_launch import (
-                link_plugins_txt, resolve_tool_prefix,
+                link_plugins_txt, resolve_tool_prefix, run_tool_logged,
                 shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"PGPatcher Wizard: {m}")
             try:
                 result = prefix_env or resolve_tool_prefix(
@@ -392,23 +390,16 @@ class PGPatcherView(WizardViewBase):
                     _wlog(f"settings re-apply error: {exc}")
 
                 # MO2 mode requires either real USVFS or this bypass on Linux.
-                launch_cmd = proton_run_command(proton_script, "run", str(exe), env=env)
-                if mo2_dummy_dir is not None:
-                    launch_cmd.append("--ignore-mo2vfscheck")
+                extra_args = (["--ignore-mo2vfscheck"]
+                              if mo2_dummy_dir is not None else None)
 
                 _wlog(f"launching {exe} via Proton")
-                proc = subprocess.Popen(
-                    launch_cmd,
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "PGPatcher is running.\nWait for it to finish, then "
                           "click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                extra_args=extra_args, label="PGPatcher")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("PGPatcher closed.")

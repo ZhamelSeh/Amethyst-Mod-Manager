@@ -202,18 +202,16 @@ class CreationKitView(WizardViewBase):
         proton_name, prefix_mode = self._proton_name, self._prefix_mode
 
         def worker():
-            import subprocess
             from Utils.bethesda_registry import maybe_register_for_game
             from Utils.deploy import apply_wine_dll_overrides
             from Utils.exe_launch import (
                 link_mygames, link_plugins_txt, resolve_tool_prefix,
-                shutdown_prefix_wineserver,
+                run_tool_logged, shutdown_prefix_wineserver,
             )
             from Utils.protontricks import (
                 D3D_DEP_KEY, VCREDIST_DEP_KEY, install_d3dcompiler_47,
                 install_vcredist, is_dep_installed,
             )
-            from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"Creation Kit Wizard: {m}")
             try:
                 result = resolve_tool_prefix(
@@ -281,18 +279,12 @@ class CreationKitView(WizardViewBase):
                         _wlog(f"could not create CKPEPlugins/: {exc}")
 
                 _wlog(f"launching {exe} via Proton from {game_path}")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe), env=env),
-                    env=env,
-                    cwd=str(game_path),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "Creation Kit is running.\nClose it when you are "
                           "done, then click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                cwd=game_path, label="Creation Kit")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("Creation Kit closed.")

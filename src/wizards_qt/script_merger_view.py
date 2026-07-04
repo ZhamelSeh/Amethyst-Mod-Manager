@@ -276,12 +276,10 @@ class ScriptMergerView(WizardViewBase):
         prefix_env = self._prefix_env
 
         def worker():
-            import subprocess
             from Utils.exe_launch import (
-                link_game_documents, resolve_tool_prefix,
+                link_game_documents, resolve_tool_prefix, run_tool_logged,
                 shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"Script Merger Wizard: {m}")
             try:
                 result = prefix_env or resolve_tool_prefix(
@@ -315,18 +313,12 @@ class ScriptMergerView(WizardViewBase):
                         _wlog(f"config update warning: {cfg_exc}")
 
                 _wlog(f"launching {exe} via Proton")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe), env=env),
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "WitcherScriptMerger is running.\nMerge your "
                           "conflicts, then close it and click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                label="WitcherScriptMerger")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("WitcherScriptMerger closed.")

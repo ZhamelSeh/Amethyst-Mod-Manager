@@ -114,12 +114,10 @@ class ESLifierView(WizardViewBase):
         profile = getattr(self._ctx, "profile_name", None) or "default"
 
         def worker():
-            import subprocess
             from Utils.eslifier_tools import cleanup_scan_mirror, write_settings
             from Utils.exe_launch import (
-                resolve_tool_prefix, shutdown_prefix_wineserver,
+                resolve_tool_prefix, run_tool_logged, shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"ESLifier Wizard: {m}")
             scan_mirror = None
             try:
@@ -143,18 +141,12 @@ class ESLifierView(WizardViewBase):
                     return
 
                 _wlog(f"launching {exe} via Proton")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe), env=env),
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "ESLifier is running.\nClose it when you are done, "
                           "then click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                label="ESLifier")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("ESLifier closed.")

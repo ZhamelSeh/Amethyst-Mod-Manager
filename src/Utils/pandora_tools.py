@@ -14,7 +14,6 @@ install_net10 / run_pandora are blocking — call them from a worker thread.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -125,29 +124,19 @@ def run_pandora(exe: Path, game: "BaseGame", proton_script: Path,
     env["PROTON_USE_WINED3D"] = "1"
     env["WINE_D3D_CONFIG"] = "renderer=gdi"
 
-    cmd = proton_run_command(proton_script, "run", str(exe), game_arg, env=env)
+    from Utils.exe_launch import run_tool_logged
     log_fn(f"launching {exe} via Proton")
-    log_fn(f"  cmd: {' '.join(cmd)}")
     log_fn(
         "  env: "
         f"PROTON_USE_WINED3D={env.get('PROTON_USE_WINED3D', '<unset>')} "
         f"WINE_D3D_CONFIG={env.get('WINE_D3D_CONFIG', '<unset>')} "
         f"STEAM_COMPAT_DATA_PATH={env.get('STEAM_COMPAT_DATA_PATH', '<unset>')}"
     )
-    proc = subprocess.Popen(
-        cmd,
-        env=env,
-        cwd=str(exe.parent),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
     if on_started is not None:
         on_started()
-    _stdout, stderr_bytes = proc.communicate()
-    rc = proc.returncode
+    rc = run_tool_logged(proton_script, exe, env, log_fn=log_fn,
+                         extra_args=[game_arg] if game_arg else None,
+                         label="Pandora")
     shutdown_prefix_wineserver(proton_script, compat_data, log_fn=log_fn)
     log_fn(f"Pandora exited (code {rc}).")
-    if stderr_bytes:
-        for line in stderr_bytes.decode(errors="replace").splitlines():
-            log_fn(f"  Pandora stderr: {line}")
     return rc

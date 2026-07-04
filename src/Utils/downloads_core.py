@@ -180,7 +180,7 @@ def section_label_for_dir(dl_dir: Path, game_name: Optional[str]) -> str:
                 return "Mod Manager Cache"
         except Exception:
             pass
-    return f"Additional location: {dl_dir}"
+    return f"{dl_dir}"
 
 
 def scan_download_dirs(game_name: Optional[str]) -> list[DownloadEntry]:

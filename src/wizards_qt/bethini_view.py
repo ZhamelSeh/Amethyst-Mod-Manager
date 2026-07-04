@@ -98,12 +98,10 @@ class BethiniView(WizardViewBase):
         proton_name, prefix_mode = self._proton_name, self._prefix_mode
 
         def worker():
-            import subprocess
             from Utils.exe_launch import (
                 PREFIX_MODE_GAME, link_mygames, link_plugins_txt,
-                resolve_tool_prefix, shutdown_prefix_wineserver,
+                resolve_tool_prefix, run_tool_logged, shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             _wlog = lambda m: self._log(f"BethINI Wizard: {m}")
             try:
                 result = resolve_tool_prefix(
@@ -135,18 +133,12 @@ class BethiniView(WizardViewBase):
                     link_plugins_txt(game, compat_data / "pfx", _wlog)
 
                 _wlog(f"launching {exe} via Proton")
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe), env=env),
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "BethINI Pie is running.\nConfigure your INI "
                           "settings, then close it and click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                label="BethINI Pie")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("BethINI Pie closed.")

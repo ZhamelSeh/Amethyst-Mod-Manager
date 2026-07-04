@@ -105,11 +105,9 @@ class WryeBashView(WizardViewBase):
         proton_name, prefix_mode = self._proton_name, self._prefix_mode
 
         def worker():
-            import subprocess
             from Utils.exe_launch import (
-                resolve_tool_prefix, shutdown_prefix_wineserver,
+                resolve_tool_prefix, run_tool_logged, shutdown_prefix_wineserver,
             )
-            from Utils.steam_finder import proton_run_command
             from Utils.xedit_tools import prepare_xedit_prefix
             _wlog = lambda m: self._log(f"Wrye Bash Wizard: {m}")
             try:
@@ -146,18 +144,12 @@ class WryeBashView(WizardViewBase):
                 _wlog(f"launching {exe} via Proton"
                       + (f" with -o C:\\wb_games\\{game_path.resolve().name}"
                          if game_path else ""))
-                proc = subprocess.Popen(
-                    proton_run_command(proton_script, "run", str(exe), env=env) + game_arg,
-                    env=env,
-                    cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 safe_emit(self._run_status_sig,
                           "Wrye Bash is running.\nClose it when you are done, "
                           "then click Done.", GREEN)
                 safe_emit(self._run_started_sig)
-                proc.wait()
+                run_tool_logged(proton_script, exe, env, log_fn=_wlog,
+                                extra_args=game_arg, label="Wrye Bash")
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)
                 _wlog("Wrye Bash closed.")

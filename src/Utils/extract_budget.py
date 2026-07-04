@@ -16,6 +16,13 @@ import shutil
 import threading
 import zipfile
 
+# Below this compressed size the `7z l -slt` metadata probe is skipped and the
+# 15× fallback used instead. The estimate only gates extraction memory, and the
+# worst-case fallback for a small archive is a trivially small reservation —
+# while collections install thousands of tiny archives, so one process spawn
+# per mod adds real wall time to the (already bottlenecked) install consumers.
+_PROBE_MIN_COMPRESSED_BYTES = 64 * 1024 * 1024
+
 
 def get_uncompressed_size(path: str, compressed_size: int = 0) -> int:
     """Return best-effort total uncompressed size of the archive in bytes.
@@ -23,6 +30,9 @@ def get_uncompressed_size(path: str, compressed_size: int = 0) -> int:
     Tries archive metadata first (zipfile headers, ``7z l -slt``), then falls
     back to a 15× multiplier of *compressed_size* (handles extreme texture
     packs).  If *compressed_size* is 0, the on-disk file size is used instead.
+    Archives smaller than ``_PROBE_MIN_COMPRESSED_BYTES`` skip the ``7z``
+    process spawn and go straight to the fallback (zip headers are still read —
+    they're free).
     """
     if compressed_size <= 0:
         try:
@@ -39,6 +49,9 @@ def get_uncompressed_size(path: str, compressed_size: int = 0) -> int:
                 return _total
         except Exception:
             pass
+    # Small archive: the spawn costs more than the accuracy is worth.
+    if 0 < compressed_size < _PROBE_MIN_COMPRESSED_BYTES:
+        return compressed_size * 15
     # 7z/rar/zip fallback: use `7z l -slt` which prints Size: per entry
     _7z_bin = shutil.which("7zzs") or shutil.which("7zz") or shutil.which("7z") or shutil.which("7za")
     if _7z_bin:

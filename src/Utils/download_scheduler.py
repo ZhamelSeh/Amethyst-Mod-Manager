@@ -46,8 +46,10 @@ def run_smallest_first(mods: list, work: Callable[[object], None], workers: int,
 
     Unlike :func:`run_double_ended`, NO worker is dedicated to large mods: all
     workers pull from the head of the (pre-sorted smallest→largest) list, so the
-    smallest remaining mod is always the next one downloaded. This matches the
-    Tk installer's simple size-ascending order.
+    smallest remaining mod is always the next one downloaded. NB this is a
+    deliberate Qt policy, NOT Tk parity: the Tk installer honoured the
+    ``download_order`` collection setting (default "largest" = largest-first);
+    Qt ignores that legacy key and always downloads smallest-first.
 
     *mods*  — PRE-SORTED smallest→largest (see :func:`order_by_size`).
     *stop*  — optional cancel event; when set, workers drain the remainder

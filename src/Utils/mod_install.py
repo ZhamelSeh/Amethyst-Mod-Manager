@@ -1106,6 +1106,55 @@ def _collection_plugin_context(game, profile_dir: "Path | None"
     return installed_files, active_files, loose_files
 
 
+def _archive_lists_fomod_config(archive_path: str) -> bool:
+    """Best-effort probe: True when the archive LISTING (no extraction) shows a
+    fomod/ModuleConfig.xml. Lets a collection install defer an interactive FOMOD
+    immediately instead of paying a full extract that is thrown away and redone
+    in the deferred phase. Conservative on any doubt: unreadable listings and
+    ``.fomod`` wrapper archives (installer nested inside an inner archive)
+    return False and the normal extract-then-detect path decides. A listed but
+    unparseable ModuleConfig.xml means the mod defers and installs verbatim in
+    the deferred phase instead of verbatim immediately — same outcome, later."""
+    target = "fomod/moduleconfig.xml"
+
+    def _hit(name: str) -> bool:
+        # Backslash-zip members (Windows Compress-Archive) use literal "\".
+        n = name.replace("\\", "/").lower()
+        return n == target or n.endswith("/" + target)
+
+    if archive_path.lower().endswith(".zip"):
+        try:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                return any(_hit(n) for n in zf.namelist())
+        except Exception:
+            return False
+    _7z = (shutil.which("7zzs") or shutil.which("7zz")
+           or shutil.which("7z") or shutil.which("7za"))
+    if _7z:
+        try:
+            res = subprocess.run(
+                [_7z, "l", "-slt", archive_path],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=30)
+            if res.returncode != 0:
+                return False
+            for line in res.stdout.splitlines():
+                if line.startswith("Path = ") and _hit(line[7:].strip()):
+                    return True
+        except Exception:
+            pass
+        return False
+    if archive_path.lower().endswith(".7z"):
+        # No 7z binary (extraction falls back to bsdtar/py7zr) — list via py7zr.
+        try:
+            import py7zr
+            with py7zr.SevenZipFile(archive_path, "r") as z:
+                return any(_hit(n) for n in z.getnames())
+        except Exception:
+            return False
+    return False
+
+
 def install_collection_archive(
         archive_path: str, game, profile_dir: Path, *,
         log_fn: LogFn, progress_fn: Optional[ProgressFn] = None,
@@ -1148,6 +1197,18 @@ def install_collection_archive(
         log_fn("Collection install: no staging folder configured.")
         return None
     staging_root = Path(staging_root)
+
+    # Interactive FOMODs get deferred to the end of the collection install.
+    # When the archive LISTING already shows fomod/ModuleConfig.xml, defer NOW —
+    # skipping the full extract that would be discarded and repeated in the
+    # deferred phase (double extraction of every interactive FOMOD; minutes of
+    # 7z time on big texture packs). Listing misses fall through to the normal
+    # extract-then-detect defer below.
+    if (defer_interactive_fomod and fomod_auto_selections is None
+            and _archive_lists_fomod_config(str(archive))):
+        log_fn("FOMOD installer detected (archive listing) — deferring until "
+               "dependencies are installed.")
+        return FOMOD_DEFERRED
 
     # Extract + FOMOD-detect via the shared prepare step (kept temp dir).
     prepared = prepare_archive(

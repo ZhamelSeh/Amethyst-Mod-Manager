@@ -44,6 +44,7 @@ class ScriptMergerView(WizardViewBase):
         self._proton_name = ""
         self._prefix_mode = ""
         self._prefix_env = None
+        self._collateral_keys: set = set()
 
         self._net8_status_sig.connect(self._guard(
             lambda t, c: self._set_status(self._net8_status, t, c)))
@@ -113,9 +114,7 @@ class ScriptMergerView(WizardViewBase):
             self._set_status(self._net8_status, self.tr("Checking .NET 8…"))
             self._start_net8()
         elif idx == _PG_RUN:
-            self._set_status(self._run_status,
-                             self.tr("Launching WitcherScriptMerger…"))
-            self._start_run()
+            self._preflight_run()
 
     def _advance_from_deploy(self):
         # Skip download step if WitcherScriptMerger.exe is already present.
@@ -188,6 +187,81 @@ class ScriptMergerView(WizardViewBase):
             self._goto_step(_PG_RUN)
 
     # ---- run ----------------------------------------------------------------------
+    # Script Merger's only record of existing merges is MergeInventory.xml
+    # next to its exe; on launch it DELETES entries whose merged file or
+    # source mods are missing from the deployed game folder — and doing
+    # that with the merged mod deployed crashes it under Wine (unhandled
+    # IOException in DeleteEmptyDirs) and leaves half-deleted merges.
+    # Restore the profile's snapshot first, then if any recorded merge
+    # references mods that are not deployed offer the only two safe paths:
+    # cancel (re-enable the mods) or purge the merge state and re-create
+    # the merges from what is enabled.
+    def _preflight_run(self):
+        _wlog = lambda m: self._log(f"Script Merger Wizard: {m}")
+        missing: list[tuple[str, list[str]]] = []
+        try:
+            from Utils.script_merger_inventory import (
+                missing_merge_sources, restore_inventory,
+            )
+            restore_inventory(self._game, log_fn=_wlog)
+            missing = missing_merge_sources(self._game)
+            # Capture, from the restored inventory, which merges have
+            # undeployed sources — the Done-snapshot keeps these if the
+            # merger drops them, instead of pruning them as user deletions.
+            from Utils.script_merger_inventory import collateral_keys
+            self._collateral_keys = collateral_keys(self._game)
+        except Exception as exc:
+            _wlog(f"merge inventory check warning: {exc}")
+        if not missing:
+            self._launch_merger()
+            return
+
+        _wlog(f"{len(missing)} merge(s) reference mods that are not deployed.")
+        lines = [
+            "  • {0}  ({1})".format(rel, ", ".join(mods))
+            for rel, mods in missing[:6]
+        ]
+        if len(missing) > 6:
+            lines.append("  • …")
+        from gui_qt.confirm_overlay import ConfirmOverlay
+        ConfirmOverlay.show_over(
+            self, self.tr("Existing Merges Use Missing Mods"),
+            self.tr(
+                "{0} existing merge(s) use mods that are not currently "
+                "deployed (disabled or removed):\n\n{1}\n\n"
+                "Script Merger cannot run safely in this state.\n\n"
+                "Cancel and re-enable the listed mods to keep the merges, "
+                "or delete the existing merges (removes the Merged_Mods "
+                "mod) and re-create them in this run from the mods that "
+                "are enabled."
+            ).format(len(missing), "\n".join(lines)),
+            lambda ok: self._purge_and_launch() if ok else self._cancel_launch(),
+            confirm_label=self.tr("Delete Merges"),
+            card_h=420)
+
+    def _purge_and_launch(self):
+        _wlog = lambda m: self._log(f"Script Merger Wizard: {m}")
+        try:
+            from Utils.script_merger_inventory import purge_merges
+            purge_merges(self._game, log_fn=_wlog)
+        except Exception as exc:
+            _wlog(f"merge purge warning: {exc}")
+        # Purge wiped all prior state; nothing to preserve as collateral.
+        self._collateral_keys = set()
+        self._launch_merger()
+
+    def _launch_merger(self):
+        self._set_status(self._run_status,
+                         self.tr("Launching WitcherScriptMerger…"))
+        self._start_run()
+
+    def _cancel_launch(self):
+        self._set_status(
+            self._run_status,
+            self.tr("Launch cancelled — re-enable the merges' source mods, "
+                    "then reopen this wizard."),
+            RED)
+
     def _start_run(self):
         game = self._game
         exe = tool_exe_path(game, _MERGER_EXE, _MERGER_DIR)
@@ -288,12 +362,22 @@ class ScriptMergerView(WizardViewBase):
                              self.tr("Restoring game files (rescuing merges)…"))
             self._restore_done_sig.connect(self._guard(self._on_restore_done))
             game, log = self._game, self._log
+            keep_keys = getattr(self, "_collateral_keys", set())
 
             def worker():
                 try:
                     game.restore(log_fn=log)
                 except Exception as exc:
                     log(f"Script Merger Wizard: restore warning: {exc}")
+                # Pair the rescued merged files with the merger's inventory —
+                # without it the merger forgets these merges exist.
+                try:
+                    from Utils.script_merger_inventory import snapshot_inventory
+                    snapshot_inventory(
+                        game, keep_keys=keep_keys,
+                        log_fn=lambda m: log(f"Script Merger Wizard: {m}"))
+                except Exception as exc:
+                    log(f"Script Merger Wizard: inventory snapshot warning: {exc}")
                 safe_emit(self._restore_done_sig)
 
             threading.Thread(target=worker, daemon=True,

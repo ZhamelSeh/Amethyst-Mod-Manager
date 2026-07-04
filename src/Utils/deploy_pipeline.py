@@ -309,7 +309,7 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn,
             else:
                 conflict_key_fn = None
 
-        return build_filemap(
+        result = build_filemap(
             modlist_path, staging, filemap_out,
             strip_prefixes=game.mod_folder_strip_prefixes or None,
             per_mod_strip_prefixes=load_per_mod_strip_prefixes(modlist_path.parent),
@@ -329,6 +329,14 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn,
             conflict_key_fn=conflict_key_fn,
             root_folder_mods=rf_mods or None,
         )
+        # Game-specific filemap rewrite (e.g. Witcher 3 routes staging paths
+        # like TrueFires_v1.01/modTrueFires/… to mods/modTrueFires/… so the
+        # Data tab and conflicts match the deployed game-root layout).
+        try:
+            game.post_build_filemap(filemap_out, staging)
+        except Exception as pb_err:
+            log_fn(f"post_build_filemap warning: {pb_err}")
+        return result
     except Exception as fm_err:
         log_fn(f"Filemap rebuild warning: {fm_err}")
         return None

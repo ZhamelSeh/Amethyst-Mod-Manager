@@ -5207,6 +5207,34 @@ Choose Keep if this is an optional/alternative variant rather than a replacement
         <translation>Checking .NET 8…</translation>
     </message>
     <message>
+        <source>Existing Merges Use Missing Mods</source>
+        <translation>Existing Merges Use Missing Mods</translation>
+    </message>
+    <message>
+        <source>{0} existing merge(s) use mods that are not currently deployed (disabled or removed):
+
+{1}
+
+Script Merger cannot run safely in this state.
+
+Cancel and re-enable the listed mods to keep the merges, or delete the existing merges (removes the Merged_Mods mod) and re-create them in this run from the mods that are enabled.</source>
+        <translation>{0} existing merge(s) use mods that are not currently deployed (disabled or removed):
+
+{1}
+
+Script Merger cannot run safely in this state.
+
+Cancel and re-enable the listed mods to keep the merges, or delete the existing merges (removes the Merged_Mods mod) and re-create them in this run from the mods that are enabled.</translation>
+    </message>
+    <message>
+        <source>Delete Merges</source>
+        <translation>Delete Merges</translation>
+    </message>
+    <message>
+        <source>Launch cancelled — re-enable the merges' source mods, then reopen this wizard.</source>
+        <translation>Launch cancelled — re-enable the merges' source mods, then reopen this wizard.</translation>
+    </message>
+    <message>
         <source>Launching WitcherScriptMerger…</source>
         <translation>Launching WitcherScriptMerger…</translation>
     </message>

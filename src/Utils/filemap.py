@@ -63,9 +63,12 @@ OVERWRITE_NAME   = "[Overwrite]"
 # Sentinel name for the root folder — files deploy to the game root, not mod data path
 ROOT_FOLDER_NAME = "[Root_Folder]"
 
-# Not real game files: MO2 meta.ini + the manager's restore-sweep log
-# (deploy_shared.OVERWRITE_LOG_NAME) — must never reach the filemap.
-_EXCLUDE_NAMES = frozenset({"meta.ini", ".mm_overwrite_log.txt"})
+# Not real game files: MO2 meta.ini, the manager's restore-sweep log
+# (deploy_shared.OVERWRITE_LOG_NAME), and the Script Merger inventory
+# snapshot (script_merger_inventory.SNAPSHOT_NAME) — must never reach
+# the filemap.
+_EXCLUDE_NAMES = frozenset({"meta.ini", ".mm_overwrite_log.txt",
+                            ".mm_merge_inventory.xml"})
 
 
 def _is_macos_junk(name: str) -> bool:

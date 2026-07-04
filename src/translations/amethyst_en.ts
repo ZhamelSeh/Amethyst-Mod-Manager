@@ -1412,6 +1412,10 @@ The Creation Kit can also occasionally crash on startup under Proton (a known Wi
         <source>Deployed files</source>
         <translation>Deployed files</translation>
     </message>
+    <message>
+        <source>Deployed files - {0} files in {1} mods</source>
+        <translation>Deployed files - {0} files in {1} mods</translation>
+    </message>
 </context>
 <context>
     <name>DetachableTabWidget</name>

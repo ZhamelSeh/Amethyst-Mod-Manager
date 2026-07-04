@@ -176,6 +176,7 @@ class DataView(QWidget):
         # Ext counts (pre-filter) for the filter panel.
         self._ext_counts = dtlogic.filetype_counts(entries)
         self.filetypes_changed.emit()
+        self._update_label(entries)
 
         contested, _winner = mflogic.build_conflict_cache(
             self.index_path, self.profile_dir)
@@ -210,6 +211,12 @@ class DataView(QWidget):
         self._model.set_root(root)
         if q:
             self._tree.expandAll()
+
+    def _update_label(self, entries):
+        n_files = len(entries)
+        n_mods = len({mod for _rk, mod in entries})
+        self._label.setText(self.tr("Deployed files - {0} files in {1} mods").format(
+            n_files, n_mods))
 
     # -- search -------------------------------------------------------------
     def _on_search(self, text: str):

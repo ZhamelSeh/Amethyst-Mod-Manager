@@ -184,37 +184,50 @@ def resolve_proton_env(game, log_fn: LogFn = _noop):
     return proton_script, env
 
 
-def wine_tool_command(game, proton_script, env, tool: str, log_fn: LogFn = _noop):
-    """Build a launch command for a bundled wine tool (winecfg/regedit).
+def _host_forward(cmd: list[str], env: dict, log_fn: LogFn) -> list[str]:
+    """When running inside our own Flatpak sandbox, forward *cmd* to the host
+    via ``flatpak-spawn --host`` so it runs against the host's Proton runtime
+    and library stack (not the flatpak runtime, which lacks them).
 
-    Prefers the Proton dist's bundled ``wine64`` binary directly (the way
-    Heroic launches these), which avoids booting Proton's steam.exe shim that
-    aborts when it can't reach a Steam client. Falls back to ``proton run``.
-    Mutates *env* (sets WINEPREFIX) and returns the argv list.
+    Returns *cmd* unchanged outside the sandbox. flatpak-spawn does not inherit
+    the caller's environment, so every var *env* adds on top of the host
+    ``os.environ`` (STEAM_COMPAT_*, WINEPREFIX, …) is re-exported with
+    ``--env=`` flags. ``--directory=/`` avoids inheriting a sandbox-only cwd.
+    """
+    import shutil
+
+    if not os.path.exists("/.flatpak-info"):
+        return cmd
+    if cmd and cmd[0] == "flatpak-spawn":
+        # proton_run_command already host-forwarded (Steam-flatpak Proton) —
+        # don't wrap it twice.
+        return cmd
+    if not shutil.which("flatpak-spawn"):
+        log_fn("Proton Tools: WARNING — inside a Flatpak sandbox but "
+               "flatpak-spawn is unavailable; running on the sandbox runtime, "
+               "which will likely fail.")
+        return cmd
+    fwd = [f"--env={k}={v}" for k, v in env.items() if os.environ.get(k) != v]
+    log_fn("Proton Tools: forwarding launch to the host via flatpak-spawn.")
+    return ["flatpak-spawn", "--host", "--directory=/", *fwd, *cmd]
+
+
+def wine_tool_command(game, proton_script, env, tool: str, log_fn: LogFn = _noop):
+    """Build a launch command for a wine tool (winecfg/regedit).
+
+    Uses Proton's ``runinprefix`` verb, which runs the tool inside Proton's own
+    runtime container (soldier/sniper) — the environment its bundled wine binary
+    needs — *without* booting the steam.exe shim (``run``) that aborts when it
+    can't reach a Steam client. Running the raw ``files/bin/wine`` binary
+    directly (as we used to) core-dumps on modern GE-Proton, which ships wine
+    only as a container-launched binary. Mutates *env* (sets WINEPREFIX) and,
+    inside our own Flatpak sandbox, forwards the launch to the host.
     """
     proton_dir = Path(proton_script).parent
-    log_fn(f"Proton Tools: resolving wine binary under {proton_dir}")
+    log_fn(f"Proton Tools: resolving Proton under {proton_dir}")
     if not proton_dir.is_dir():
         log_fn(f"Proton Tools: WARNING — Proton dir does not exist: {proton_dir}")
-    wine_bin = None
-    checked = []
-    # Prefer wine64: GE-Proton's `wine` is a 32-bit ELF whose missing
-    # /lib/ld-linux.so.2 interpreter makes exec fail with ENOENT on hosts
-    # without 32-bit glibc.
-    for sub in ("files/bin/wine64", "dist/bin/wine64",
-                "files/bin/wine", "dist/bin/wine"):
-        cand = proton_dir / sub
-        checked.append(str(cand))
-        if cand.is_file():
-            wine_bin = cand
-            break
-    if wine_bin is None:
-        log_fn("Proton Tools: WARNING — no bundled wine binary found "
-               f"(checked: {', '.join(checked)}); falling back to "
-               "'proton run', which boots the steam.exe shim and may crash "
-               "with an lsteamclient assertion if Steam is unavailable.")
-        return proton_run_command(proton_script, "run", tool, env=env)
-    log_fn(f"Proton Tools: using bundled wine binary {wine_bin}")
+
     prefix_path = game.get_prefix_path()
     if prefix_path is not None:
         env["WINEPREFIX"] = str(prefix_path)
@@ -224,7 +237,10 @@ def wine_tool_command(game, proton_script, env, tool: str, log_fn: LogFn = _noop
     else:
         log_fn("Proton Tools: WARNING — no prefix path for this game; "
                "wine will use its default prefix (~/.wine).")
-    return [str(wine_bin), tool]
+
+    log_fn(f"Proton Tools: launching {tool} via 'proton runinprefix'.")
+    cmd = proton_run_command(proton_script, "runinprefix", tool, env=env)
+    return _host_forward(cmd, env, log_fn)
 
 
 # ---------------------------------------------------------------------------

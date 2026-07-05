@@ -220,9 +220,12 @@ class ProgressStack:
 
 
 class _Toast(_HoverFadeMixin, QFrame):
-    """A single auto-dismissing notification card."""
+    """A single notification card. Auto-dismisses after a few seconds unless
+    *sticky* is set, in which case it lingers until dismissed programmatically
+    (via the handle returned by NotificationManager.notify)."""
 
-    def __init__(self, manager: "NotificationManager", text: str, state: str):
+    def __init__(self, manager: "NotificationManager", text: str, state: str,
+                 sticky: bool = False):
         super().__init__(manager._host)
         self._manager = manager
         self.setObjectName("Toast")
@@ -240,18 +243,56 @@ class _Toast(_HoverFadeMixin, QFrame):
         dot.setProperty("state", state)
         dot.setStyleSheet("font-size:16px;")
         h.addWidget(dot)
-        lbl = QLabel(text)
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet("font-size:14px;")
-        h.addWidget(lbl, 1)
+        self._label = QLabel(text)
+        self._label.setWordWrap(True)
+        self._label.setStyleSheet("font-size:14px;")
+        h.addWidget(self._label, 1)
 
         self.adjustSize()
-        # Auto-dismiss (errors/warnings linger a little longer).
-        ms = 5000 if state in ("warning", "error") else 3200
-        QTimer.singleShot(ms, self._dismiss)
+        if not sticky:
+            # Auto-dismiss (errors/warnings linger a little longer).
+            ms = 5000 if state in ("warning", "error") else 3200
+            QTimer.singleShot(ms, self._dismiss)
 
     def _dismiss(self):
         self._manager._remove(self)
+
+
+class ToastHandle:
+    """Returned by NotificationManager.notify(sticky=True) so the caller can
+    update the text or dismiss the toast once its long-running task finishes."""
+
+    def __init__(self, manager: "NotificationManager", toast: "_Toast"):
+        self._manager = manager
+        self._toast = toast
+
+    def set_text(self, text: str):
+        t = self._toast
+        if t is not None and t in self._manager._toasts:
+            t._label.setText(text)
+            self._manager._restack()
+
+    def dismiss(self, text: str | None = None, state: str | None = None,
+                auto_dismiss_ms: int = 0):
+        """Remove the sticky toast. If *text* is given, first swap it to a
+        transient toast (optionally re-styled via *state*) that auto-dismisses
+        after *auto_dismiss_ms* — handy for turning "Checking…" into a final
+        "Found N updates" that then fades on its own."""
+        t = self._toast
+        if t is None or t not in self._manager._toasts:
+            return
+        if text is None:
+            self._manager._remove(t)
+        else:
+            if state is not None:
+                t.setProperty("state", state)
+                t.style().unpolish(t)
+                t.style().polish(t)
+            t._label.setText(text)
+            self._manager._restack()
+            ms = auto_dismiss_ms or 3200
+            QTimer.singleShot(ms, t._dismiss)
+        self._toast = None
 
 
 class NotificationManager:
@@ -273,11 +314,16 @@ class NotificationManager:
                 self._mgr._restack()
             return False
 
-    def notify(self, text: str, state: str = "info"):
-        t = _Toast(self, text, state)
+    def notify(self, text: str, state: str = "info", sticky: bool = False):
+        """Show a toast. Transient by default; pass *sticky*=True to keep it on
+        screen until the returned ToastHandle is dismissed."""
+        t = _Toast(self, text, state, sticky=sticky)
         self._toasts.append(t)
         t.show()
         self._restack()
+        if sticky:
+            return ToastHandle(self, t)
+        return None
 
     def _remove(self, toast: _Toast):
         if toast in self._toasts:

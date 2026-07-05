@@ -16,6 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QFrame,
+    QGraphicsOpacityEffect,
 )
 
 from gui_qt.theme_qt import active_palette, _c
@@ -25,7 +26,62 @@ def _pal():
     return active_palette()
 
 
-class ProgressPopup(QFrame):
+class _HoverFadeMixin:
+    """Makes a floating popup get out of the way when the cursor is over it.
+
+    On mouse-enter the card fades to near-transparent and lets clicks pass
+    through to whatever is underneath; on mouse-leave it fades back. Reused by
+    both the progress card and the notification toasts, which anchor to the
+    corners and can otherwise cover clickable UI.
+    """
+
+    _FADED_OPACITY = 0.12
+
+    def _install_hover_fade(self):
+        self._fade_effect = QGraphicsOpacityEffect(self)
+        self._fade_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._fade_effect)
+        self._fade_anim = QPropertyAnimation(self._fade_effect, b"opacity", self)
+        self._fade_anim.setDuration(140)
+        self._fade_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        # Once faded we set WA_TransparentForMouseEvents so clicks fall through,
+        # which also stops us receiving leaveEvent — so poll the cursor to know
+        # when it has moved off us and we can fade back in.
+        self._faded = False
+        self._unhover_timer = QTimer(self)
+        self._unhover_timer.setInterval(120)
+        self._unhover_timer.timeout.connect(self._check_unhover)
+
+    def _fade_to(self, target: float):
+        anim = getattr(self, "_fade_anim", None)
+        if anim is None:
+            return
+        anim.stop()
+        anim.setStartValue(self._fade_effect.opacity())
+        anim.setEndValue(target)
+        anim.start()
+        # While faded, don't intercept clicks meant for widgets underneath.
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, target < 1.0)
+
+    def _cursor_over_self(self) -> bool:
+        from PySide6.QtGui import QCursor
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _check_unhover(self):
+        if not self._cursor_over_self():
+            self._faded = False
+            self._unhover_timer.stop()
+            self._fade_to(1.0)
+
+    def enterEvent(self, event):
+        if not self._faded:
+            self._faded = True
+            self._fade_to(self._FADED_OPACITY)
+            self._unhover_timer.start()
+        super().enterEvent(event)
+
+
+class ProgressPopup(_HoverFadeMixin, QFrame):
     """A bottom-right progress card. One instance is reused per host; create via
     the host's NotificationHost (or directly) and drive with set_progress()."""
 
@@ -37,6 +93,8 @@ class ProgressPopup(QFrame):
         self.setObjectName("ProgressPopup")
         self.setFixedWidth(self.WIDTH)
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self._stack_offset = 0    # extra bottom margin when stacked (ProgressStack)
+        self._install_hover_fade()
 
         v = QVBoxLayout(self)
         v.setContentsMargins(20, 18, 20, 18)
@@ -73,8 +131,15 @@ class ProgressPopup(QFrame):
         if phase is not None:
             self._phase.setText(phase or "Working…")
         if total > 0:
-            self._bar.setRange(0, total)
-            self._bar.setValue(min(done, total))
+            # QProgressBar is int32 — summed byte totals (e.g. two 1.1 GB
+            # downloads) overflow it. Scale the bar values down to fit; the
+            # counter label below still shows the real numbers.
+            bar_done, bar_total = min(done, total), total
+            while bar_total > 0x7FFFFFFF:
+                bar_done >>= 10
+                bar_total >>= 10
+            self._bar.setRange(0, bar_total)
+            self._bar.setValue(bar_done)
             if bytes_mode:
                 from Utils.cache_tools import format_size
                 self._count.setText(self.tr("{0} / {1}").format(
@@ -98,7 +163,7 @@ class ProgressPopup(QFrame):
         self.setFixedWidth(self.WIDTH)
         m = 16
         x = self._host.width() - self.width() - m
-        y = self._host.height() - self.height() - m
+        y = self._host.height() - self.height() - m - self._stack_offset
         self.move(max(0, x), max(0, y))
 
     def eventFilter(self, obj, event):
@@ -109,7 +174,52 @@ class ProgressPopup(QFrame):
         return super().eventFilter(obj, event)
 
 
-class _Toast(QFrame):
+class ProgressStack:
+    """Keyed progress cards stacked in the host's bottom-right corner.
+
+    One card per concurrent operation: key "op" is the shared install/deploy/
+    restore card; downloads get a unique key each so a download's progress no
+    longer clobbers (or, on finish, hides) the install card. Cards are created
+    on first set_progress(key=...) and destroyed by clear(key=...).
+    """
+
+    def __init__(self, host: QWidget):
+        self._host = host
+        self._popups: dict[str, ProgressPopup] = {}   # insertion order = stack order
+
+    def set_progress(self, done: int, total: int, phase: str | None = None,
+                     title: str | None = None, bytes_mode: bool = False,
+                     key: str = "op"):
+        p = self._popups.get(key)
+        if p is None:
+            p = ProgressPopup(self._host)
+            self._popups[key] = p
+        p.set_progress(done, total, phase, title=title, bytes_mode=bytes_mode)
+        self._restack()
+
+    def clear(self, key: str = "op"):
+        p = self._popups.pop(key, None)
+        if p is not None:
+            p.hide()
+            p.deleteLater()
+        self._restack()
+
+    def clear_all(self):
+        for key in list(self._popups):
+            self.clear(key)
+
+    def _restack(self):
+        """Bottom-most card sits at the corner; later cards stack upward."""
+        offset = 0
+        for p in self._popups.values():
+            if not p.isVisible():
+                continue
+            p._stack_offset = offset
+            p._reposition()
+            offset += p.height() + 8
+
+
+class _Toast(_HoverFadeMixin, QFrame):
     """A single auto-dismissing notification card."""
 
     def __init__(self, manager: "NotificationManager", text: str, state: str):
@@ -120,6 +230,7 @@ class _Toast(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setMinimumWidth(340)
         self.setMaximumWidth(460)
+        self._install_hover_fade()
 
         h = QHBoxLayout(self)
         h.setContentsMargins(18, 14, 18, 14)

@@ -40,6 +40,9 @@ fi
 
 # Tee stderr to a log so a native crash trace (faulthandler) and the bash
 # "Segmentation fault" line survive after the terminal closes. Still shown live.
+# One log per run (previous kept as .old) — appending forever mixes tracebacks
+# from old builds into current triage.
 _errlog="${XDG_CONFIG_HOME:-$HOME/.config}/AmethystModManager/run-qt-stderr.log"
 mkdir -p "$(dirname "$_errlog")"
-"$VENV/bin/python3" run_qt.py "$@" 2> >(tee -a "$_errlog" >&2)
+[ -f "$_errlog" ] && mv -f "$_errlog" "$_errlog.old"
+"$VENV/bin/python3" run_qt.py "$@" 2> >(tee "$_errlog" >&2)

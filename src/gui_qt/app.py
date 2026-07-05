@@ -141,9 +141,10 @@ class MainWindow(QMainWindow):
     # Install-a-Nexus-mod-by-id flow (used by Missing Requirements) → UI thread.
     _qu_resolved = Signal(object, object)         # (queue list, skipped list)
     _qu_downloaded = Signal(object, object)       # (dl_items list, failed list)
+    _qu_dl_progress = Signal(int, int)            # aggregate (cur_bytes, total_bytes)
     _req_install_files = Signal(object, object)   # (ctx dict, files|None)
-    _req_install_dl = Signal(object, object)      # (archive|None, meta|None)
-    _req_install_prog = Signal(object, int, int)  # (name, downloaded, total)
+    _req_install_dl = Signal(object, object, object)  # (archive|None, meta|None, dl_key)
+    _req_install_prog = Signal(object, object, int, int)  # (dl_key, name, downloaded, total)
     # Collection reset-load-order worker → UI thread (result dict).
     _reset_done = Signal(object)
     # Collection INSTALL worker → UI thread. Every callback is a single emit; the
@@ -214,6 +215,8 @@ class MainWindow(QMainWindow):
         self._bsa_op_running = False
         self._bsa_op_done.connect(self._on_bsa_op_done)
         self._install_running = False
+        self._pending_install_batches: list[dict] = []
+        self._active_downloads: dict[str, dict] = {}   # key → name/done/total/fin
         self._install_done.connect(self._on_install_done)
         self._prepared_ready.connect(self._on_prepared_ready)
         self._one_install_done.connect(self._on_one_install_done)
@@ -332,6 +335,7 @@ class MainWindow(QMainWindow):
         self._quick_updating = False
         self._qu_resolved.connect(self._on_qu_resolved)
         self._qu_downloaded.connect(self._on_qu_downloaded)
+        self._qu_dl_progress.connect(self._on_qu_dl_progress)
         self._endorse_done.connect(self._on_endorse_done)
         self._amm_endorse_done.connect(self._on_amm_endorse_done)
         self._copy_done.connect(self._on_copy_done)
@@ -340,7 +344,7 @@ class MainWindow(QMainWindow):
         self._req_install_files.connect(self._on_req_install_files)
         self._req_install_dl.connect(self._on_req_install_dl)
         self._req_install_prog.connect(
-            lambda name, d, t: self._nexus_download_progress(name, d, t))
+            lambda key, name, d, t: self._nexus_download_progress(key, name, d, t))
         self._reset_done.connect(self._on_reset_done)
         self._reset_running = False
         # Collection install state + Signal→UI-thread wiring.
@@ -1919,7 +1923,8 @@ class MainWindow(QMainWindow):
             self._append_log(f"[nexus] switched to game '{matched[0]}'")
 
         self._notify(self.tr("Downloading mod from Nexus…"), "info")
-        self._nexus_download_progress("", 0, 0)   # show popup immediately
+        dl_key = self._new_dl_key()
+        self._nexus_download_progress(dl_key, "", 0, 0)   # show popup immediately
 
         import threading
 
@@ -1943,17 +1948,17 @@ class MainWindow(QMainWindow):
                 link, dest_dir=dest,
                 known_file_name=dl_label,
                 progress_cb=lambda d, t: safe_emit(
-                    self._req_install_prog, dl_label, int(d), int(t)))
+                    self._req_install_prog, dl_key, dl_label, int(d), int(t)))
             safe_emit(self._nxm_download_done,
-                      (result, mod_info, file_info))
+                      (result, mod_info, file_info, dl_key))
 
         threading.Thread(target=_worker, daemon=True, name="nxm-download").start()
 
     def _on_nxm_download_done(self, payload):
         """UI thread: an NXM download finished. Install it (via the shared
         install pipeline) with a prebuilt meta from the link data."""
-        result, mod_info, file_info = payload
-        self._nexus_download_progress("", 0, -1)   # hide the download popup
+        result, mod_info, file_info, dl_key = payload
+        self._nexus_download_progress(dl_key, "", 0, -1)   # hide this download's card
         if not (result.success and result.file_path):
             self._append_log(f"[nexus] download failed — {result.error}")
             self._notify(self.tr("Nexus download failed — {0}").format(result.error), "error")
@@ -3585,6 +3590,35 @@ class MainWindow(QMainWindow):
 
         import threading
 
+        # One shared progress card for the whole batch (Tk parity: a per-download
+        # popup per mod stacks up fast). Progress is the aggregate byte count
+        # across all parallel downloads; totals are seeded from the Nexus file
+        # sizes and corrected by each download's own reported total.
+        self._qu_dl_phase = self.tr("Downloading {0} mod(s)…").format(len(queue))
+        progress = {}                     # mod_name → [cur_bytes, total_bytes]
+        for item in queue:
+            fi = item[4]
+            size = 0
+            if fi is not None:
+                size = (getattr(fi, "size_in_bytes", None)
+                        or (getattr(fi, "size_kb", 0) or 0) * 1024 or 0)
+            progress[item[0]] = [0, int(size)]
+        progress_lock = threading.Lock()
+        last_emit = [0.0]
+
+        def _post_aggregate(force=False):
+            import time as _time
+            with progress_lock:
+                now = _time.monotonic()
+                if not force and now - last_emit[0] < 0.1:
+                    return
+                last_emit[0] = now
+                cur = sum(c for c, _t in progress.values())
+                tot = sum(t for _c, t in progress.values())
+            self._qu_dl_progress.emit(cur, tot)
+
+        _post_aggregate(force=True)       # show the card before downloads start
+
         def _download_all():
             import concurrent.futures as _cf
             from Nexus.nexus_download import NexusDownloader
@@ -3609,17 +3643,33 @@ class MainWindow(QMainWindow):
                     if file_info is not None:
                         size = (getattr(file_info, "size_in_bytes", None)
                                 or (getattr(file_info, "size_kb", 0) or 0) * 1024 or 0)
+
+                    def _on_progress(cur, tot, _m=mod_name):
+                        with progress_lock:
+                            slot = progress[_m]
+                            slot[0] = int(cur)
+                            if tot:
+                                slot[1] = int(tot)
+                        _post_aggregate()
+
                     result = downloader.download_file(
                         game_domain=game_domain, mod_id=meta.mod_id,
                         file_id=file_id, dest_dir=dest,
                         known_file_name=getattr(file_info, "file_name", "") or "",
                         expected_size_bytes=int(size),
-                        progress_cb=lambda d, t: None)
+                        progress_cb=_on_progress)
                     if not (result.success and result.file_path):
                         with lock:
                             failed.append((mod_name,
                                            f"download failed — {result.error}"))
                         return
+                    # Snap this mod's slice to done (its total may have been an
+                    # estimate) so the shared bar never sits below the truth.
+                    with progress_lock:
+                        slot = progress[mod_name]
+                        slot[1] = slot[1] or slot[0]
+                        slot[0] = slot[1]
+                    _post_aggregate(force=True)
                     try:
                         prebuilt = build_meta_from_download(
                             game_domain=game_domain, mod_id=meta.mod_id,
@@ -3644,9 +3694,21 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_download_all, daemon=True,
                          name="quick-update-dl").start()
 
+    def _on_qu_dl_progress(self, cur: int, tot: int):
+        """UI thread: drive the shared Quick Update download card (aggregate
+        bytes across every parallel download in the batch)."""
+        self._ensure_feedback()
+        if self._progress_popup is None:
+            return
+        self._progress_popup.set_progress(
+            cur, tot, getattr(self, "_qu_dl_phase", None),
+            title=self.tr("Quick Update"), bytes_mode=True, key="qu-dl")
+
     def _on_qu_downloaded(self, dl_items, failed):
         """UI thread: every download finished. Install the batch via _install_paths
         with the folder name forced per archive (silent Replace-All), then finish."""
+        if self._progress_popup is not None:
+            self._progress_popup.clear(key="qu-dl")
         skipped = getattr(self, "_qu_skipped", [])
         if not dl_items:
             self._qu_finish(0, failed, skipped)
@@ -4287,7 +4349,7 @@ class MainWindow(QMainWindow):
         persists modlist.txt via the model, then reload."""
         self._copy_running = False
         if self._progress_popup is not None:
-            QTimer.singleShot(1200, self._progress_popup.clear)
+            self._schedule_op_clear(1200)
         c = payload.get("copied", 0)
         self._notify(
             (self.tr("Moved {0}/{1} mod(s) to '{2}'.") if payload.get("move")
@@ -4311,19 +4373,52 @@ class MainWindow(QMainWindow):
     # pick MAIN (or file chooser if several) → download → hand to _install_paths.
     # All worker stages hop back to the UI thread via Signals (NOT QThread).
 
-    def _nexus_download_progress(self, name: str, downloaded: int, total: int):
-        """Drive the shared progress popup for a Nexus download. UI thread only.
-        total<0 hides the popup (download finished/cancelled)."""
+    def _new_dl_key(self) -> str:
+        """Unique tracking key for one download operation, so concurrent
+        downloads can be told apart in the combined progress card."""
+        self._dl_seq = getattr(self, "_dl_seq", 0) + 1
+        return f"dl-{self._dl_seq}"
+
+    def _nexus_download_progress(self, key: str, name: str,
+                                 downloaded: int, total: int):
+        """Drive the combined Nexus-download progress card. UI thread only.
+        All concurrent downloads (each identified by *key*) aggregate into ONE
+        card: the bar shows summed bytes across them. Finished downloads stay
+        in the totals until the last one completes, so the bar never jumps
+        backwards. total<0 marks *key* finished (done/failed/cancelled)."""
         self._ensure_feedback()
         if self._progress_popup is None:
             return
+        dls = self._active_downloads
         if total < 0:
-            self._progress_popup.clear()
+            e = dls.get(key)
+            if e is not None and e["total"] > 0:
+                e["done"] = e["total"]
+                e["fin"] = True
+            else:
+                dls.pop(key, None)   # size never reported — just drop it
+        else:
+            e = dls.setdefault(key, {"fin": False})
+            e["name"], e["done"], e["total"] = name, downloaded, total
+        active = [e for e in dls.values() if not e["fin"]]
+        if not active:
+            dls.clear()
+            self._progress_popup.clear(key="downloads")
             return
-        phase = self.tr("Downloading {0}…").format(name) if name else self.tr("Downloading…")
+        if len(dls) == 1:
+            nm = active[0].get("name") or ""
+            phase = (self.tr("Downloading {0}…").format(nm)
+                     if nm else self.tr("Downloading…"))
+        else:
+            phase = self.tr("Downloading {0} files ({1} remaining)…").format(
+                len(dls), len(active))
+        done = sum(e["done"] for e in dls.values() if e["total"] > 0)
+        tot = sum(e["total"] for e in dls.values())
+        if any(e["total"] <= 0 for e in active):
+            done = tot = 0   # a size is still unknown — indeterminate bar
         self._progress_popup.set_progress(
-            downloaded, total, phase, title=self.tr("Nexus Download"),
-            bytes_mode=True)
+            done, tot, phase, title=self.tr("Nexus Download"),
+            bytes_mode=True, key="downloads")
 
     def _install_nexus_mod_by_id(self, mod_id: int, domain: str, name: str):
         if self._req_installing:
@@ -4390,8 +4485,9 @@ class MainWindow(QMainWindow):
     def _start_req_download(self, ctx, f):
         domain, mod_id, name = ctx["domain"], ctx["mod_id"], ctx["name"]
         dl_label = f.file_name or name
+        dl_key = self._new_dl_key()
         self._append_log(f"[nexus] downloading {dl_label}…")
-        self._nexus_download_progress(dl_label, 0, 0)   # show popup immediately
+        self._nexus_download_progress(dl_key, dl_label, 0, 0)   # show popup immediately
 
         class _Info:
             pass
@@ -4416,7 +4512,7 @@ class MainWindow(QMainWindow):
                     dest_dir=dest, known_file_name=f.file_name,
                     expected_size_bytes=size,
                     progress_cb=lambda d, t: self._req_install_prog.emit(
-                        dl_label, int(d), int(t)))
+                        dl_key, dl_label, int(d), int(t)))
                 if result.success and result.file_path is not None:
                     archive = str(result.file_path)
                     try:
@@ -4431,13 +4527,13 @@ class MainWindow(QMainWindow):
                                      f"{result.error or 'unknown error'}")
             except Exception as exc:
                 self._append_log(f"[nexus] download error: {exc}")
-            self._req_install_dl.emit(archive, meta)
+            self._req_install_dl.emit(archive, meta, dl_key)
 
         threading.Thread(target=worker, daemon=True, name="req-install-dl").start()
 
-    def _on_req_install_dl(self, archive, meta):
+    def _on_req_install_dl(self, archive, meta, dl_key):
         self._req_installing = False
-        self._nexus_download_progress("", 0, -1)   # hide the download popup
+        self._nexus_download_progress(dl_key, "", 0, -1)   # hide this download's card
         if not archive:
             return
         self._append_log(f"[nexus] downloaded → {archive}; installing…")
@@ -4995,11 +5091,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- deploy/restore
     def _ensure_feedback(self):
-        """Lazily create the progress popup + notifier (host = central widget)."""
+        """Lazily create the progress popup stack + notifier (host = central
+        widget). _progress_popup is a ProgressStack: default key "op" is the
+        shared install/deploy card; downloads pass their own key so concurrent
+        cards stack instead of clobbering each other."""
         if self._notifier is None:
-            from gui_qt.notifications import ProgressPopup, NotificationManager
+            from gui_qt.notifications import ProgressStack, NotificationManager
             host = self.centralWidget() or self
-            self._progress_popup = ProgressPopup(host)
+            self._progress_popup = ProgressStack(host)
             self._notifier = NotificationManager(host)
 
     def _notify(self, text: str, state: str = "info"):
@@ -5187,10 +5286,30 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _schedule_op_clear(self, delay_ms: int = 1200):
+        """Hide the shared "op" progress card after *delay_ms*. Cancellable —
+        if another operation emits progress before it fires, the pending clear
+        is dropped so it can't hide the NEW operation's card (e.g. a queued
+        install batch that starts right after the previous one finished)."""
+        t = getattr(self, "_op_clear_timer", None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(
+                lambda: self._progress_popup.clear()
+                if self._progress_popup is not None else None)
+            self._op_clear_timer = t
+        t.start(delay_ms)
+
     def _on_op_progress(self, done: int, total: int, phase):
         if getattr(self, "_op_silent", False):
             return   # silent auto-deploy: no progress popup
         if self._progress_popup is not None:
+            # A new/ongoing op is reporting — a clear scheduled by the previous
+            # op's completion must not hide this op's card.
+            t = getattr(self, "_op_clear_timer", None)
+            if t is not None:
+                t.stop()
             title = getattr(self, "_op_title", "Working")
             self._progress_popup.set_progress(done, total, phase, title=title)
 
@@ -5199,7 +5318,7 @@ class MainWindow(QMainWindow):
         self._op_silent = False
         self._set_deploy_buttons_enabled(True)
         if self._progress_popup is not None:
-            QTimer.singleShot(1200, self._progress_popup.clear)
+            self._schedule_op_clear(1200)
         # Any deploy (manual OR auto) is followed by a modlist reload → conflict
         # rebuild → _on_conflicts_ready. With auto_deploy on, that rebuild would
         # otherwise start a *fresh* auto-deploy every time (an endless loop, and
@@ -5660,7 +5779,18 @@ class MainWindow(QMainWindow):
             self._notify(self.tr("No configured game selected."), "warning")
             return
         if getattr(self, "_install_running", False):
-            self._notify(self.tr("An install is already in progress."), "warning")
+            # An install batch is already running (e.g. a second Nexus download
+            # finished while the first mod is still installing) — queue this
+            # batch instead of dropping it; _on_install_done drains the queue
+            # (Tk parity: gui.py _nxm_install_queue).
+            self._pending_install_batches.append({
+                "paths": list(paths), "metas": metas,
+                "previous_mod_name": previous_mod_name,
+                "preferred_names": preferred_names,
+                "on_all_done": on_all_done})
+            self._notify(
+                self.tr("Install queued — {0} will install after the current "
+                        "install finishes.").format(Path(paths[0]).name), "info")
             return
         profile_dir = self._gs.profile_dir()
         if profile_dir is None:
@@ -6118,10 +6248,14 @@ class MainWindow(QMainWindow):
 
     def _on_install_done(self, ok: int, total: int, names):
         self._install_running = False
+        # Drain any batch queued while this one ran (deferred so it starts
+        # after this handler — and any on_all_done callback — completes).
+        if self._pending_install_batches:
+            QTimer.singleShot(0, self._drain_pending_installs)
         if hasattr(self, "_install_btn"):
             self._install_btn.setEnabled(True)
         if self._progress_popup is not None:
-            QTimer.singleShot(1200, self._progress_popup.clear)
+            self._schedule_op_clear(1200)
         self._reload_modlist()
         self._reload_plugins()
         # Re-flag Reinstall in the Downloads tab now that meta.ini changed.
@@ -6144,6 +6278,19 @@ class MainWindow(QMainWindow):
                          "warning")
         else:
             self._notify(self.tr("Install failed — see log."), "error")
+
+    def _drain_pending_installs(self):
+        """Start the next install batch queued while an earlier one ran. If a
+        callback already started another install in the meantime, leave the
+        queue for the next _on_install_done to drain."""
+        if not self._pending_install_batches \
+                or getattr(self, "_install_running", False):
+            return
+        b = self._pending_install_batches.pop(0)
+        self._install_paths(b["paths"], metas=b["metas"],
+                            previous_mod_name=b["previous_mod_name"],
+                            preferred_names=b["preferred_names"],
+                            on_all_done=b["on_all_done"])
 
     def _build_modlist(self) -> QWidget:
         self._modlist_model = ModListModel([])
@@ -6655,7 +6802,7 @@ class MainWindow(QMainWindow):
 
         self._bsa_op_running = False
         if self._progress_popup is not None:
-            QTimer.singleShot(800, self._progress_popup.clear)
+            self._schedule_op_clear(800)
 
         if info.get("cancelled"):
             self._notify(self.tr("Cancelled."), "info")

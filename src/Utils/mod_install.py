@@ -1069,10 +1069,21 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
     # cancel), or — with no callback — silently replace (collection installs).
     if dest_root.exists():
         if on_exists is None:
+            # Silent replace is still a replace: keep the mod's modlist slot and
+            # carry its endorsed flag, exactly like the interactive Replace path
+            # (Tk parity: overwrote_existing → was_existing_mod →
+            # ensure_mod_preserving_position).
+            try:
+                from Nexus.nexus_meta import read_meta
+                p._preserved_endorsed = bool(
+                    read_meta(dest_root / "meta.ini").endorsed)
+            except Exception:
+                p._preserved_endorsed = False
             if p.is_bundle():
                 old_bundle_spec = _read_old_bundle_spec(dest_root)
             log_fn(f"Replacing existing mod folder: {p.mod_name}")
             shutil.rmtree(dest_root, ignore_errors=True)
+            p._preserve_position = True
         else:
             conflict = False
             while dest_root.exists():

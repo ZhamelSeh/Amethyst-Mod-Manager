@@ -2849,6 +2849,14 @@ Remove the appended-collection entry?</translation>
         <translation>Quick Update — downloading {0} mod(s)…</translation>
     </message>
     <message>
+        <source>Downloading {0} mod(s)…</source>
+        <translation>Downloading {0} mod(s)…</translation>
+    </message>
+    <message>
+        <source>Quick Update</source>
+        <translation>Quick Update</translation>
+    </message>
+    <message>
         <source>Quick Update: updated {0} mod(s)</source>
         <translation>Quick Update: updated {0} mod(s)</translation>
     </message>
@@ -2967,6 +2975,10 @@ Remove the appended-collection entry?</translation>
     <message>
         <source>Downloading…</source>
         <translation>Downloading…</translation>
+    </message>
+    <message>
+        <source>Downloading {0} files ({1} remaining)…</source>
+        <translation>Downloading {0} files ({1} remaining)…</translation>
     </message>
     <message>
         <source>Nexus Download</source>
@@ -3139,6 +3151,10 @@ Remove the appended-collection entry?</translation>
     <message>
         <source>Manage Prefixes</source>
         <translation>Manage Prefixes</translation>
+    </message>
+    <message>
+        <source>Install queued — {0} will install after the current install finishes.</source>
+        <translation>Install queued — {0} will install after the current install finishes.</translation>
     </message>
     <message>
         <source>No active profile.</source>

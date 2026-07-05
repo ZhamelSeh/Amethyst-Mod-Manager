@@ -6330,7 +6330,12 @@ class MainWindow(QMainWindow):
     def _rename_mod_on_disk(self, old_name: str, new_name: str) -> str | None:
         """Rename a mod: staging folder → new, modindex entry, modlist entry,
         then reload. Returns the sanitised new name on success, else None.
-        Mirrors the Tk modlist_panel.rename_mod_by_name operation."""
+        Mirrors the Tk modlist_panel.rename_mod_by_name operation.
+
+        If the target name is already taken, this shows the Mod-Already-Exists
+        overlay (Replace All / Rename… / Cancel) rather than failing outright,
+        and the rename completes asynchronously through that flow (so the return
+        value is None — the folder is still under ``old_name`` at that point)."""
         from Utils.mod_name_utils import sanitize_mod_folder_name
         new_name = sanitize_mod_folder_name(new_name)
         if not old_name or not new_name or old_name == new_name:
@@ -6338,11 +6343,52 @@ class MainWindow(QMainWindow):
         staging = self._gs.staging_dir()
         if staging is None:
             return None
-        old_folder = staging / old_name
         new_folder = staging / new_name
         if new_folder.exists():
-            self._notify(self.tr("A mod named '{0}' already exists.").format(new_name), "warning")
+            # Collision → let the user Replace the existing mod, pick another
+            # name, or cancel (same overlay the installer uses).
+            from gui_qt.mod_exists_overlay import ModExistsOverlay
+
+            def _resolved(result):
+                if not result or result == "cancel":
+                    return
+                if result == "replace":
+                    self._replace_then_rename(old_name, new_name)
+                elif result.startswith("rename:"):
+                    self._rename_mod_on_disk(old_name, result[len("rename:"):])
+
+            ModExistsOverlay.show_over(self, new_name, False, _resolved)
             return None
+        return self._do_rename_mod_on_disk(old_name, new_name)
+
+    def _replace_then_rename(self, old_name: str, new_name: str) -> None:
+        """Fully remove the existing mod occupying *new_name*, drop its modlist
+        row, then rename *old_name* → *new_name* (used by the rename-collision
+        Replace-All path)."""
+        try:
+            from Utils.mod_remove import remove_mods
+            remove_mods(self._gs.game, self._gs.profile_dir(), [new_name],
+                        log_fn=self._append_log)
+        except Exception as exc:
+            self._notify(self.tr("Replace failed: {0}").format(exc), "warning")
+            return
+        # Drop the replaced mod's modlist row so it isn't left dangling.
+        m = self._modlist_model
+        for r in range(m.rowCount()):
+            e = m.entry(r)
+            if not e.is_separator and e.name == new_name:
+                m.remove_row(r)
+                break
+        self._do_rename_mod_on_disk(old_name, new_name)
+
+    def _do_rename_mod_on_disk(self, old_name: str, new_name: str) -> str | None:
+        """Perform the actual rename (staging folder + index + state + modlist),
+        assuming *new_name* is free. Returns the new name on success."""
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return None
+        old_folder = staging / old_name
+        new_folder = staging / new_name
         try:
             if old_folder.is_dir():
                 old_folder.rename(new_folder)

@@ -3213,8 +3213,8 @@ Deploy anyway?</translation>
         <translation>Install cancelled: {0}</translation>
     </message>
     <message>
-        <source>A mod named '{0}' already exists.</source>
-        <translation>A mod named '{0}' already exists.</translation>
+        <source>Replace failed: {0}</source>
+        <translation>Replace failed: {0}</translation>
     </message>
     <message>
         <source>Rename failed: {0}</source>

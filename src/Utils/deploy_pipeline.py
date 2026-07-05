@@ -272,9 +272,12 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn,
         from Nexus.nexus_meta import collect_root_flagged_mods
         from Games.ue5_game import UE5Game
 
+        from Utils.perftrace import span
+
         exc_raw = read_excluded_mod_files(modlist_path.parent, None)
         exc = {k: set(v) for k, v in exc_raw.items()} if exc_raw else None
-        rf_mods = collect_root_flagged_mods(modlist_path, staging, log_fn=log_fn)
+        with span("collect_root_flagged_mods"):
+            rf_mods = collect_root_flagged_mods(modlist_path, staging, log_fn=log_fn)
 
         if rescan_index:
             # Full rescan of every mod folder → rewrite modindex.bin from disk
@@ -309,31 +312,33 @@ def _build_filemap_for_game(game, profile, *, log_fn: LogFn,
             else:
                 conflict_key_fn = None
 
-        result = build_filemap(
-            modlist_path, staging, filemap_out,
-            strip_prefixes=game.mod_folder_strip_prefixes or None,
-            per_mod_strip_prefixes=load_per_mod_strip_prefixes(modlist_path.parent),
-            allowed_extensions=game.mod_install_extensions or None,
-            root_deploy_folders=game.mod_root_deploy_folders or None,
-            excluded_mod_files=exc,
-            conflict_ignore_filenames=getattr(game, "conflict_ignore_filenames", None) or None,
-            excluded_loose_filenames=getattr(game, "excluded_loose_filenames", None) or None,
-            allowed_top_level_folders=(
-                getattr(game, "mod_required_top_level_folders", None) or None
-                if getattr(game, "filemap_exclude_unknown_top_level", False)
-                else None
-            ),
-            exclude_dirs=getattr(game, "filemap_exclude_dirs", None) or None,
-            normalize_folder_case=norm_case,
-            filemap_casing=getattr(game, "filemap_casing", "upper"),
-            conflict_key_fn=conflict_key_fn,
-            root_folder_mods=rf_mods or None,
-        )
+        with span("build_filemap"):
+            result = build_filemap(
+                modlist_path, staging, filemap_out,
+                strip_prefixes=game.mod_folder_strip_prefixes or None,
+                per_mod_strip_prefixes=load_per_mod_strip_prefixes(modlist_path.parent),
+                allowed_extensions=game.mod_install_extensions or None,
+                root_deploy_folders=game.mod_root_deploy_folders or None,
+                excluded_mod_files=exc,
+                conflict_ignore_filenames=getattr(game, "conflict_ignore_filenames", None) or None,
+                excluded_loose_filenames=getattr(game, "excluded_loose_filenames", None) or None,
+                allowed_top_level_folders=(
+                    getattr(game, "mod_required_top_level_folders", None) or None
+                    if getattr(game, "filemap_exclude_unknown_top_level", False)
+                    else None
+                ),
+                exclude_dirs=getattr(game, "filemap_exclude_dirs", None) or None,
+                normalize_folder_case=norm_case,
+                filemap_casing=getattr(game, "filemap_casing", "upper"),
+                conflict_key_fn=conflict_key_fn,
+                root_folder_mods=rf_mods or None,
+            )
         # Game-specific filemap rewrite (e.g. Witcher 3 routes staging paths
         # like TrueFires_v1.01/modTrueFires/… to mods/modTrueFires/… so the
         # Data tab and conflicts match the deployed game-root layout).
         try:
-            game.post_build_filemap(filemap_out, staging)
+            with span("post_build_filemap"):
+                game.post_build_filemap(filemap_out, staging)
         except Exception as pb_err:
             log_fn(f"post_build_filemap warning: {pb_err}")
         return result

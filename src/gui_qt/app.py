@@ -87,6 +87,10 @@ class MainWindow(QMainWindow):
     # Carries (generation, ConflictData) from a worker thread to the UI thread
     # (queued connection — thread-safe). See _rebuild_conflicts_async.
     _conflicts_ready = Signal(int, object)
+    # (generation, list[FrameworkStatus]) from the framework-detect worker —
+    # detect_frameworks reads filemap.txt + the mod index, too slow for the UI
+    # thread on a big modlist. See _refresh_framework_banner.
+    _framework_statuses_ready = Signal(int, object)
     # Deploy/restore worker → UI thread (thread-safe queued connections).
     _op_progress = Signal(int, int, object)   # (done, total, phase|None)
     _op_log = Signal(str)
@@ -188,6 +192,9 @@ class MainWindow(QMainWindow):
         self._gs = GameState()
         self._gs.load()
         self._conflicts_ready.connect(self._on_conflicts_ready)
+        self._framework_statuses_ready.connect(self._on_framework_statuses)
+        # Drops stale framework-detect results (game switched mid-compute).
+        self._framework_gen = 0
         # Deploy/restore state + notification host.
         self._deploy_running = False
         self._deploy_rerun_pending = False
@@ -7856,19 +7863,39 @@ class MainWindow(QMainWindow):
 
     def _refresh_framework_banner(self):
         """Re-detect modding frameworks and update the Plugins-tab banner. Called
-        on game/profile change + after each filemap rebuild (same as Tk)."""
+        on game/profile change + after each filemap rebuild (same as Tk).
+
+        The detect reads filemap.txt (+ mod index) — ~200 ms on a 100k-file
+        modlist — so it runs on a worker thread and lands via
+        _framework_statuses_ready. A generation counter drops results that a
+        game/profile switch (or a newer refresh) has superseded."""
         if not hasattr(self, "_framework_banner"):
             return
-        from Utils.framework_detect import detect_frameworks
+        import threading
+        self._framework_gen += 1
+        gen = self._framework_gen
+        # Snapshot inputs on the UI thread — GameState can be swapped under a
+        # worker (see the profile-desync incident).
+        game = self._gs.game
         staging = self._gs.staging_dir()
         filemap_path = (staging.parent / "filemap.txt") if staging is not None else None
-        try:
-            statuses = detect_frameworks(
-                self._gs.game, filemap_path, self._gs.modlist_path(),
-                rf_toggle_enabled=True)
-        except Exception as exc:
-            print(f"[gui_qt] framework detect error: {exc}", flush=True)
-            statuses = []
+        modlist_path = self._gs.modlist_path()
+
+        def worker():
+            from Utils.framework_detect import detect_frameworks
+            try:
+                statuses = detect_frameworks(game, filemap_path, modlist_path,
+                                             rf_toggle_enabled=True)
+            except Exception as exc:
+                print(f"[gui_qt] framework detect error: {exc}", flush=True)
+                statuses = []
+            self._framework_statuses_ready.emit(gen, statuses)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_framework_statuses(self, gen: int, statuses):
+        if gen != self._framework_gen or not hasattr(self, "_framework_banner"):
+            return
         self._framework_banner.set_statuses(statuses)
 
     def _rebuild_conflicts_async(self, rescan_index: bool = False):
@@ -7887,14 +7914,17 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_conflict_build_lock"):
             self._conflict_build_lock = threading.Lock()
 
+        from Utils.perftrace import span
+
         def worker():
             # log to stderr (not the widget) — we're off the UI thread.
             with self._conflict_build_lock:
                 if gen != self._conflict_gen:
                     return   # a newer build was queued while we waited — skip
-                data = self._gs.build_conflicts(
-                    log_fn=lambda m: print(f"[filemap] {m}", flush=True),
-                    rescan_index=rescan_index)
+                with span(f"build_conflicts(rescan={rescan_index})"):
+                    data = self._gs.build_conflicts(
+                        log_fn=lambda m: print(f"[filemap] {m}", flush=True),
+                        rescan_index=rescan_index)
             self._conflicts_ready.emit(gen, data)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -7902,46 +7932,60 @@ class MainWindow(QMainWindow):
     def _on_conflicts_ready(self, gen: int, data):
         if gen != self._conflict_gen:
             return
-        self._conflict_data = data
-        self._modlist_model.set_conflicts(data.loose_codes, data.bsa_codes)
-        # Filemap-derived flag overlays (info=pre-RTX, root=custom root rule).
-        self._modlist_model.set_prertx_mods(getattr(data, "prertx_mods", set()))
-        self._modlist_model.set_root_rule_mods(getattr(data, "root_rule_mods", set()))
-        # Cross-panel highlighting needs the override + owner maps.
-        self._modlist_view.set_conflict_maps(
-            data.overrides, data.overridden_by,
-            data.bsa_overrides, data.bsa_overridden_by)
-        self._plugin_view.set_plugin_owner(data.plugin_owner)
-        # Rebuild the filter data + repopulate the filter panel's dynamic lists,
-        # then reapply whatever filters are currently active.
-        self._rebuild_filter_data()
-        # The deployed filemap changed → the Data tab is stale (rebuilds lazily).
-        if hasattr(self, "_data_view"):
-            self._data_view.mark_dirty()
-        # A mod may have been added/removed → re-evaluate Install vs Reinstall.
-        if hasattr(self, "_downloads_view"):
-            self._downloads_view.mark_dirty()
-        # The deployed file set changed → the Text Files list is stale.
-        if hasattr(self, "_text_files_view"):
-            self._text_files_view.mark_dirty()
-        # A mod may have been removed/added → re-evaluate the Nexus browser's
-        # Install/Reinstall buttons (remove goes through save()→conflict rebuild,
-        # which is the only signal the Nexus tab gets for a removal).
-        nv = getattr(self, "_nexus_view", None)
-        if nv is not None:
-            nv.refresh_installed()
-        # The filemap (staged/deployed file set) changed → framework states may
-        # have flipped (e.g. a framework mod toggled, deployed, or removed).
-        self._refresh_framework_banner()
-        # A mod was toggled / added / removed → the footer counts + size are
-        # stale (token-guarded, so overlapping walks coalesce).
-        self._refresh_modlist_stats()
-        # The filemap is now fresh → reload the Plugins tab so ESL/master flags
-        # resolve against the winning (e.g. patcher-provided light) copies and
-        # plugins still deployed by another enabled mod are recovered. Tk parity:
-        # gui.py _on_filemap_rebuilt calls _refresh_plugins_tab() here, AFTER the
-        # rebuild — reloading earlier (on the toggle) races the stale filemap.
-        self._reload_plugins()
+        from Utils.perftrace import span
+        with span("on_conflicts_ready"):
+            self._conflict_data = data
+            with span("model.set_filemap_results"):
+                # Conflicts + the filemap-derived flag overlays (info=pre-RTX,
+                # root=custom root rule) in one dataChanged pass.
+                self._modlist_model.set_filemap_results(
+                    data.loose_codes, data.bsa_codes,
+                    getattr(data, "prertx_mods", set()),
+                    getattr(data, "root_rule_mods", set()))
+            # Cross-panel highlighting needs the override + owner maps.
+            with span("view.set_conflict_maps"):
+                self._modlist_view.set_conflict_maps(
+                    data.overrides, data.overridden_by,
+                    data.bsa_overrides, data.bsa_overridden_by)
+            self._plugin_view.set_plugin_owner(data.plugin_owner)
+            # Rebuild the filter data + repopulate the filter panel's dynamic lists,
+            # then reapply whatever filters are currently active.
+            with span("rebuild_filter_data"):
+                self._rebuild_filter_data()
+            # The deployed filemap changed → the Data tab is stale (rebuilds lazily).
+            if hasattr(self, "_data_view"):
+                self._data_view.mark_dirty()
+            # A mod may have been added/removed → re-evaluate Install vs Reinstall.
+            if hasattr(self, "_downloads_view"):
+                self._downloads_view.mark_dirty()
+            # The deployed file set changed → the Text Files list is stale.
+            if hasattr(self, "_text_files_view"):
+                self._text_files_view.mark_dirty()
+            # A mod may have been removed/added → re-evaluate the Nexus browser's
+            # Install/Reinstall buttons (remove goes through save()→conflict rebuild,
+            # which is the only signal the Nexus tab gets for a removal).
+            nv = getattr(self, "_nexus_view", None)
+            if nv is not None:
+                nv.refresh_installed()
+            # The filemap (staged/deployed file set) changed → framework states may
+            # have flipped (e.g. a framework mod toggled, deployed, or removed).
+            # Precomputed on the conflict worker (detect_frameworks re-reads
+            # filemap.txt — too slow here); bump the gen so an in-flight async
+            # detect can't overwrite this fresher result.
+            if hasattr(self, "_framework_banner"):
+                self._framework_gen += 1
+                self._framework_banner.set_statuses(data.framework_statuses)
+            # A mod was toggled / added / removed → the footer counts + size are
+            # stale (token-guarded, so overlapping walks coalesce).
+            with span("refresh_modlist_stats"):
+                self._refresh_modlist_stats()
+            # The filemap is now fresh → reload the Plugins tab so ESL/master flags
+            # resolve against the winning (e.g. patcher-provided light) copies and
+            # plugins still deployed by another enabled mod are recovered. Tk parity:
+            # gui.py _on_filemap_rebuilt calls _refresh_plugins_tab() here, AFTER the
+            # rebuild — reloading earlier (on the toggle) races the stale filemap.
+            with span("reload_plugins"):
+                self._reload_plugins()
         # Auto deploy: if the game has auto_deploy enabled, deploy after every
         # successful conflict/filemap rebuild (enable/disable/reorder/install) —
         # but NOT when the rebuild was itself triggered by that auto-deploy

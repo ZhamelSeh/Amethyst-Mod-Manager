@@ -35,6 +35,10 @@ class ConflictData:
     # (root flag). Computed from modindex.bin in build_conflicts.
     prertx_mods: set = field(default_factory=set)
     root_rule_mods: set = field(default_factory=set)
+    # Framework banner rows (list[FrameworkStatus]) precomputed on the conflict
+    # worker — detect_frameworks re-reads filemap.txt (+ the mod index), which
+    # is too slow for the UI thread on a 100k-file modlist.
+    framework_statuses: list = field(default_factory=list)
 
 
 class GameState:
@@ -146,36 +150,72 @@ class GameState:
             return ConflictData()
         from Utils.deploy_pipeline import _build_filemap_for_game
         from gui_qt.modlist_data import display_codes_from_conflict_map
+        from Utils.perftrace import span
         log = log_fn or (lambda _m: None)
-        result = _build_filemap_for_game(
-            g, self.profile, log_fn=log, rescan_index=rescan_index)
+        with span("_build_filemap_for_game"):
+            result = _build_filemap_for_game(
+                g, self.profile, log_fn=log, rescan_index=rescan_index)
         if not result:
             return ConflictData()
         _count, _conflict_map, overrides, overridden_by = result
-        data = ConflictData(
-            # Use the backend's real conflict_map so FULL (redundant) is kept.
-            loose_codes=display_codes_from_conflict_map(_conflict_map),
-            overrides={k: set(v) for k, v in (overrides or {}).items()},
-            overridden_by={k: set(v) for k, v in (overridden_by or {}).items()},
-        )
-        (data.bsa_codes, data.bsa_overrides,
-         data.bsa_overridden_by) = self._build_bsa_conflicts(g, log)
-        data.plugin_owner = self._build_plugin_owner(g)
-        data.prertx_mods, data.root_rule_mods = self._build_index_flag_mods(g)
+        with span("display_codes+copy_maps"):
+            data = ConflictData(
+                # Use the backend's real conflict_map so FULL (redundant) is kept.
+                loose_codes=display_codes_from_conflict_map(_conflict_map),
+                overrides={k: set(v) for k, v in (overrides or {}).items()},
+                overridden_by={k: set(v) for k, v in (overridden_by or {}).items()},
+            )
+        with span("_build_bsa_conflicts"):
+            (data.bsa_codes, data.bsa_overrides,
+             data.bsa_overridden_by) = self._build_bsa_conflicts(g, log)
+        with span("_build_plugin_owner"):
+            data.plugin_owner = self._build_plugin_owner(g)
+        with span("_build_index_flag_mods"):
+            data.prertx_mods, data.root_rule_mods = self._build_index_flag_mods(g)
+        with span("detect_frameworks"):
+            data.framework_statuses = self._detect_frameworks(g)
         return data
+
+    def _detect_frameworks(self, g) -> list:
+        """Framework banner statuses (worker-side; see ConflictData)."""
+        try:
+            from Utils.framework_detect import detect_frameworks
+            staging = self.staging_dir()
+            fm = (staging.parent / "filemap.txt") if staging is not None else None
+            return detect_frameworks(g, fm, self.modlist_path(),
+                                     rf_toggle_enabled=True)
+        except Exception as exc:
+            print(f"[gui_qt] framework detect error: {exc}", flush=True)
+            return []
 
     def _build_index_flag_mods(self, g) -> "tuple[set, set]":
         """(prertx_mods, root_rule_mods) from modindex.bin — the info/root flag
         inputs. pre-RTX = a mod with a file under a remapped source prefix (e.g.
         natives/x64/); root-rule = a mod owning files matched by a custom routing
         rule with dest="". Ports gui/modlist_panel pre-RTX detect (~9307) +
-        _compute_root_rule_mods (1699). Cheap read; runs on the conflict worker."""
+        _compute_root_rule_mods (1699). Runs on the conflict worker.
+
+        Both scans depend only on the index content + static game rules — a
+        mod toggle/reorder doesn't touch modindex.bin — so the result is
+        cached by (index path, mtime) and per-toggle rebuilds skip the
+        ~100-150 ms file walk entirely."""
+        from Utils.perftrace import span
         staging = self.staging_dir()
         if staging is None:
             return set(), set()
+        index_path = staging.parent / "modindex.bin"
+        try:
+            mtime = index_path.stat().st_mtime
+        except OSError:
+            return set(), set()
+        cache_key = (str(index_path), mtime, getattr(g, "name", None))
+        cached = getattr(self, "_flag_mods_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
         try:
             from Utils.filemap import read_mod_index
-            index = read_mod_index(staging.parent / "modindex.bin")
+            with span("flag_mods: read_mod_index"):
+                index = read_mod_index(index_path)
         except Exception:
             index = None
         if not index:
@@ -188,25 +228,28 @@ class GameState:
         except Exception:
             prefixes = []
         if prefixes:
-            for mod_name, entry in index.items():
-                normal = entry[0] if isinstance(entry, tuple) else {}
-                for rel_key in normal:
-                    if any(rel_key.startswith(p) for p in prefixes):
-                        prertx.add(mod_name)
-                        break
+            with span("flag_mods: prertx scan"):
+                for mod_name, entry in index.items():
+                    normal = entry[0] if isinstance(entry, tuple) else {}
+                    for rel_key in normal:
+                        if any(rel_key.startswith(p) for p in prefixes):
+                            prertx.add(mod_name)
+                            break
         # root-rule: mods owning files matched by a dest="" custom routing rule.
         root_rule: set = set()
         try:
             rules = list(getattr(g, "custom_routing_rules", None) or [])
             if any(r.dest == "" and not r.to_prefix for r in rules):
                 from Utils.deploy_custom_rules import mods_matching_root_rules
-                mod_files = {
-                    name: (list(entry[0].values()) + list(entry[1].values()))
-                    for name, entry in index.items()
-                    if isinstance(entry, tuple) and len(entry) >= 2}
-                root_rule = mods_matching_root_rules(mod_files, rules)
+                with span("flag_mods: root-rule match"):
+                    mod_files = {
+                        name: (list(entry[0].values()) + list(entry[1].values()))
+                        for name, entry in index.items()
+                        if isinstance(entry, tuple) and len(entry) >= 2}
+                    root_rule = mods_matching_root_rules(mod_files, rules)
         except Exception:
             root_rule = set()
+        self._flag_mods_cache = (cache_key, (prertx, root_rule))
         return prertx, root_rule
 
     def _build_plugin_owner(self, g) -> dict[str, str]:

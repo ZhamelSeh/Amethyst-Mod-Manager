@@ -309,6 +309,25 @@ class ModListModel(QAbstractTableModel):
                                   [FlagsRole, Qt.DisplayRole])
         self._resort_if_key("flags")
 
+    def set_filemap_results(self, conflicts: dict[str, int],
+                            bsa_conflicts: dict[str, int],
+                            prertx: set[str], root_rule: set[str]) -> None:
+        """Apply everything a filemap rebuild produces for this model in ONE
+        dataChanged pass. Equivalent to set_conflicts + set_prertx_mods +
+        set_root_rule_mods, but those each emit a full-table dataChanged —
+        three repaint/relayout storms per rebuild on a big modlist."""
+        self._conflicts = conflicts or {}
+        self._bsa_conflicts = bsa_conflicts or {}
+        self._prertx_mods = set(prertx or ())
+        self._root_rule_mods = set(root_rule or ())
+        if self._entries:
+            # COL_NAME..COL_CONFLICTS spans the Flags column too.
+            self.dataChanged.emit(
+                self.index(0, COL_NAME),
+                self.index(len(self._entries) - 1, COL_CONFLICTS),
+                [ConflictRole, BsaConflictRole, FlagsRole, Qt.DisplayRole])
+        self._resort_if_key("conflicts", "flags")
+
     def set_conflicts(self, conflicts: dict[str, int],
                       bsa_conflicts: dict[str, int] | None = None) -> None:
         self._conflicts = conflicts or {}
@@ -371,15 +390,38 @@ class ModListModel(QAbstractTableModel):
         return 0
 
     def set_highlights(self, higher=None, lower=None, anchor=None) -> None:
-        """Update conflict/anchor highlight sets and repaint the whole list."""
-        self._hl_higher = set(higher or ())
-        self._hl_lower = set(lower or ())
-        self._hl_anchor = set(anchor or ())
+        """Update conflict/anchor highlight sets and repaint the affected rows.
+
+        Diff-aware: a no-op refresh (e.g. the per-rebuild self-highlight
+        reapply with unchanged partners) emits nothing, and a real change
+        repaints only the span of rows whose tint flipped — a full-table
+        HighlightRole dataChanged costs ~50-150 ms on a 550-row modlist and
+        this runs after every conflict rebuild."""
+        higher = set(higher or ())
+        lower = set(lower or ())
+        anchor = set(anchor or ())
+        if (higher == self._hl_higher and lower == self._hl_lower
+                and anchor == self._hl_anchor):
+            return
+        changed = ((self._hl_higher ^ higher) | (self._hl_lower ^ lower)
+                   | (self._hl_anchor ^ anchor))
+        self._hl_higher = higher
+        self._hl_lower = lower
+        self._hl_anchor = anchor
         self._sep_hl_cache.clear()
-        if self._entries:
-            self.dataChanged.emit(self.index(0, 0),
-                                  self.index(len(self._entries) - 1, COL_PRIORITY),
-                                  [HighlightRole])
+        if not self._entries:
+            return
+        # Rows to repaint: mods whose membership flipped + collapsed separators
+        # (their tint summarises hidden children; expanded ones never tint —
+        # except Overwrite, which is covered by the name check).
+        rows = [i for i, e in enumerate(self._entries)
+                if e.name in changed
+                or (e.is_separator and e.display_name in self._collapsed)]
+        if not rows:
+            return
+        self.dataChanged.emit(self.index(min(rows), 0),
+                              self.index(max(rows), COL_PRIORITY),
+                              [HighlightRole])
 
     # ---- Qt model interface ----------------------------------------------
     def rowCount(self, parent=QModelIndex()):
@@ -531,17 +573,19 @@ class ModListModel(QAbstractTableModel):
 
     # ---- toggling ---------------------------------------------------------
     def toggle(self, row: int) -> None:
-        e = self._entries[row]
-        if e.is_separator or e.locked:
-            return
-        e.enabled = not e.enabled
-        # Whole row: the enabled state dims the text in EVERY column, not
-        # just the Name cell with the checkbox.
-        self.dataChanged.emit(self.index(row, 0),
-                              self.index(row, len(COLUMNS) - 1),
-                              [EntryRole, Qt.DisplayRole])
-        self.save()
-        self.enabled_changed.emit([(e.name, e.enabled)])
+        from Utils.perftrace import span
+        with span("model.toggle"):
+            e = self._entries[row]
+            if e.is_separator or e.locked:
+                return
+            e.enabled = not e.enabled
+            # Whole row: the enabled state dims the text in EVERY column, not
+            # just the Name cell with the checkbox.
+            self.dataChanged.emit(self.index(row, 0),
+                                  self.index(row, len(COLUMNS) - 1),
+                                  [EntryRole, Qt.DisplayRole])
+            self.save()
+            self.enabled_changed.emit([(e.name, e.enabled)])
 
     def set_rows_enabled(self, rows, enabled: bool) -> None:
         """Enable/disable the mods at *rows* (skips separators + locked), then
@@ -713,17 +757,20 @@ class ModListModel(QAbstractTableModel):
         # funnels through here — row→block mapping may have changed.
         self._sep_hl_cache.clear()
         from Utils.modlist import write_modlist
+        from Utils.perftrace import span
         # ALWAYS write the natural order — the display list may be a sorted /
         # inverted permutation (and contains the divider in reverse mode).
         body = [e for e in self._natural if e.name not in _PINNED_NAMES]
         try:
-            write_modlist(self.modlist_path, body)
+            with span("modlist.write_modlist"):
+                write_modlist(self.modlist_path, body)
         except Exception as exc:
             print(f"[gui_qt] modlist save failed: {exc}", flush=True)
             self.save_failed.emit(f"Modlist save failed: {exc}")
             return
         if self.on_saved:
-            self.on_saved()
+            with span("modlist.on_saved(kickoff)"):
+                self.on_saved()
 
     # ---- structural edits (context-menu actions) --------------------------
     def rename(self, row: int, new_name: str) -> None:
@@ -925,12 +972,14 @@ class ModListModel(QAbstractTableModel):
         if not self.beginMoveRows(QModelIndex(), first, last,
                                   QModelIndex(), dest):
             return False
-        block = self._entries[first:last + 1]
-        del self._entries[first:last + 1]
-        insert_at = dest if dest < first else dest - len(block)
-        self._entries[insert_at:insert_at] = block
-        self.endMoveRows()
-        self.save()
+        from Utils.perftrace import span
+        with span("model.move_block"):
+            block = self._entries[first:last + 1]
+            del self._entries[first:last + 1]
+            insert_at = dest if dest < first else dest - len(block)
+            self._entries[insert_at:insert_at] = block
+            self.endMoveRows()
+            self.save()
         return True
 
     def move_block_display(self, src_rows: list[int], slot: int,

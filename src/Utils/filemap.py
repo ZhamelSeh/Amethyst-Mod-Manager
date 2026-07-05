@@ -366,6 +366,34 @@ def _is_utf8_safe(s: str) -> bool:
         return False
 
 
+# (path, mtime) → mods with non-UTF-8 file names. See mod_index_utf8_unsafe.
+_utf8_unsafe_cache: tuple[str, float, frozenset] | None = None
+
+
+def mod_index_utf8_unsafe(index_path: Path) -> frozenset:
+    """Mods in *index_path* owning a file with a non-UTF-8 (surrogate) name —
+    a legacy-index-only condition (v4 indexes skip such files at scan time).
+
+    Cached by (path, mtime) like read_mod_index: the sweep encodes every file
+    name (~100 ms on a 100k-file index) and its result can't change without an
+    index rewrite, so per-toggle filemap rebuilds shouldn't repeat it."""
+    global _utf8_unsafe_cache
+    try:
+        mtime = index_path.stat().st_mtime
+    except OSError:
+        return frozenset()
+    key = str(index_path)
+    c = _utf8_unsafe_cache
+    if c is not None and c[0] == key and c[1] == mtime:
+        return c[2]
+    index = read_mod_index(index_path) or {}
+    bad = frozenset(
+        name for name, (normal, _root) in index.items()
+        if any(not _is_utf8_safe(rs) for rs in normal.values()))
+    _utf8_unsafe_cache = (key, mtime, bad)
+    return bad
+
+
 # Valid filemap casing strategies (game property `filemap_casing`).
 FILEMAP_CASING_UPPER       = "upper"        # pick variant with most uppercase letters (default)
 FILEMAP_CASING_LOWER       = "lower"        # pick variant with most lowercase letters
@@ -546,22 +574,23 @@ def read_mod_index(
         if _index_cache is not None and _index_cache[0] == path_str and _index_cache[1] == mtime:
             return _index_cache[2]
     try:
-        with index_path.open("rb") as f:
-            data = msgpack.unpack(f, raw=False)
-        if not isinstance(data, dict) or data.get("v") != _INDEX_VERSION:
-            return None
-        index: dict[str, tuple[dict[str, str], dict[str, str]]] = {}
-        for mod_name, files in data["mods"]:
-            normal: dict[str, str] = {}
-            root:   dict[str, str] = {}
-            for rel_key, rel_str, kind in files:
-                # Self-heal older indexes built before macOS-junk filtering:
-                # drop ._* / .DS_Store / __MACOSX entries on read so they never
-                # reach the filemap or deploy.
-                if any(_is_macos_junk(seg) for seg in rel_str.split("/")):
-                    continue
-                (root if kind == "r" else normal)[rel_key] = rel_str
-            index[mod_name] = (normal, root)
+        with perftrace.span("read_mod_index: COLD parse"):
+            with index_path.open("rb") as f:
+                data = msgpack.unpack(f, raw=False)
+            if not isinstance(data, dict) or data.get("v") != _INDEX_VERSION:
+                return None
+            index: dict[str, tuple[dict[str, str], dict[str, str]]] = {}
+            for mod_name, files in data["mods"]:
+                normal: dict[str, str] = {}
+                root:   dict[str, str] = {}
+                for rel_key, rel_str, kind in files:
+                    # Self-heal older indexes built before macOS-junk filtering:
+                    # drop ._* / .DS_Store / __MACOSX entries on read so they never
+                    # reach the filemap or deploy.
+                    if any(_is_macos_junk(seg) for seg in rel_str.split("/")):
+                        continue
+                    (root if kind == "r" else normal)[rel_key] = rel_str
+                index[mod_name] = (normal, root)
     except Exception:
         return None
     with _index_cache_lock:
@@ -984,6 +1013,10 @@ def build_filemap(
         )
         index = read_mod_index(index_path) or {}
 
+    # Mods with legacy surrogate-encoded file names (skipped below). The sweep
+    # is mtime-cached — per-toggle rebuilds otherwise re-encode ~100k names.
+    _utf8_bad = mod_index_utf8_unsafe(index_path)
+
     # Pre-compile ignore patterns once into a single regex for O(1) matching.
     # `<name>.*` is expanded to also match the extensionless `<name>` so users
     # can ignore e.g. both `LICENCE` and `LICENCE.txt` with one pattern.
@@ -1074,10 +1107,10 @@ def build_filemap(
             continue
         # Guard against surrogate-encoded filenames left in an old modindex.bin
         # (pre surrogate-skip-fix). v4 indexes are written after that fix, so
-        # this is a legacy-only condition. Use a cheap any()-with-early-exit so
-        # the common all-UTF-8 mod stops at the first name; only build the full
-        # bad-name list (for the log) on the rare mod that actually trips it.
-        if any(not _is_utf8_safe(rs) for rs in normal.values()):
+        # this is a legacy-only condition. The per-file sweep lives in
+        # mod_index_utf8_unsafe (mtime-cached); only the rare flagged mod pays
+        # for the bad-name list here (for the log).
+        if name in _utf8_bad:
             bad_names = [rs for rs in normal.values() if not _is_utf8_safe(rs)]
             if log_fn is not None:
                 log_fn(

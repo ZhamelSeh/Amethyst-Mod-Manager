@@ -106,6 +106,13 @@ class BaseGame(ABC):
     # Override (e.g. to LinkMode.COPY) for games that never hardlink.
     deploy_mode_fallback: LinkMode = _DEFAULT_DEPLOY_MODE
 
+    # Opt-in for the incremental redeploy fast path (Utils/deploy_incremental).
+    # Only safe for handlers whose deploy() is the plain standard sequence
+    # (move_to_core → deploy_filemap → deploy_core) with a single Data-style
+    # target and idempotent post-deploy steps.  See Fallout_3 for the first
+    # opted-in family.
+    supports_incremental_deploy: bool = False
+
     profile_overridable_settings: tuple[str, ...] = (
         "auto_deploy",
         "archive_invalidation",
@@ -1289,6 +1296,24 @@ class BaseGame(ABC):
         excl = self.runtime_snapshot_exclude_dirs()
         return set(excl) if excl else set()
 
+    def begin_deferred_runtime_snapshot(self) -> None:
+        """Suppress in-deploy snapshot writes until end_deferred_runtime_snapshot.
+
+        Called by run_deploy_pipeline around game.deploy(): the handler's
+        end-of-deploy snapshot_root_for_runtime_capture() call becomes a no-op
+        that only records the request, and the pipeline writes the snapshot
+        once after the root-folder files have also landed — one game-root walk
+        per deploy instead of two (and chained handler deploys coalesce)."""
+        self._defer_runtime_snapshot = True
+        self._deferred_snapshot_requested = False
+
+    def end_deferred_runtime_snapshot(self) -> bool:
+        """End the deferral window; True if a snapshot was requested during it."""
+        requested = getattr(self, "_deferred_snapshot_requested", False)
+        self._defer_runtime_snapshot = False
+        self._deferred_snapshot_requested = False
+        return requested
+
     def snapshot_root_for_runtime_capture(self, exclude_dirs=None, log_fn=None) -> None:
         """Snapshot the game root at deploy time for later runtime capture.
 
@@ -1296,6 +1321,9 @@ class BaseGame(ABC):
         capture_runtime_files_to_root_folder() to detect files generated
         outside the deploy subfolder.
         """
+        if getattr(self, "_defer_runtime_snapshot", False):
+            self._deferred_snapshot_requested = True
+            return
         from Utils.deploy import _write_deploy_snapshot, _FILEMAP_SNAPSHOT_NAME
         gp = self.get_game_path()
         if not gp:
@@ -1359,8 +1387,25 @@ class BaseGame(ABC):
         except (OSError, ValueError):
             return False
 
-    def save_last_deployed_profile(self, profile_name: str) -> None:
-        """Persist profile_name as the last successfully deployed profile."""
+    def get_last_deploy_mode(self) -> str | None:
+        """LinkMode name (e.g. "HARDLINK") of the last deploy, or None.
+
+        Used by the incremental-deploy eligibility check: a mode change means
+        the on-disk links don't match what the current mode would produce, so
+        a full restore + redeploy is required."""
+        try:
+            data = json.loads(self._deploy_state_file.read_text(encoding="utf-8"))
+            return data.get("last_deploy_mode") or None
+        except (OSError, ValueError):
+            return None
+
+    def save_last_deployed_profile(self, profile_name: str,
+                                   deploy_mode: str | None = None) -> None:
+        """Persist profile_name as the last successfully deployed profile.
+
+        deploy_mode — optional LinkMode name to record alongside it (passed by
+        the deploy pipeline; other callers leave the stored value untouched).
+        """
         try:
             self._deploy_state_file.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -1369,6 +1414,8 @@ class BaseGame(ABC):
                 data = {}
             data["last_deployed"] = profile_name
             data["deploy_active"] = True
+            if deploy_mode is not None:
+                data["last_deploy_mode"] = deploy_mode
             self._deploy_state_file.write_text(
                 json.dumps(data, indent=2),
                 encoding="utf-8",

@@ -63,6 +63,33 @@ def _deploy_workers() -> int:
         return 16
 
 
+def _map_batched(fn, items: list, chunk: int = 2048) -> list:
+    """Parallel map for very cheap per-item work (an lstat or readlink).
+
+    ThreadPoolExecutor.map creates one future per item (its chunksize
+    argument only applies to process pools), and at ~30µs of dispatch
+    overhead per future that swamps a ~10µs syscall — 125k items cost
+    seconds of pure overhead.  Slicing the list so each worker runs a plain
+    loop over a chunk keeps the parallelism while paying dispatch once per
+    chunk.  Preserves item order.
+    """
+    if not items:
+        return []
+    if len(items) <= chunk:
+        return [fn(x) for x in items]
+    slices = [items[i:i + chunk] for i in range(0, len(items), chunk)]
+
+    def _run(sl: list) -> list:
+        return [fn(x) for x in sl]
+
+    out: list = []
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(_deploy_workers(), len(slices))) as pool:
+        for part in pool.map(_run, slices):
+            out.extend(part)
+    return out
+
+
 @_contextmanager
 def _timer(label: str):
     """Print elapsed wall-clock time for a labelled block to stderr."""
@@ -755,6 +782,13 @@ def _transfer(src: Path, dst: Path, mode: LinkMode) -> None:
 # restore walkers skip and clean these.
 _MOVE_TMP_SUFFIX = ".mm_tmp"
 
+# Sibling-name infix for restore's deferred delete (see deploy_standard):
+# "Data" is renamed to "Data.mm_trash-<time_ns>" and deleted in a background
+# thread.  Every game-root walker must skip these dirs — they can hold
+# thousands of files mid-delete, which would poison the deploy snapshot or
+# trip _move_runtime_files' low-overlap safety net.
+_TRASH_INFIX = ".mm_trash-"
+
 
 def _move_crash_safe(src: "Path | str", dst: "Path | str") -> None:
     """Move a file or directory, surviving interruption across devices.
@@ -1399,6 +1433,8 @@ def _write_deploy_snapshot(
                     with os.scandir(cur) as it:
                         for entry in it:
                             if entry.is_dir(follow_symlinks=False):
+                                if _TRASH_INFIX in entry.name:
+                                    continue  # deferred-delete dir mid-removal
                                 if (excluded is not None
                                         and entry.path[prefix_len:].replace(
                                             "\\", "/").lower() in excluded):
@@ -1527,6 +1563,8 @@ def _move_runtime_files(
             with os.scandir(cur) as it:
                 for entry in it:
                     if entry.is_dir(follow_symlinks=False):
+                        if _TRASH_INFIX in entry.name:
+                            continue  # deferred-delete dir mid-removal
                         if (excluded is not None
                                 and entry.path[prefix_len:].replace(
                                     "\\", "/").lower() in excluded):

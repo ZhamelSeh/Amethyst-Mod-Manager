@@ -130,6 +130,12 @@ def _set_ini_key(ini_path: Path, section: str, key: str, value: "str | None") ->
 
 class Fallout_3(BaseGame):
 
+    # Opt in to the incremental redeploy fast path (deploy_incremental.py):
+    # the whole Bethesda family (all subclasses, incl. SkyrimSE) uses the
+    # plain move_to_core → deploy_filemap → deploy_core sequence with a
+    # single Data/ target, which is exactly what the diff supports.
+    supports_incremental_deploy = True
+
     plugins_use_star_prefix = False
     plugins_include_vanilla = True
     vanilla_plugins = ["Fallout3.esm"]

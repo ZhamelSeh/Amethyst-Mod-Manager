@@ -393,6 +393,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         QTimer.singleShot(3000, self._start_gh_sync)
+        # Sweep leftover "<Data>.mm_trash-*" dirs from restores whose deferred
+        # background delete was interrupted (crash / app close mid-delete).
+        QTimer.singleShot(0, self._sweep_deploy_trash_startup)
         # App self-update check (Tk parity: after(2000, …)). AppImage/flatpak
         # compare against GitHub releases, everything else against the AUR.
         self._update_overlay = None
@@ -1588,6 +1591,40 @@ class MainWindow(QMainWindow):
         # UI translations (.qm) → config languages/ folder. New/updated ones
         # apply on next launch (Qt can't hot-swap installed translators safely).
         sync_languages(on_changed=lambda: safe_emit(self._languages_synced))
+
+    def _sweep_deploy_trash_startup(self):
+        """Remove leftover restore-trash dirs for every configured game.
+
+        A restore renames the deploy dir to "<name>.mm_trash-<ns>" and deletes
+        it in a background thread; a crash mid-delete leaves the trash behind.
+        move_to_core/restore also sweep their own game, so this startup pass
+        just covers games that aren't deployed again this session.  Runs on a
+        daemon thread — it's pure cleanup and may touch slow drives.
+        """
+        import threading
+        from Utils.game_helpers import _GAMES
+
+        games = [g for g in _GAMES.values() if g.is_configured()]
+
+        def _run():
+            from Utils.deploy_standard import sweep_deploy_trash
+            for game in games:
+                try:
+                    data = game.get_mod_data_path()
+                    root = game.get_game_path()
+                    if data is None or root is None:
+                        continue
+                    data = Path(data)
+                    # Only standard-mode layouts (Data/ inside the game root)
+                    # ever create trash siblings; skip game-root-mode games so
+                    # we never scan outside the game install.
+                    if data == Path(root):
+                        continue
+                    sweep_deploy_trash(data.parent)
+                except Exception:
+                    continue
+
+        threading.Thread(target=_run, name="mm-trash-sweep", daemon=True).start()
 
     def _check_for_app_update(self, force_downgrade_prompt: bool = False,
                               force_fresh: bool = False):

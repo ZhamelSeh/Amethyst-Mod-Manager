@@ -186,9 +186,14 @@ class MainWindow(QMainWindow):
     _FOOT_BTN_H = 28     # compact height for footer tool buttons
     _FOOT_ICON_PX = 16   # footer button icon size
 
-    def __init__(self, app):
+    def __init__(self, app, splash=None):
         super().__init__()
         self._app = app
+        # Startup splash: held open past show() and dismissed on the first
+        # completed conflict rebuild (the last of the heavy first-load work).
+        # A watchdog closes it anyway if that signal never arrives.
+        self._splash = splash
+        self._splash_dismissed = False
         self._pal = active_palette()
         self._gs = GameState()
         self._gs.load()
@@ -402,6 +407,32 @@ class MainWindow(QMainWindow):
         configured = sum(1 for g in _GAMES.values() if g.is_configured())
         if not load_onboarding_complete() or configured == 0:
             QTimer.singleShot(0, self._open_onboarding_tab)
+
+        # Splash watchdog: the splash is normally dismissed by the first
+        # _on_conflicts_ready, but a game with no profile / empty modlist may
+        # never trigger a conflict rebuild. Close it unconditionally after a
+        # short grace period so it can never hang on screen.
+        if self._splash is not None:
+            QTimer.singleShot(4000, self._dismiss_splash)
+
+    def _dismiss_splash(self):
+        """Reveal the finished window and close the startup splash, exactly once.
+
+        The window is shown at zero opacity while loading (see run()); restoring
+        opacity here makes the now fully-rendered UI appear all at once, then the
+        splash closes on top of it."""
+        if self._splash_dismissed:
+            return
+        self._splash_dismissed = True
+        self.setWindowOpacity(1.0)
+        s, self._splash = self._splash, None
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
+        self.raise_()
+        self.activateWindow()
 
     def _populate_selectors(self):
         """Fill the game/profile selectors from the current GameState."""
@@ -1639,6 +1670,52 @@ class MainWindow(QMainWindow):
             self._modlist_panel_stack, current, latest, mode=mode,
             is_prerelease=is_prerelease, is_downgrade=is_downgrade,
             on_update=_on_update, on_close=_cleared)
+
+    def _prompt_ui_scale_restart(self):
+        """Offer a self-restart after the UI scale changed (Settings). Qt reads
+        QT_SCALE_FACTOR only at QApplication construction, so the new scale can
+        only apply on a fresh launch. The value is already persisted by the
+        caller; confirm, then restart on OK — on Cancel it applies next launch."""
+        try:
+            from gui_qt.confirm_overlay import ConfirmOverlay
+            ConfirmOverlay.show_over(
+                self,
+                self.tr("Restart to change UI scale?"),
+                self.tr("The UI scale change takes effect after a restart. "
+                        "Restart now?"),
+                lambda ok: self._request_restart() if ok else None,
+                confirm_label=self.tr("Restart now"),
+                cancel_label=self.tr("Later"),
+                danger=False,
+            )
+        except Exception:
+            self._request_restart()
+
+    def _prompt_theme_restart(self):
+        """Offer a self-restart after the theme changed (Settings). The palette/
+        QSS is applied once at startup, so a theme change only takes full effect
+        on a fresh launch. The value is already persisted by the caller; confirm,
+        then restart on OK — on Cancel it applies next launch."""
+        try:
+            from gui_qt.confirm_overlay import ConfirmOverlay
+            ConfirmOverlay.show_over(
+                self,
+                self.tr("Restart to change theme?"),
+                self.tr("The theme change takes effect after a restart. "
+                        "Restart now?"),
+                lambda ok: self._request_restart() if ok else None,
+                confirm_label=self.tr("Restart now"),
+                cancel_label=self.tr("Later"),
+                danger=False,
+            )
+        except Exception:
+            self._request_restart()
+
+    def _prompt_language_restart(self):
+        """Offer a self-restart after the language changed (Settings picker).
+        Alias for _apply_language's confirm flow — the choice is already
+        persisted by the caller."""
+        self._apply_language(None)
 
     def _apply_language(self, code: str):
         """Switch UI language (from the Settings/onboarding picker). A live
@@ -3366,7 +3443,10 @@ class MainWindow(QMainWindow):
             btn.setEnabled(False)
             btn.setText(self.tr("Checking…"))
         n = len(subset) if subset else "all"
-        self._notify(self.tr("Checking for updates ({0})…").format(n), "info")
+        # Sticky toast: stays on screen until _on_updates_ready dismisses it,
+        # so it doesn't vanish mid-check on the transient auto-dismiss timer.
+        self._updates_toast = self._notify(
+            self.tr("Checking for updates ({0})…").format(n), "info", sticky=True)
 
         import threading
         from Nexus.nexus_update_checker import check_for_updates
@@ -3412,14 +3492,26 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_worker, daemon=True, name="check-updates").start()
 
     def _on_updates_ready(self, result):
-        """Worker finished — re-enable the button, summarise, refresh the rows."""
+        """Worker finished — re-enable the button, summarise, refresh the rows.
+        The sticky "Checking…" toast is dismissed here (morphed into the final
+        summary) so it never disappears while the check is still running."""
         self._updates_running = False
         btn = getattr(self, "_check_updates_btn", None)
         if btn is not None:
             btn.setEnabled(True)
             btn.setText(self.tr("Check Updates"))
+        # Turn the sticky "Checking…" toast into the final summary (or drop it).
+        toast = getattr(self, "_updates_toast", None)
+        self._updates_toast = None
+
+        def _finish(text: str, state: str):
+            if toast is not None:
+                toast.dismiss(text, state=state)
+            else:
+                self._notify(text, state)
+
         if result is None:
-            self._notify(self.tr("Update check failed — see the log."), "error")
+            _finish(self.tr("Update check failed — see the log."), "error")
             return
 
         nexus = result.get("nexus")
@@ -3443,9 +3535,9 @@ class MainWindow(QMainWindow):
                          f"{'s' if len(modio_unknown) != 1 else ''} unknown")
 
         if parts:
-            self._notify(", ".join(parts) + ".", "warning")
+            _finish(", ".join(parts) + ".", "warning")
         else:
-            self._notify(self.tr("All mods are up to date."), "info")
+            _finish(self.tr("All mods are up to date."), "info")
         # Re-read meta.ini (now updated on disk) → repaint flags + refresh filters.
         self._reload_modlist()
 
@@ -5101,9 +5193,12 @@ class MainWindow(QMainWindow):
             self._progress_popup = ProgressStack(host)
             self._notifier = NotificationManager(host)
 
-    def _notify(self, text: str, state: str = "info"):
+    def _notify(self, text: str, state: str = "info", sticky: bool = False):
+        """Show a toast. When *sticky* is True the toast stays on screen until
+        its returned handle is dismissed (used for long-running operations like
+        the update check) — otherwise it auto-dismisses after a few seconds."""
         self._ensure_feedback()
-        self._notifier.notify(text, state)
+        return self._notifier.notify(text, state, sticky=sticky)
 
     def _set_deploy_buttons_enabled(self, enabled: bool):
         for b in (getattr(self, "_deploy_btn", None), getattr(self, "_restore_btn", None),
@@ -7388,13 +7483,13 @@ class MainWindow(QMainWindow):
         if gen != self._modlist_meta_gen:
             return   # superseded — the game/profile switched mid-read
         (versions, installed, flags, categories, updates,
-         fomod, bain, missing_reqs) = payload
+         fomod, bain, missing_reqs, descriptions) = payload
         self._mod_categories = categories
         self._mod_updates = updates
         self._mod_fomod = fomod
         self._mod_bain = bain
         self._mod_missing_reqs = missing_reqs
-        self._modlist_model.set_meta(versions, installed, categories)
+        self._modlist_model.set_meta(versions, installed, categories, descriptions)
         self._modlist_model.set_flags(flags)
         # Prune any installed requirements from an open Missing Requirements panel
         # (this is the path the panel's own Install button lands on).
@@ -7494,7 +7589,7 @@ class MainWindow(QMainWindow):
                    and (subset is None or e.name in subset)]
         try:
             (_v, _i, flags, categories, updates, fomod, bain,
-             missing_reqs) = read_meta_for_entries(
+             missing_reqs, _desc) = read_meta_for_entries(
                 entries, staging, self._ignored_missing_reqs,
                 profile_dir=self._gs.profile_dir(),
                 is_bg3=(getattr(self._gs.game, "game_id", "") == "baldurs_gate_3"))
@@ -7630,6 +7725,12 @@ class MainWindow(QMainWindow):
         self._plugin_view.on_userlist_remove = self._on_userlist_remove
         self._plugin_view.on_show_cycle = self._open_plugin_cycle_tab
         print(f"[gui_qt] plugins: {len(rows)} entries")
+        # Last render step of first load — the plugin panel is now fully
+        # populated. Dismiss the startup splash here (dropped one event-loop
+        # turn later so this final dataChanged pass actually paints first).
+        if not self._splash_dismissed and self._splash is not None:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self._dismiss_splash)
 
     # ---- LOOT userlist (groups / rules / cycle / flag) ---------------------
     def _userlist_path(self):
@@ -8902,8 +9003,39 @@ def run() -> int:
 
     # Migrate/clean amethyst.ini BEFORE anything reads it (theme loader, GameState).
     # Wipes a pre-Qt ini (missing [meta] version=2) so everyone starts fresh.
-    from Utils.ui_config import ensure_ini_version, load_language
+    from Utils.ui_config import ensure_ini_version, load_language, load_ui_scale
     ensure_ini_version()
+
+    # Apply the user's saved UI scale. Qt only reads QT_SCALE_FACTOR once, at
+    # QApplication construction, so this must run before the QApplication below;
+    # a scale change from Settings persists the value and self-re-execs (which
+    # inherits this environment), so run() must be able to *update or clear*
+    # QT_SCALE_FACTOR on every launch — not just set it once.
+    #
+    # We must not clobber a QT_SCALE_FACTOR the user set in their own shell, yet
+    # we must fully own the one we set on a previous re-exec. A marker env var
+    # (_AMM_OWNS_SCALE) distinguishes the two: if it's present, the current
+    # QT_SCALE_FACTOR is ours from a prior launch and we may overwrite/clear it;
+    # if QT_SCALE_FACTOR is present WITHOUT the marker, it's the user's — leave
+    # it alone.
+    import os as _os
+    try:
+        _scale = load_ui_scale()
+        _ours = _os.environ.get("_AMM_OWNS_SCALE") == "1"
+        _user_set = "QT_SCALE_FACTOR" in _os.environ and not _ours
+        if not _user_set:
+            if abs(_scale - 1.0) > 0.01:
+                _os.environ["QT_SCALE_FACTOR"] = (
+                    f"{_scale:.4f}".rstrip("0").rstrip("."))
+                _os.environ["_AMM_OWNS_SCALE"] = "1"
+            else:
+                # 1.0 / auto→1.0: drop any scale we set on a previous launch so
+                # Qt's native per-monitor DPI handling takes over again.
+                _os.environ.pop("QT_SCALE_FACTOR", None)
+                _os.environ.pop("_AMM_OWNS_SCALE", None)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     _apply_app_identity(app)
     # Install UI translators before any widget is built (Qt only translates
@@ -8912,8 +9044,31 @@ def run() -> int:
     from gui_qt.i18n import install_translators
     install_translators(app, load_language())
     apply_theme(app)
-    win = MainWindow(app)
+
+    # Transparent, correctly-centred splash covering first load. Held open past
+    # show() and dismissed by MainWindow on the first completed conflict rebuild
+    # (with a watchdog fallback). Never let a splash failure block startup.
+    _splash = None
+    try:
+        from gui_qt.splash import show_splash
+        _splash = show_splash()
+    except Exception:
+        _splash = None
+
+    win = MainWindow(app, splash=_splash)
+    # Show the window immediately so its layout gets a real size (the deferred
+    # singleShot(0) setup in __init__ reads live widget heights), but at zero
+    # opacity so nothing is visibly rendered behind the splash while it loads.
+    # _dismiss_splash restores opacity once the plugin panel — the last render
+    # step — is populated, so the window appears fully drawn, not mid-render.
+    if _splash is not None:
+        win.setWindowOpacity(0.0)
     win.show()
+    if _splash is not None:
+        try:
+            _splash.raise_()
+        except Exception:
+            pass
     # Listen for NXM links handed off by future instances (after the window is
     # up so the received-link handler has a live UI to drive).
     win._start_nxm_ipc()

@@ -8,13 +8,13 @@ panel, headers, footers) stays live; closing the tab restores the modlist.
 
 Save-on-change: every control writes straight to amethyst.ini through the
 toolkit-free `Utils.ui_config` load_*/save_* helpers the moment it changes — there
-is no Save/Cancel button. A couple of settings (Font, Appearance) only take effect
-on restart and say so inline.
+is no Save/Cancel button. A few settings (Language, Theme, UI Scale) only take
+effect on restart and say so inline.
 
 A curated subset of the Tk Settings panel (gui/status_bar.py `SettingsPanel`):
-User Interface, Downloads & Collections, General, Appearance, Paths — plus a
-Manage Caches action. Theme colour pickers are intentionally omitted (Qt has no
-colour-override system yet).
+User Interface (incl. Theme + UI Scale), Downloads & Collections, General, Paths
+— plus a Manage Caches action. Theme colour pickers are intentionally omitted
+(Qt has no colour-override system yet).
 """
 
 from __future__ import annotations
@@ -70,7 +70,6 @@ class SettingsView(QWidget):
         self._build_user_interface()
         self._build_downloads()
         self._build_general()
-        self._build_appearance()
         self._build_paths()
         self._v.addStretch(1)
 
@@ -224,9 +223,11 @@ class SettingsView(QWidget):
 
     # ---- sections ---------------------------------------------------------
     def _build_user_interface(self):
-        # NB: no UI Scale / Font here — Qt scales via the OS/compositor natively
-        # (unlike Tk/CustomTkinter, which had to reimplement HiDPI), so a manual
-        # scale slider + font picker would be dead controls.
+        # Language, Theme and UI Scale are all applied once at startup (Qt reads
+        # QT_SCALE_FACTOR / the palette / the translator only at launch), so each
+        # change persists to amethyst.ini and offers a self-restart. They are
+        # grouped together with a single shared restart note beneath them; the
+        # Hide BSA conflicts toggle (which applies live) sits below that.
         g = self._section(self.tr("User Interface"))
         # Language row: combo + a "Sync language files" button that pulls the
         # latest translations from the Resources branch on demand.
@@ -244,16 +245,147 @@ class SettingsView(QWidget):
         lang_wrap.addStretch(1)
         lang_holder = QWidget(); lang_holder.setLayout(lang_wrap)
         g.addWidget(lang_holder, row, 1)
+        self._populate_language_combo()
+
+        self._build_theme(g)
+        self._build_ui_scale(g)
+
+        # Single shared restart note beneath Language / Theme / UI Scale.
         note = QLabel(self.tr("Changes take effect after restart."))
         note.setObjectName("RestartNote")
         g.addWidget(note, self._next_row(g), 0, 1, 2)
-        self._populate_language_combo()
+
         self._checkbox(
             g, self.tr("Hide BSA conflicts"),
             uc.load_hide_bsa_conflicts, uc.save_hide_bsa_conflicts,
             help=self.tr("Hide BSA/BA2 archive conflict flags (also skips that "
                  "conflict scan for a small speed-up)."),
             on_changed=lambda _v: self._rebuild_conflicts())
+
+        # Read live by the modlist view on each hover, so persisting the value
+        # is enough — no rebuild/refresh needed.
+        self._checkbox(
+            g, self.tr("Show mod description tooltips"),
+            uc.load_show_summary_tooltips, uc.save_show_summary_tooltips,
+            help=self.tr("Show a mod's Nexus description as a tooltip when you "
+                 "hover over its name in the mod list."))
+
+    def _build_theme(self, g):
+        """Theme picker (formerly its own Appearance section). Takes effect on
+        restart, like Language / UI Scale — selecting a new theme persists it and
+        offers a self-restart via the window's theme restart prompt."""
+        try:
+            from Utils.themes import load_display_names
+            themes = load_display_names() or {"dark": "Dark"}
+        except Exception:
+            themes = {"dark": "Dark", "light": "Light"}
+        try:
+            current = uc.get_appearance_mode()
+        except Exception:
+            current = "dark"
+        pairs = [(disp, tid) for tid, disp in themes.items()]
+        self._combo(g, self.tr("Theme"), pairs, current,
+                    self._on_theme_changed)
+
+    def _on_theme_changed(self, tid: str):
+        """Persist the chosen theme, then offer a restart (same pattern as UI
+        scale / language) so the new palette applies on a fresh launch."""
+        self._safe_save(uc.save_appearance_mode, tid)
+        self._prompt_restart("theme")
+
+    def _build_ui_scale(self, g):
+        """Add the UI Scale row: an Auto checkbox + a 50–200% slider.
+
+        When Auto is ticked the slider is disabled and the saved value is the
+        string 'auto' (resolved to the detected HiDPI scale at load time);
+        unticking enables the slider and saves a float multiplier. Either edit
+        offers a self-restart so the new QT_SCALE_FACTOR takes effect.
+        """
+        current = uc.get_ui_scale()          # float, already loaded at startup
+        is_auto = uc.load_ui_scale_is_auto()
+        pct = int(round(max(0.5, min(3.0, current)) * 100))
+
+        # Percent slider. Persisting + the restart prompt fire only when the
+        # user finishes the gesture (sliderReleased / keyboard / click), never
+        # on every 1% valueChanged tick while dragging — otherwise the restart
+        # overlay would reappear on every intermediate value. The value label
+        # still tracks live via valueChanged. Pass a no-op change cb to _slider
+        # so it doesn't wire its own per-tick persist.
+        self._scale_slider, self._scale_val_lbl = self._slider(
+            g, self.tr("UI Scale"), 50, 200, pct, lambda _v: None)
+        self._scale_slider.setSingleStep(5)
+        self._scale_slider.setPageStep(10)
+        self._scale_val_lbl.setText(f"{pct}%")
+        # valueChanged fires on every tick — while dragging (isSliderDown()) it
+        # only updates the label; a change that lands with the handle NOT held
+        # down (arrow keys, groove click, page step) commits immediately.
+        # sliderReleased then commits the final value at the end of a drag.
+        self._scale_slider.valueChanged.connect(self._on_scale_value_changed)
+        self._scale_slider.sliderReleased.connect(self._commit_ui_scale)
+        self._scale_slider.setEnabled(not is_auto)
+
+        # Auto checkbox — sits below the slider; ticking it disables the slider.
+        self._scale_auto_cb = QCheckBox(self.tr("Auto (match display)"))
+        self._scale_auto_cb.setChecked(is_auto)
+        self._scale_auto_cb.toggled.connect(self._on_ui_scale_auto_toggled)
+        g.addWidget(self._scale_auto_cb, self._next_row(g), 0, 1, 2)
+
+        self._add_help(
+            g, self.tr("Make the whole interface bigger or smaller. "
+               "Changes take effect after a restart."))
+
+    def _on_ui_scale_auto_toggled(self, on: bool):
+        self._scale_slider.setEnabled(not on)
+        if on:
+            self._safe_save(uc.save_ui_scale, "auto")
+        else:
+            self._safe_save(uc.save_ui_scale, self._scale_slider.value() / 100.0)
+        self._prompt_scale_restart()
+
+    def _on_scale_value_changed(self, pct: int):
+        """Live label update on every tick. Commit immediately only when the
+        handle is NOT being dragged (keyboard/click); a drag commits on release
+        via sliderReleased, so we don't prompt on every intermediate value."""
+        self._scale_val_lbl.setText(f"{pct}%")
+        if not self._scale_slider.isSliderDown():
+            self._commit_ui_scale()
+
+    def _commit_ui_scale(self):
+        """Persist the current slider value and offer a restart. Called when the
+        user finishes changing the slider (release / click / key), so the
+        restart prompt appears once per gesture, not per 1% tick."""
+        # Only persist when the user is driving the slider (Auto off).
+        if getattr(self, "_scale_auto_cb", None) is not None \
+                and self._scale_auto_cb.isChecked():
+            return
+        pct = self._scale_slider.value()
+        self._safe_save(uc.save_ui_scale, pct / 100.0)
+        self._prompt_scale_restart()
+
+    def _prompt_scale_restart(self):
+        self._prompt_restart("scale")
+
+    def _prompt_restart(self, kind: str):
+        """Offer a self-restart so a startup-only setting (UI scale / theme /
+        language) applies. Reuses the window's matching restart flow, falling
+        back to the UI-scale prompt (any of them just re-execs the app)."""
+        win = self._window
+        by_kind = {
+            "scale": "_prompt_ui_scale_restart",
+            "theme": "_prompt_theme_restart",
+            "language": "_prompt_language_restart",
+        }
+        names = [by_kind.get(kind, "")]
+        names += ["_prompt_ui_scale_restart", "_prompt_theme_restart",
+                  "_prompt_language_restart"]
+        for name in names:
+            prompt = getattr(win, name, None)
+            if callable(prompt):
+                try:
+                    prompt()
+                    return
+                except Exception:
+                    pass
 
     def _populate_language_combo(self):
         """(Re)fill the Language combo from i18n.available_languages(), storing
@@ -276,9 +408,15 @@ class SettingsView(QWidget):
                 sel = i
         combo.setCurrentIndex(sel)
         combo.currentIndexChanged.connect(
-            lambda i: self._safe_save(uc.save_language, combo.itemData(i)))
+            lambda i: self._on_language_changed(combo.itemData(i)))
         self._lang_combo_connected = True
         combo.blockSignals(False)
+
+    def _on_language_changed(self, code):
+        """Persist the chosen language, then offer a restart (same pattern as UI
+        scale / theme) so the new translator applies on a fresh launch."""
+        self._safe_save(uc.save_language, code)
+        self._prompt_restart("language")
 
     def refresh_language_options(self):
         """Called when a background sync adds new .qm files — refresh the picker
@@ -367,21 +505,6 @@ class SettingsView(QWidget):
             help=self.tr("Also offer beta and release-candidate app builds when checking "
                  "for updates."),
             on_changed=self._on_prerelease_toggle)
-
-    def _build_appearance(self):
-        g = self._section(self.tr("Appearance"))
-        try:
-            from Utils.themes import load_display_names
-            themes = load_display_names() or {"dark": "Dark"}
-        except Exception:
-            themes = {"dark": "Dark", "light": "Light"}
-        try:
-            current = uc.get_appearance_mode()
-        except Exception:
-            current = "dark"
-        pairs = [(disp, tid) for tid, disp in themes.items()]
-        self._combo(g, self.tr("Appearance"), pairs, current,
-                    uc.save_appearance_mode, restart_note=True)
 
     def _build_paths(self):
         g = self._section(self.tr("Paths"))

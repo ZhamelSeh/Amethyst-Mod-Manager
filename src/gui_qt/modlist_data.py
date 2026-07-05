@@ -59,14 +59,15 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
                           is_bg3: bool = False):
     """Return a MetaInfo-ish tuple keyed by mod name.
 
-    versions[name]   -> version string ("" if none)
-    installed[name]  -> short date string ("" if none)
-    flags[name]      -> int bitmask of FLAG_* above
-    categories[name] -> Nexus category display name ("" if none)
-    updates          -> set of mod names with a pending update
-    fomod            -> set of mod names installed via FOMOD (meta.is_fomod)
-    bain             -> set of mod names installed via BAIN (meta.is_bain)
-    missing_reqs     -> set of mod names with un-ignored missing requirements
+    versions[name]     -> version string ("" if none)
+    installed[name]    -> short date string ("" if none)
+    flags[name]        -> int bitmask of FLAG_* above
+    categories[name]   -> Nexus category display name ("" if none)
+    updates            -> set of mod names with a pending update
+    fomod              -> set of mod names installed via FOMOD (meta.is_fomod)
+    bain               -> set of mod names installed via BAIN (meta.is_bain)
+    missing_reqs       -> set of mod names with un-ignored missing requirements
+    descriptions[name] -> Nexus summary text for the name-column hover tooltip
 
     *ignored_reqs* — requirement names the user has dismissed (per-profile); a
     mod is only flagged if it still has missing requirements outside this set.
@@ -81,6 +82,7 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
     fomod: set[str] = set()
     bain: set[str] = set()
     missing_reqs: set[str] = set()
+    descriptions: dict[str, str] = {}
     # Requirement resolution is a two-pass job (Tk parity): collect every
     # installed Nexus mod_id first, then flag a mod only for requirement ids
     # that aren't present. Keyed on id, not name, so locally-seeded id-only
@@ -92,7 +94,7 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
         from Nexus.nexus_meta import read_meta
     except Exception:
         return (versions, installed, flags, categories, updates, fomod, bain,
-                missing_reqs)
+                missing_reqs, descriptions)
 
     # Per-profile user notes (Note flag) — one read for the whole list.
     notes: dict[str, str] = {}
@@ -126,6 +128,10 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
 
         if meta.category_name:
             categories[e.name] = meta.category_name
+
+        desc = (getattr(meta, "description", "") or "").strip()
+        if desc:
+            descriptions[e.name] = desc
 
         if getattr(meta, "is_fomod", False):
             fomod.add(e.name)
@@ -193,7 +199,7 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
             flags[name] = flags.get(name, 0) | FLAG_MISSING_REQS
 
     return (versions, installed, flags, categories, updates, fomod, bain,
-            missing_reqs)
+            missing_reqs, descriptions)
 
 
 # ---- mod folder sizes (Size column) — ported from gui/modlist_panel.py --------

@@ -519,6 +519,25 @@ def get_ui_scale() -> float:
     return _ui_scale
 
 
+def load_ui_scale_is_auto() -> bool:
+    """Return True when [ui] scale is literally 'auto' (or unset → auto default).
+
+    load_ui_scale() resolves 'auto' into a concrete float, so the Settings UI
+    needs this to know whether to show the Auto checkbox as ticked. A missing
+    file / section / key counts as auto (that is the first-run default written
+    by load_ui_scale)."""
+    path = get_ui_config_path()
+    if not path.is_file():
+        return True
+    try:
+        parser = _new_parser()
+        parser.read(path)
+        raw = parser.get(_INI_SECTION, _INI_OPTION, fallback=_INI_AUTO).strip().lower()
+        return raw == _INI_AUTO
+    except Exception:
+        return True
+
+
 def load_font_family() -> str:
     """Load font_family from INI. Returns the value, or the default if unset."""
     global _font_family

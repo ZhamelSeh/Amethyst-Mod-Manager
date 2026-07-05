@@ -1,16 +1,24 @@
 - v2.0.0
 ## UI Rework
-- Complete rework of the user interface from scratch
+- Complete rework of the user interface from scratch in QT
 - Overlays now open as tabs that can be switched between and undocked
-- Yes/no confirmations, text inputs, the colour picker and the download locations window now open as borderless overlays centered in the app instead of separate OS windows
 - Added localisation support and several languages (Translated via the deepl api)
 - Better theme support
+- Hovering over progress bars or notifications will hide them so buttons don't get blocked by them
 ## Other things
-- Removed the generate separators function, Personally I didn't find it that usefull and was wasted splashscreen
-- Removed the bepinex wizard as this is just a mod that can be installed normally
+- Removed the generate separators function, Personally I didn't find it that useful and was wasted screenspace
+- Removed the bepinex wizard as this is just a mod that can be installed normally like any other.
 - Added a favourites menu for wizard tools
 - plugins.txt is now copied instead of symlinked to prevent cases where a game could not read the symlinked version
 - Added an option to change the casing of plugins.txt
+- Installed games now show at the top of the add game menu by default
+- Optional mods for collections are now selected before pressing install instead of after
+- Reworked the filemap rebuild process, Toggling/moving mods on large modlists should be faster and freeze the UI less
+- Appended collections can now be removed, The collection browser will show any collections appended to the current profile
+- Logging in via Nexus sso now shows a custom authorisation screen in the browser instead of flashbanging the user with a white background 
+- Removed the Archive tab. Clicking a bsa/ba2 file in the mod files tab will now display it's content
+- Skyrim AE cc plugins are now added to plugins.txt
+- Added Pragmata support
 
 - v1.3.13
 - Runtime generated files that appear in a games root folder are now rescued and sent to the profiles root folder (the root folder separator)

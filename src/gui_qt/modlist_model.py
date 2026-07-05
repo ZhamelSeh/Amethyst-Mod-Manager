@@ -98,6 +98,9 @@ class ModListModel(QAbstractTableModel):
         self._versions = versions or {}
         self._installed = installed or {}
         self._categories: dict[str, str] = {}
+        # Nexus summary per mod — backs the name-column hover tooltip only
+        # (no column of its own). Populated with the other meta on reload.
+        self._descriptions: dict[str, str] = {}
         # Formatted mod folder sizes ("12 MB"). Computed lazily — only when the
         # Size column is visible — so a default-hidden Size costs no disk walk.
         self._sizes: dict[str, str] = {}
@@ -240,14 +243,18 @@ class ModListModel(QAbstractTableModel):
             self._rebuild_display()
 
     def set_meta(self, versions: dict[str, str], installed: dict[str, str],
-                 categories: dict[str, str]) -> None:
+                 categories: dict[str, str],
+                 descriptions: "dict[str, str] | None" = None) -> None:
         """Set the meta.ini-derived per-mod dicts (Version / Installed /
         Category columns), repaint those columns, and re-sort if the active
         sort reads them. The reload pushes entries first and applies the
-        meta async (reading one ini per mod is disk work)."""
+        meta async (reading one ini per mod is disk work).
+
+        *descriptions* backs the name-column hover tooltip (no column repaint)."""
         self._versions = versions or {}
         self._installed = installed or {}
         self._categories = categories or {}
+        self._descriptions = descriptions or {}
         if self._entries:
             self.dataChanged.emit(
                 self.index(0, COL_CATEGORY),
@@ -606,6 +613,10 @@ class ModListModel(QAbstractTableModel):
 
     def entry(self, row: int) -> ModEntry:
         return self._entries[row]
+
+    def description(self, name: str) -> str:
+        """Nexus summary for *name* (name-column hover tooltip), or "" if none."""
+        return self._descriptions.get(name, "")
 
     # ---- separators -------------------------------------------------------
     def set_separator_state(self, collapsed: set[str], locks: dict[str, bool],

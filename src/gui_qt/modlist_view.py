@@ -6,11 +6,11 @@ TkStyleHeader owns column resizing; column state persists via column_state.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QCoreApplication
+from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QCoreApplication, QEvent
 from PySide6.QtGui import QPainter, QColor, QPen, QAction
 from PySide6.QtWidgets import (
     QTreeView, QAbstractItemView, QHeaderView, QToolButton, QMenu,
-    QStyleOptionViewItem,
+    QStyleOptionViewItem, QToolTip,
 )
 
 from gui_qt.modlist_model import (
@@ -844,6 +844,54 @@ class ModListView(QTreeView):
                 return
         self._press_row = -1
         super().mouseReleaseEvent(event)
+
+    # Tk parity: hovering a mod's Name cell shows its Nexus summary tooltip.
+    # Width-capped (Qt doesn't word-wrap plain-text tooltips, so a long
+    # description is char-wrapped to keep the tip from stretching across the
+    # screen) and length-capped. Gated by the show_summary_tooltips setting.
+    _TOOLTIP_WRAP_CHARS = 60
+    _TOOLTIP_MAX_CHARS = 500
+
+    def viewportEvent(self, event):
+        # Handle the Name-column description tooltip ourselves; anything else
+        # (flags / conflicts cell tooltips) falls through to the delegate's
+        # helpEvent via the base implementation.
+        if event.type() == QEvent.ToolTip and self._name_tooltip(event):
+            return True
+        return super().viewportEvent(event)
+
+    def _name_tooltip(self, help_event) -> bool:
+        """Show the hovered mod's description tooltip. Returns True if shown."""
+        try:
+            from Utils.ui_config import load_show_summary_tooltips
+            if not load_show_summary_tooltips():
+                return False
+        except Exception:
+            return False
+        idx = self.indexAt(help_event.pos())
+        if not idx.isValid() or idx.column() != COL_NAME:
+            return False
+        m = self.model()
+        row = idx.row()
+        if not (0 <= row < m.rowCount()):
+            return False
+        entry = m.entry(row)
+        if entry is None or entry.is_separator:
+            return False
+        desc = m.description(entry.name)
+        if not desc:
+            return False
+        if len(desc) > self._TOOLTIP_MAX_CHARS:
+            desc = desc[:self._TOOLTIP_MAX_CHARS].rstrip() + "…"
+        import textwrap
+        wrapped = "\n".join(
+            textwrap.fill(line, width=self._TOOLTIP_WRAP_CHARS,
+                          break_long_words=False, break_on_hyphens=False)
+            for line in desc.splitlines()) or desc
+        # Pass the name-cell rect so Qt hides the tip once the cursor leaves it.
+        QToolTip.showText(help_event.globalPos(), wrapped, self,
+                          self.visualRect(idx))
+        return True
 
     def _handle_separator_click(self, row: int, pos) -> bool:
         """If *row* is a real (collapsible) separator, toggle its lock (when the

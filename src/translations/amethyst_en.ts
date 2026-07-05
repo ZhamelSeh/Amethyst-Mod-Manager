@@ -2569,8 +2569,24 @@ The original exe is kept as {0}.</translation>
         <translation>Restart now</translation>
     </message>
     <message>
+        <source>Restart to change UI scale?</source>
+        <translation>Restart to change UI scale?</translation>
+    </message>
+    <message>
+        <source>The UI scale change takes effect after a restart. Restart now?</source>
+        <translation>The UI scale change takes effect after a restart. Restart now?</translation>
+    </message>
+    <message>
         <source>Later</source>
         <translation>Later</translation>
+    </message>
+    <message>
+        <source>Restart to change theme?</source>
+        <translation>Restart to change theme?</translation>
+    </message>
+    <message>
+        <source>The theme change takes effect after a restart. Restart now?</source>
+        <translation>The theme change takes effect after a restart. Restart now?</translation>
     </message>
     <message>
         <source>Syncing language files…</source>
@@ -5488,6 +5504,30 @@ Please restart the wizard and install Script Merger first.</translation>
         <translation>Hide BSA/BA2 archive conflict flags (also skips that conflict scan for a small speed-up).</translation>
     </message>
     <message>
+        <source>Theme</source>
+        <translation>Theme</translation>
+    </message>
+    <message>
+        <source>Auto (match display)</source>
+        <translation>Auto (match display)</translation>
+    </message>
+    <message>
+        <source>UI Scale</source>
+        <translation>UI Scale</translation>
+    </message>
+    <message>
+        <source>Show mod description tooltips</source>
+        <translation>Show mod description tooltips</translation>
+    </message>
+    <message>
+        <source>Show a mod's Nexus description as a tooltip when you hover over its name in the mod list.</source>
+        <translation>Show a mod's Nexus description as a tooltip when you hover over its name in the mod list.</translation>
+    </message>
+    <message>
+        <source>Make the whole interface bigger or smaller. Changes take effect after a restart.</source>
+        <translation>Make the whole interface bigger or smaller. Changes take effect after a restart.</translation>
+    </message>
+    <message>
         <source>Downloads &amp; Collections</source>
         <translation>Downloads &amp; Collections</translation>
     </message>
@@ -5570,10 +5610,6 @@ Please restart the wizard and install Script Merger first.</translation>
     <message>
         <source>Also offer beta and release-candidate app builds when checking for updates.</source>
         <translation>Also offer beta and release-candidate app builds when checking for updates.</translation>
-    </message>
-    <message>
-        <source>Appearance</source>
-        <translation>Appearance</translation>
     </message>
     <message>
         <source>Paths</source>

@@ -642,8 +642,22 @@ def save_plugins(game, profile: str, rows: list[PluginRow]) -> None:
         return
     star = getattr(game, "plugins_use_star_prefix", True)
     include_vanilla = bool(getattr(game, "plugins_include_vanilla", False))
+    # Creation Club plugins are "vanilla" (they're pinned/greyed like base+DLC),
+    # but unlike base-game masters they DO need to appear in plugins.txt for a
+    # correct load order — MO2 writes them the same way. When the game opts into
+    # plugins_include_cc, keep CC vanilla rows in plugins.txt even though the
+    # rest of the vanilla set is excluded.
+    include_cc = bool(getattr(game, "plugins_include_cc", include_vanilla))
+    cc_lower: set[str] = set()
+    if include_cc and not include_vanilla:
+        try:
+            from Utils.game_helpers import _cc_plugins_for_game
+            cc_lower = set(_cc_plugins_for_game(game).keys())
+        except Exception:
+            cc_lower = set()
     mod_entries = [PluginEntry(r.name, r.enabled) for r in rows
-                   if include_vanilla or not r.vanilla]
+                   if include_vanilla or not r.vanilla
+                   or r.name.lower() in cc_lower]
     write_plugins(p, mod_entries, star_prefix=star)
     full = [PluginEntry(r.name, True) for r in rows]
     write_loadorder(p.parent / "loadorder.txt", full)

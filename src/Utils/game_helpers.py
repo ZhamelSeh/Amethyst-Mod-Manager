@@ -94,6 +94,15 @@ def _vanilla_plugins_for_game(game) -> dict[str, str]:
         if name.lower() in present:
             result.setdefault(name.lower(), name)
 
+    for low, orig in _read_ccc_manifest(game, ccc_name, present).items():
+        result.setdefault(low, orig)
+    return result
+
+
+def _read_ccc_manifest(game, ccc_name: str, present: "set[str]") -> dict[str, str]:
+    """Return {lower: original} for CC plugins listed in the .ccc manifest that
+    are present on disk. *present* is the set of lowercased filenames in Data/."""
+    result: dict[str, str] = {}
     if not ccc_name:
         return result
     game_path = game.get_game_path()
@@ -110,6 +119,28 @@ def _vanilla_plugins_for_game(game) -> dict[str, str]:
     except OSError:
         pass
     return result
+
+
+def _cc_plugins_for_game(game) -> dict[str, str]:
+    """Return {lowercase_name: original_name} for Creation Club plugins only.
+
+    These are the plugins listed in the game's .ccc manifest AND present in the
+    Data folder. Unlike base-game/DLC masters, active CC plugins need to be
+    written into plugins.txt for a correct load order (see plugins_include_cc).
+    """
+    ccc_name = getattr(game, "vanilla_ccc_filename", None)
+    if not ccc_name:
+        return {}
+    data_dir = game.get_vanilla_plugins_path() if hasattr(game, "get_vanilla_plugins_path") else None
+    present: set[str] = set()
+    if data_dir and data_dir.is_dir():
+        try:
+            present = {entry.name.lower() for entry in data_dir.iterdir() if entry.is_file()}
+        except OSError:
+            pass
+    if not present:
+        return {}
+    return _read_ccc_manifest(game, ccc_name, present)
 
 
 def _load_games() -> list[str]:

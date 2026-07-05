@@ -1569,6 +1569,11 @@ def _write_collection_plugins(game, profile_dir, plugins_path, collection_schema
             vanilla_map = _vanilla_plugins_for_game(game)
             plugins_include_vanilla = getattr(game, "plugins_include_vanilla", False)
             vanilla_lower = set() if plugins_include_vanilla else set(vanilla_map.keys())
+            # CC plugins are "vanilla" but must still be written to plugins.txt for
+            # a correct load order (same carve-out as plugin_state.save_plugins).
+            if not plugins_include_vanilla and getattr(game, "plugins_include_cc", plugins_include_vanilla):
+                from Utils.game_helpers import _cc_plugins_for_game
+                vanilla_lower -= set(_cc_plugins_for_game(game).keys())
             # Recover plugins staged by the collection's mods but absent from the
             # manifest's ``plugins`` array (FOMOD-conditional / unlisted plugins).
             # These are read from the filemap built in Step 3c so the LOOT sort

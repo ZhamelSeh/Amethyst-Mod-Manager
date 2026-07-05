@@ -1820,6 +1820,8 @@ class Fallout_4(Fallout_3):
     _archive_list_needs_mod_bsas = False
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
+    # CC plugins (Fallout4.ccc) must be written into plugins.txt for load order.
+    plugins_include_cc = True
     supports_esl_flag = True
     vanilla_plugins = [
         "Fallout4.esm",
@@ -2395,6 +2397,8 @@ class Starfield(Fallout_3):
 
     plugins_use_star_prefix = True
     plugins_include_vanilla = False
+    # CC plugins (Starfield.ccc) must be written into plugins.txt for load order.
+    plugins_include_cc = True
     supports_esl_flag = True
     vanilla_plugins = [
         "Starfield.esm", "Constellation.esm", "ShatteredSpace.esm",

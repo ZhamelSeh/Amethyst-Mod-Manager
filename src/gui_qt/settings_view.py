@@ -265,10 +265,9 @@ class SettingsView(QWidget):
             return
         combo.blockSignals(True)
         current = uc.load_language()
-        try:
+        if getattr(self, "_lang_combo_connected", False):
             combo.currentIndexChanged.disconnect()
-        except (TypeError, RuntimeError):
-            pass
+            self._lang_combo_connected = False
         combo.clear()
         sel = 0
         for i, (disp, code) in enumerate(available_languages()):
@@ -278,6 +277,7 @@ class SettingsView(QWidget):
         combo.setCurrentIndex(sel)
         combo.currentIndexChanged.connect(
             lambda i: self._safe_save(uc.save_language, combo.itemData(i)))
+        self._lang_combo_connected = True
         combo.blockSignals(False)
 
     def refresh_language_options(self):

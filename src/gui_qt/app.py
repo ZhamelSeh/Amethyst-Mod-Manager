@@ -4111,9 +4111,19 @@ class MainWindow(QMainWindow):
             key="restore_backup")
 
     def _on_backup_restored(self):
-        """A backup was restored — refresh both panels (backups cover modlist
-        AND plugins)."""
-        self._reload_modlist()
+        """A backup was restored — sync the modlist with the mods folder so any
+        mods in staging but absent from the restored modlist.txt show up, then
+        refresh both panels (backups cover modlist AND plugins)."""
+        from Utils.modlist import sync_modlist_with_mods_folder
+        self._reassert_profile_paths()
+        ml = self._gs.modlist_path()
+        staging = self._gs.staging_dir()
+        if ml is not None and staging is not None:
+            try:
+                sync_modlist_with_mods_folder(ml, staging)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[gui_qt] modlist sync failed: {exc}", flush=True)
+        self._reload_modlist(rescan_index=True, preserve_overlays=True)
         self._reload_plugins()
 
     def _close_restore_backup_tab(self):

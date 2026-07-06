@@ -316,15 +316,16 @@ def _select_all(win):
 
     if sep_row >= 0:
         start = sep_row + 1
-        end = m.rowCount()
-        for i in range(start, m.rowCount()):
-            ei = m.entry(i)
-            if ei.is_separator and ei.name not in _PINNED_NAMES:
-                end = i
-                break
     else:
-        # No visible separator scope: select every visible mod list-wide.
-        start, end = 0, m.rowCount()
+        # No owning separator: the anchor is in the implicit group of mods
+        # above the first separator, so scope to the top of the list.
+        start = 0
+    end = m.rowCount()
+    for i in range(start, m.rowCount()):
+        ei = m.entry(i)
+        if ei.is_separator and ei.name not in _PINNED_NAMES:
+            end = i
+            break
 
     rows = [r for r in range(start, end)
             if r in visible

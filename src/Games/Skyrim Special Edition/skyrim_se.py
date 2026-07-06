@@ -274,6 +274,26 @@ class SkyrimSE(Fallout_3):
                 dialog_class_path="wizards.sseedit.SSEEditQACWizard",
             ),
             WizardTool(
+                id="run_xedit_discord_skyrimse",
+                label="Run xEdit (Discord version)",
+                description="Deploy mods and run xTESEdit.exe -SSE from the latest "
+                            "xEdit build, released through the xEdit Discord.",
+                dialog_class_path="wizards.sseedit.XEditDiscordWizard",
+                extra={"xedit_exe": "xTESEdit.exe", "display_name": "xEdit",
+                       "app_dir": "xEdit (Discord)", "discord": True,
+                       "discord_mode": "SSE"},
+            ),
+            WizardTool(
+                id="run_xedit_discord_qac_skyrimse",
+                label="Run xEdit QAC (Discord version)",
+                description="Deploy mods and run xTESEdit.exe -SSE -quickautoclean "
+                            "from the latest xEdit build, released through the xEdit Discord.",
+                dialog_class_path="wizards.sseedit.XEditDiscordQACWizard",
+                extra={"xedit_exe": "xTESEdit.exe", "display_name": "xEdit",
+                       "app_dir": "xEdit (Discord)", "discord": True,
+                       "discord_mode": "SSE"},
+            ),
+            WizardTool(
                 id="run_creationkit_skyrimse",
                 label="Run Creation Kit",
                 description="Install Creation Kit Platform Extended, deploy mods, and run CreationKit.exe.",

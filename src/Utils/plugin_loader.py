@@ -311,6 +311,12 @@ def _tool_exe_names(tool: WizardTool) -> set[str]:
         if path.endswith("QACWizard") and base.lower().endswith(".exe"):
             base = base[: -len(".exe")] + "QuickAutoClean.exe"
         return {base.lower()}
+    if path in ("wizards.sseedit.XEditDiscordWizard",
+                "wizards.sseedit.XEditDiscordQACWizard"):
+        # The Discord build's QAC uses the same launcher (a -quickautoclean
+        # switch), so both wizard classes map to the plain exe name.
+        base = (tool.extra.get("xedit_exe") or "xTESEdit.exe")
+        return {base.lower()}
     return set()
 
 

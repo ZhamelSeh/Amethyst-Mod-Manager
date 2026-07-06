@@ -68,27 +68,37 @@ class XEditView(QWidget):
     def __init__(self, game: "BaseGame", log_fn=None, on_close=None, ctx=None,
                  *, xedit_exe: str | None = None, nexus_url: str | None = None,
                  app_dir: str | None = None, display_name: str | None = None,
-                 qac: bool = False, **_extra):
+                 qac: bool = False, discord: bool = False,
+                 discord_mode: str | None = None, **_extra):
         super().__init__()
         self._game = game
         self._log = log_fn or (lambda _m: None)
         self._on_close_cb = on_close or (lambda: None)
         self._ctx = ctx
         self._qac = qac
+        self._discord = discord
+        # Game-mode arg the multi-game Discord launcher needs (e.g. "SSE",
+        # "FO4", "SF1") — it refuses to start without one.
+        self._discord_mode = discord_mode
 
         # Resolve per-game config from kwargs, falling back to SSEEdit
         # defaults (mirrors the Tk wizard's __init__).
         base_exe = xedit_exe or _EXE_NAME
-        self._exe_name = (
-            base_exe[: -len(".exe")] + "QuickAutoClean.exe"
-            if qac and base_exe.lower().endswith(".exe")
-            else base_exe
-        )
+        # The Discord build has no separate QuickAutoClean exe — QAC
+        # is the same launcher with a ``-quickautoclean`` command-line arg (added
+        # in _start_run).  The Nexus builds ship a distinct <build>QuickAutoClean.exe.
+        if qac and not discord and base_exe.lower().endswith(".exe"):
+            self._exe_name = base_exe[: -len(".exe")] + "QuickAutoClean.exe"
+        else:
+            self._exe_name = base_exe
         self._nexus_url = nexus_url or _NEXUS_URL
         self._app_dir = app_dir or base_exe.removesuffix(".exe")
         short = display_name or base_exe.removesuffix(".exe")
         self._xedit_name = short  # build name w/o QAC, e.g. "FO4Edit"
         self._name = short + (" QAC" if qac else "")
+        # Discord archives are named "xEdit <version>.7z" regardless of the
+        # launcher inside, so match on the generic "xedit" keyword.
+        self._archive_keyword = "xedit" if discord else self._xedit_name.lower()
 
         self._exe = tool_exe_path(game, self._exe_name, self._app_dir)
         self._archive_path: Path | None = None
@@ -190,6 +200,8 @@ class XEditView(QWidget):
 
     # ---- step 1: download -----------------------------------------------------
     def _build_step_download(self) -> QWidget:
+        if self._discord:
+            return self._build_step_download_discord()
         page, lay = self._step_page(self.tr("Step 1: Download {0}").format(self._xedit_name))
         note = QLabel(
             self.tr('Click the button below to open the {0} page on Nexus Mods.\n\nDownload the archive manually (do NOT use the Mod Manager download button), then click Next.').format(self._xedit_name))
@@ -207,6 +219,31 @@ class XEditView(QWidget):
             "QPushButton:hover{background:#e5a04a;}")
         open_btn.clicked.connect(self._open_download_page)
         lay.addWidget(open_btn, 0, Qt.AlignHCenter)
+
+        lay.addStretch(1)
+        nxt = self._accent_btn(self.tr("Next →"))
+        nxt.clicked.connect(lambda: self._goto_step(_PG_LOCATE))
+        lay.addWidget(nxt, 0, Qt.AlignHCenter)
+        return page
+
+    def _build_step_download_discord(self) -> QWidget:
+        page, lay = self._step_page(self.tr("Step 1: Download xEdit (Discord version)"))
+        note = QLabel(self.tr(
+            'The latest official xEdit is now released through the xEdit '
+            'Discord — a single multi-game download that is NOT on Nexus Mods.\n\n'
+            'To get it:\n'
+            '  1. Find and join the xEdit Discord server (search for it '
+            'yourself — we do not link it here as the invite can change).\n'
+            '  2. Download the latest xEdit archive (e.g. "xEdit 4.1.5q.7z") '
+            'from the #xedit-builds channel.\n'
+            '  3. Leave the archive in your Downloads folder and click Next.\n\n'
+            'It contains xFOEdit (Fallout), xSFEdit (Starfield) and xTESEdit '
+            '(Elder Scrolls); the wizard runs the one for this game '
+            'automatically.'))
+        note.setAlignment(Qt.AlignHCenter)
+        note.setWordWrap(True)
+        note.setStyleSheet(self._dim)
+        lay.addWidget(note)
 
         lay.addStretch(1)
         nxt = self._accent_btn(self.tr("Next →"))
@@ -241,7 +278,7 @@ class XEditView(QWidget):
 
     def _scan_downloads(self):
         from Utils.wizard_archives import find_archive, get_downloads_dir
-        found = find_archive(get_downloads_dir(), [self._xedit_name.lower()])
+        found = find_archive(get_downloads_dir(), [self._archive_keyword])
         if found:
             self._archive_path = found
             self._set_status(self._locate_status, self.tr("Found: {0}").format(found.name), _GREEN)
@@ -484,6 +521,15 @@ class XEditView(QWidget):
 
                 pfx = compat_data / "pfx"
                 data_arg = f'-d:{to_wine_path(game_path / "Data", pfx)}'
+                extra_args = [data_arg]
+                # The Discord build's QuickAutoClean is the same launcher with a
+                # -quickautoclean switch (the Nexus builds ship a separate exe).
+                if self._qac and self._discord:
+                    extra_args.insert(0, "-quickautoclean")
+                # The multi-game Discord launcher needs a game-mode arg (e.g.
+                # -SSE / -FO4 / -SF1) to pick the game — it errors out without it.
+                if self._discord and self._discord_mode:
+                    extra_args.insert(0, f"-{self._discord_mode}")
 
                 # Registry seed + plugins.txt / My Games links + viewsettings
                 # seed + WinXP compat flag (see Utils.xedit_tools).
@@ -491,10 +537,11 @@ class XEditView(QWidget):
                     game, compat_data, proton_script, env,
                     xedit_name=self._xedit_name, exe=exe, log_fn=_wlog)
 
-                self._log(f"{name} Wizard: launching {exe} via Proton with {data_arg}")
+                self._log(f"{name} Wizard: launching {exe} via Proton with "
+                          f"{' '.join(extra_args)}")
                 safe_emit(self._run_started_sig)
                 run_tool_logged(proton_script, exe, env, log_fn=_wlog,
-                                extra_args=[data_arg], label=name)
+                                extra_args=extra_args, label=name)
 
                 shutdown_prefix_wineserver(proton_script, compat_data,
                                            log_fn=_wlog)

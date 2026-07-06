@@ -395,9 +395,51 @@ class Fallout_3(BaseGame):
             ),
         ]
 
+    # The latest official xEdit is now released through the xEdit Discord (not
+    # Nexus) as a single multi-game build.  It ships three launchers, one per
+    # game family; the per-game build name (FO4Edit/SF1Edit/TES5Edit/…) maps to
+    # whichever launcher its family uses.
+    _DISCORD_XEDIT_EXES: dict[str, str] = {
+        "fo": "xFOEdit.exe",     # Fallout 3 / New Vegas / 4 / VR
+        "sf": "xSFEdit.exe",     # Starfield
+        "tes": "xTESEdit.exe",   # Oblivion / Skyrim / SSE / VR / Enderal
+    }
+
+    # The multi-game Discord launcher requires a game-mode argument to pick the
+    # game (it refuses to start without one).  Map each per-game build name to
+    # the mode token the launcher accepts (FNV/FO3/FO4/FO4VR/SSE/TES4/TES5/
+    # TES5VR/SF1/Enderal/EnderalSE).  Enderal shares its build name with
+    # Skyrim/SSE, so those callers pass ``discord_mode=`` explicitly.
+    _DISCORD_XEDIT_MODES: dict[str, str] = {
+        "fo3edit": "FO3", "fnvedit": "FNV", "fo4edit": "FO4",
+        "fo4vredit": "FO4VR", "fo76edit": "FO76", "sf1edit": "SF1",
+        "tes4edit": "TES4", "tes5edit": "TES5", "tes5vredit": "TES5VR",
+        "sseedit": "SSE",
+    }
+
+    @staticmethod
+    def _discord_xedit_exe(build: str) -> str:
+        """Pick the Discord xEdit launcher for a per-game *build* name.
+
+        FO3Edit/FNVEdit/FO4Edit/FO4VREdit -> xFOEdit; SF1Edit -> xSFEdit;
+        TES4Edit/TES5Edit/TES5VREdit/SSEEdit -> xTESEdit.
+        """
+        b = build.lower()
+        if b.startswith("sf"):
+            return Fallout_3._DISCORD_XEDIT_EXES["sf"]
+        if b.startswith(("fo", "fnv")):
+            return Fallout_3._DISCORD_XEDIT_EXES["fo"]
+        return Fallout_3._DISCORD_XEDIT_EXES["tes"]
+
+    @staticmethod
+    def _discord_xedit_mode(build: str) -> str:
+        """Default game-mode arg for a *build* (e.g. FO4Edit -> 'FO4')."""
+        return Fallout_3._DISCORD_XEDIT_MODES.get(build.lower(), build)
+
     @staticmethod
     def _xedit_wizard_tools(
-        build: str, id_suffix: str, nexus_url: str, qac: bool = True
+        build: str, id_suffix: str, nexus_url: str, qac: bool = True,
+        discord_only: bool = False, discord_mode: str | None = None,
     ) -> list[WizardTool]:
         """Build the 'Run <xEdit>' (+ optional QAC) wizard entries for a game.
 
@@ -406,27 +448,73 @@ class Fallout_3(BaseGame):
         via ``extra``.  Plugins xEdit creates/cleans are rescued generically by
         the game's ``restore()`` (``restore_data_core`` with overwrite/staging),
         so no per-game restore code is needed.
+
+        Every game also gets the "Discord version" of xEdit — the latest
+        official build, now released through the xEdit Discord (not Nexus) as
+        one multi-game download whose launcher differs per game family
+        (xFOEdit/xSFEdit/xTESEdit).  Its QAC is the same exe with
+        ``-quickautoclean`` (no separate build), so it is registered as its own
+        wizard entry.  ``discord_only`` drops the Nexus entries entirely (used
+        by games whose Nexus build was discontinued, e.g. Starfield).
         """
         exe = f"{build}.exe"
-        tools = [
-            WizardTool(
-                id=f"run_{build.lower()}_{id_suffix}",
-                label=f"Run {build}",
-                description=f"Install {build}, deploy mods, and run {exe}.",
-                dialog_class_path="wizards.sseedit.SSEEditWizard",
-                extra={"xedit_exe": exe, "nexus_url": nexus_url, "display_name": build},
-            ),
-        ]
-        if qac:
+        tools: list[WizardTool] = []
+        if not discord_only:
             tools.append(
                 WizardTool(
-                    id=f"run_{build.lower()}_qac_{id_suffix}",
-                    label=f"Run {build} QAC",
-                    description=f"Deploy mods and run {build}QuickAutoClean.exe.",
-                    dialog_class_path="wizards.sseedit.SSEEditQACWizard",
-                    extra={"xedit_exe": exe, "nexus_url": nexus_url, "display_name": build},
+                    id=f"run_{build.lower()}_{id_suffix}",
+                    label=f"Run {build}",
+                    description=f"Install {build}, deploy mods, and run {exe}.",
+                    dialog_class_path="wizards.sseedit.SSEEditWizard",
+                    extra={"xedit_exe": exe, "nexus_url": nexus_url,
+                           "display_name": build},
                 )
             )
+            if qac:
+                tools.append(
+                    WizardTool(
+                        id=f"run_{build.lower()}_qac_{id_suffix}",
+                        label=f"Run {build} QAC",
+                        description=f"Deploy mods and run {build}QuickAutoClean.exe.",
+                        dialog_class_path="wizards.sseedit.SSEEditQACWizard",
+                        extra={"xedit_exe": exe, "nexus_url": nexus_url,
+                               "display_name": build},
+                    )
+                )
+
+        # Community Discord build (multi-game exe, downloaded off Nexus).  The
+        # launcher needs a game-mode arg to select the game (see xedit_view).
+        discord_exe = Fallout_3._discord_xedit_exe(build)
+        mode = discord_mode or Fallout_3._discord_xedit_mode(build)
+        discord_extra = {
+            "xedit_exe": discord_exe,
+            "display_name": "xEdit",
+            "app_dir": "xEdit (Discord)",
+            "discord": True,
+            "discord_mode": mode,
+        }
+        tools.append(
+            WizardTool(
+                id=f"run_xedit_discord_{id_suffix}",
+                label="Run xEdit (Discord version)",
+                description=(
+                    f"Deploy mods and run {discord_exe} -{mode} from the latest "
+                    "xEdit build, released through the xEdit Discord."),
+                dialog_class_path="wizards.sseedit.XEditDiscordWizard",
+                extra=dict(discord_extra),
+            )
+        )
+        tools.append(
+            WizardTool(
+                id=f"run_xedit_discord_qac_{id_suffix}",
+                label="Run xEdit QAC (Discord version)",
+                description=(
+                    f"Deploy mods and run {discord_exe} -{mode} -quickautoclean "
+                    "from the latest xEdit build, released through the xEdit Discord."),
+                dialog_class_path="wizards.sseedit.XEditDiscordQACWizard",
+                extra=dict(discord_extra),
+            )
+        )
         return tools
 
     # -----------------------------------------------------------------------
@@ -2449,9 +2537,12 @@ class Starfield(Fallout_3):
                 description="Download and run Wrye Bash.",
                 dialog_class_path="wizards.wrye_bash.WryeBashWizard",
             ),
+            # Starfield no longer has a dedicated Nexus xEdit build — it uses
+            # the Discord-released xEdit build (xSFEdit) exclusively.
             *self._xedit_wizard_tools(
                 build="SF1Edit", id_suffix="starfield",
                 nexus_url="https://www.nexusmods.com/starfield/mods/121?tab=files",
+                discord_only=True,
             ),
         ]
 
@@ -2692,6 +2783,7 @@ class Enderal(Fallout_3):
             *self._xedit_wizard_tools(
                 build="TES5Edit", id_suffix="enderal",
                 nexus_url="https://www.nexusmods.com/skyrim/mods/25859?tab=files",
+                discord_mode="Enderal",
             ),
         ]
 
@@ -2781,6 +2873,7 @@ class EnderalSE(Fallout_3):
             *self._xedit_wizard_tools(
                 build="SSEEdit", id_suffix="enderalse",
                 nexus_url="https://www.nexusmods.com/skyrimspecialedition/mods/164?tab=files",
+                discord_mode="EnderalSE",
             ),
         ]
 

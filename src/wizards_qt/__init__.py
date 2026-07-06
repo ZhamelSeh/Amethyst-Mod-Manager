@@ -99,6 +99,18 @@ def _xedit_qac(game, log_fn=None, on_close=None, ctx=None, **extra):
                      qac=True, **extra)
 
 
+def _xedit_discord(game, log_fn=None, on_close=None, ctx=None, **extra):
+    # extra carries xedit_exe (xFOEdit/xSFEdit/xTESEdit) / app_dir / discord=True.
+    from wizards_qt.xedit_view import XEditView
+    return XEditView(game, log_fn=log_fn, on_close=on_close, ctx=ctx, **extra)
+
+
+def _xedit_discord_qac(game, log_fn=None, on_close=None, ctx=None, **extra):
+    from wizards_qt.xedit_view import XEditView
+    return XEditView(game, log_fn=log_fn, on_close=on_close, ctx=ctx,
+                     qac=True, **extra)
+
+
 def _dyndolod_tool(tool: str):
     def factory(game, log_fn=None, on_close=None, ctx=None, **extra):
         from wizards_qt.dyndolod_view import DynDOLODView
@@ -138,6 +150,8 @@ REGISTRY: dict[str, QtWizardSpec] = {
     "wizards.script_extender.ScriptExtenderWizard": QtWizardSpec(_script_extender),
     "wizards.sseedit.SSEEditWizard": QtWizardSpec(_xedit),
     "wizards.sseedit.SSEEditQACWizard": QtWizardSpec(_xedit_qac),
+    "wizards.sseedit.XEditDiscordWizard": QtWizardSpec(_xedit_discord),
+    "wizards.sseedit.XEditDiscordQACWizard": QtWizardSpec(_xedit_discord_qac),
     "wizards.dyndolod.TexGenWizard": QtWizardSpec(_dyndolod_tool("texgen")),
     "wizards.dyndolod.DynDOLODWizard": QtWizardSpec(_dyndolod_tool("dyndolod")),
     "wizards.dyndolod.xLODGenWizard": QtWizardSpec(_dyndolod_tool("xlodgen")),

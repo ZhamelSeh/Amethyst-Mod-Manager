@@ -481,6 +481,10 @@ class ConfigureGameView(QWidget):
             self._set_check("profile_ini_files", False)
             self._set_check("profile_saves", False)
             self._set_check("prefix_numbering", True)
+            if self._patch_group is not None and hasattr(g, "get_patch_version"):
+                rb = self._patch_buttons.get(int(g.get_patch_version()))
+                if rb:
+                    rb.setChecked(True)
             self._select_plugins_txt_default()
             self._seed_default_staging(g)
             self._start_game_scan()

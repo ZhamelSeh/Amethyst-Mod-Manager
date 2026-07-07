@@ -141,7 +141,7 @@ def extract_to_dir(archive: Path, dest: Path) -> None:
 
     elif name_lower.endswith((".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")):
         with tarfile.open(archive, "r:*") as tf:
-            tf.extractall(dest)
+            tf.extractall(dest, filter="data")
     else:
         raise RuntimeError(f"Unsupported archive format: {archive.name}")
 

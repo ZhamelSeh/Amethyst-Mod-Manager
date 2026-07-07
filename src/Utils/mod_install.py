@@ -632,7 +632,7 @@ def _extract_archive(archive_path: str, dest_dir: str, log_fn: LogFn,
             archive_path.lower().endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
         try:
             with tarfile.open(archive_path, "r:*") as tf:
-                tf.extractall(dest_dir)
+                tf.extractall(dest_dir, filter="data")
             log_fn("Extracted with tarfile.")
             return True
         except Exception as exc:

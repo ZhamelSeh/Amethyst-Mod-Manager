@@ -197,7 +197,7 @@ def _ensure_compressonator(log_fn: Callable[[str], None]) -> Path:
         ) from exc
 
     with tarfile.open(tarball, "r:gz") as tf:
-        tf.extractall(base)
+        tf.extractall(base, filter="data")
     tarball.unlink(missing_ok=True)
 
     if not cli_bin.is_file():

@@ -116,6 +116,14 @@ class PluginModel(QAbstractTableModel):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             # "" (the lock column) stays empty; others are translated.
             return self.tr(COLUMNS[section]) if COLUMNS[section] else ""
+        if (orientation == Qt.Horizontal and role == Qt.DecorationRole
+                and section == COL_LOCK
+                and not getattr(self, "_suppress_header_deco", False)):
+            # The lock column has no text label; show a lock icon instead so
+            # the header reads (matches the per-row lock glyph). TkStyleHeader
+            # centres it and suppresses this during its chrome pass.
+            from gui_qt.icons import icon
+            return icon("lock.png", 14)
         return None
 
     def row(self, i: int) -> PluginRow:

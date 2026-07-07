@@ -55,6 +55,32 @@ class TkStyleHeader(QHeaderView):
         spec_fn = getattr(self._view, "sort_triangle_spec", None)
         spec = spec_fn(logicalIndex) if callable(spec_fn) else None
         if spec is None:
+            # Icon-only sections (no text label, just a DecorationRole icon —
+            # e.g. the plugins lock column) are painted with the icon CENTERED.
+            # QHeaderView otherwise left-aligns the decoration alongside the
+            # (empty) label.
+            model = self.model()
+            deco = model.headerData(logicalIndex, Qt.Horizontal,
+                                    Qt.DecorationRole)
+            text = model.headerData(logicalIndex, Qt.Horizontal,
+                                    Qt.DisplayRole)
+            if deco is not None and not text:
+                # Draw the section chrome with the decoration suppressed so the
+                # native left-aligned icon doesn't show under our centered one.
+                painter.save()
+                setattr(model, "_suppress_header_deco", True)
+                try:
+                    super().paintSection(painter, rect, logicalIndex)
+                finally:
+                    setattr(model, "_suppress_header_deco", False)
+                painter.restore()
+                sz = 14
+                pm = deco.pixmap(sz, sz)
+                if not pm.isNull():
+                    x = rect.center().x() - pm.width() // 2
+                    y = rect.center().y() - pm.height() // 2
+                    painter.drawPixmap(x, y, pm)
+                return
             painter.save()
             super().paintSection(painter, rect, logicalIndex)
             painter.restore()

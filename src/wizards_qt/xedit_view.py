@@ -533,9 +533,23 @@ class XEditView(QWidget):
 
                 # Registry seed + plugins.txt / My Games links + viewsettings
                 # seed + WinXP compat flag (see Utils.xedit_tools).
+                #
+                # The viewsettings filename xEdit reads is keyed to the GAME
+                # mode, not the launcher exe.  The Nexus builds are per-game so
+                # their build name already encodes it (SSEEdit -> Plugins.sse…),
+                # but the multi-game Discord launcher (xTESEdit/xFOEdit/xSFEdit)
+                # picks the mode from its -<MODE> arg, so seed the file for that
+                # mode instead of the generic "xEdit" display name (which would
+                # write a useless Plugins.xviewsettings and leave the first-run
+                # popups un-suppressed).  Feed a synthetic "<mode>Edit" name so
+                # xedit_settings_ext yields the right extension (SSE -> sse,
+                # FO4 -> fo4, TES5 -> tes5, SF1 -> sf1, Enderal -> enderal, …).
+                seed_name = self._xedit_name
+                if self._discord and self._discord_mode:
+                    seed_name = f"{self._discord_mode}Edit"
                 prepare_xedit_prefix(
                     game, compat_data, proton_script, env,
-                    xedit_name=self._xedit_name, exe=exe, log_fn=_wlog)
+                    xedit_name=seed_name, exe=exe, log_fn=_wlog)
 
                 self._log(f"{name} Wizard: launching {exe} via Proton with "
                           f"{' '.join(extra_args)}")

@@ -8052,6 +8052,18 @@ class MainWindow(QMainWindow):
         staging = self._gs.staging_dir()
         entries = read_modlist(ml_path) if (ml_path and ml_path.is_file()) else []
 
+        # Preserve the Mod Files tab's shown mod across a same-context refresh
+        # (install/toggle/deploy/Refresh of the SAME game+profile): set_entries
+        # clears the modlist selection, which would otherwise blank the tab. On a
+        # game/profile SWITCH the shown mod may not exist, so we drop it.
+        prev_context = (self._gs.game_name, self._gs.profile_dir())
+        keep_mod_files = None
+        if prev_context == getattr(self, "_modlist_context", None):
+            mfv = getattr(self, "_mod_files_view", None)
+            if mfv is not None and mfv.has_mod():
+                keep_mod_files = mfv._mod_name
+        self._modlist_context = prev_context
+
         self._mod_categories: dict[str, str] = {}
         self._mod_updates: set[str] = set()
         self._mod_fomod: set[str] = set()
@@ -8158,7 +8170,16 @@ class MainWindow(QMainWindow):
             idx = (staging.parent / "modindex.bin") if staging is not None else None
             self._mod_files_view.configure(
                 self._gs.game, self._gs.profile_dir(), idx)
-            self._mod_files_view.show_mod(None)
+            # Re-show the previously selected mod on a same-context refresh (it
+            # updates against the freshly-scanned files); blank otherwise. The
+            # Overwrite / Root Folder boundary rows are synthetic (not in the raw
+            # modlist) but always present, so they survive too.
+            from Utils.filemap import OVERWRITE_NAME, ROOT_FOLDER_NAME
+            still_present = keep_mod_files is not None and (
+                keep_mod_files in (OVERWRITE_NAME, ROOT_FOLDER_NAME)
+                or any(e.name == keep_mod_files for e in entries))
+            self._mod_files_view.show_mod(
+                keep_mod_files if still_present else None)
         # Point the Data tab at this game/profile (filemap.txt + modindex.bin).
         if hasattr(self, "_data_view"):
             fm = (staging.parent / "filemap.txt") if staging is not None else None

@@ -4653,6 +4653,10 @@ class MainWindow(QMainWindow):
 
         def _worker():
             copied = []
+            # `plan` is ordered highest-priority-first (row 0 = top of the source
+            # modlist). Register the whole copied block in ONE prepend after the
+            # loop — prepending each mod individually would reverse the group.
+            registered = []  # (dest_name, enabled), top-first
             for done, (nm, dest_name) in enumerate(plan.items()):
                 self._op_progress.emit(done, total, nm)
                 try:
@@ -4664,11 +4668,18 @@ class MainWindow(QMainWindow):
                         Path(src_staging), Path(src_profile_dir),
                         Path(target_staging), Path(target_profile_dir),
                         nm, enabled_map.get(nm, True), dest_name=dest_name,
-                        game=game)
+                        game=game, register=False)
                     if out:
                         copied.append(nm)
+                        registered.append((out, enabled_map.get(nm, True)))
                 except Exception as exc:
                     self._op_log.emit(f"Copy to profile failed for '{nm}': {exc}")
+            if registered:
+                try:
+                    mod_copy.register_mods_in_modlist(
+                        Path(target_profile_dir) / "modlist.txt", registered)
+                except Exception as exc:
+                    self._op_log.emit(f"Copy to profile: modlist update failed: {exc}")
             self._op_progress.emit(total, total, "finishing")
             removed = False
             if move and copied:
@@ -5858,6 +5869,13 @@ class MainWindow(QMainWindow):
                          else self.tr("Restore failed — see log."), "error")
         for w in (warnings or []):
             self._notify(w, "warning")
+        # Drain any install batch that was queued behind this deploy/restore
+        # (see _install_paths). Deferred so it starts after this handler +
+        # the coalesced re-deploy check below settle. Skipped if a coalesced
+        # re-deploy is about to run — the install stays queued until it too
+        # finishes (the drain guards on _deploy_running/_install_running).
+        if self._pending_install_batches and not self._deploy_rerun_pending:
+            QTimer.singleShot(0, self._drain_pending_installs)
         # Coalesced re-deploy if mod state changed mid-deploy.
         if kind == "deploy" and self._deploy_rerun_pending:
             self._deploy_rerun_pending = False
@@ -6487,20 +6505,33 @@ class MainWindow(QMainWindow):
         if game is None or not game.is_configured():
             self._notify(self.tr("No configured game selected."), "warning")
             return
-        if getattr(self, "_install_running", False):
-            # An install batch is already running (e.g. a second Nexus download
-            # finished while the first mod is still installing) — queue this
-            # batch instead of dropping it; _on_install_done drains the queue
-            # (Tk parity: gui.py _nxm_install_queue).
+        # Queue behind a running install OR deploy. Both mutate the SAME shared
+        # game object (_active_profile_dir + load_paths → get_effective_*_path);
+        # a deploy swaps the active profile to last_deployed/target mid-flight
+        # (deploy_pipeline), so an install started concurrently can stage its
+        # mod + write modindex.bin into the WRONG profile's tree — the mod then
+        # appears only after a Refresh (the intermittent "manual install didn't
+        # take" bug). Serialize instead. _on_install_done AND _on_op_done (deploy
+        # finished) both drain the queue.
+        if getattr(self, "_install_running", False) \
+                or getattr(self, "_deploy_running", False):
             self._pending_install_batches.append({
                 "paths": list(paths), "metas": metas,
                 "previous_mod_name": previous_mod_name,
                 "preferred_names": preferred_names,
                 "on_all_done": on_all_done})
+            _busy = self.tr("install") if getattr(self, "_install_running", False) \
+                else self.tr("deploy")
             self._notify(
                 self.tr("Install queued — {0} will install after the current "
-                        "install finishes.").format(Path(paths[0]).name), "info")
+                        "{1} finishes.").format(Path(paths[0]).name, _busy), "info")
             return
+        # A just-finished background worker (deploy/restore/collection install)
+        # may have left the game's _active_profile_dir out of sync with the
+        # selected profile — re-assert it so staging + the mod index resolve
+        # against the profile the dropdown shows (Tk parity: gui.py re-ran
+        # load_paths before installing).
+        self._gs.reassert_active_profile()
         profile_dir = self._gs.profile_dir()
         if profile_dir is None:
             self._notify(self.tr("No active profile."), "warning")
@@ -7035,11 +7066,13 @@ class MainWindow(QMainWindow):
             self._notify(self.tr("Install failed — see log."), "error")
 
     def _drain_pending_installs(self):
-        """Start the next install batch queued while an earlier one ran. If a
-        callback already started another install in the meantime, leave the
-        queue for the next _on_install_done to drain."""
+        """Start the next install batch queued while an earlier install OR
+        deploy ran. If a callback/coalesced deploy already started work in the
+        meantime, leave the queue for the next _on_install_done / _on_op_done to
+        drain (both call here)."""
         if not self._pending_install_batches \
-                or getattr(self, "_install_running", False):
+                or getattr(self, "_install_running", False) \
+                or getattr(self, "_deploy_running", False):
             return
         b = self._pending_install_batches.pop(0)
         self._install_paths(b["paths"], metas=b["metas"],
@@ -8918,7 +8951,12 @@ class MainWindow(QMainWindow):
             if (game is not None and game.is_configured()
                     and getattr(game, "auto_deploy", False)
                     and hasattr(game, "deploy")
-                    and not self._deploy_running):
+                    and not self._deploy_running
+                    # Never auto-deploy while an install batch is mid-flight —
+                    # the deploy swaps the shared game object's active profile
+                    # and races the install worker's path resolution. The
+                    # install's own _on_install_done reload re-triggers this.
+                    and not getattr(self, "_install_running", False)):
                 self._auto_deploy_in_progress = True
                 self._on_deploy(silent=True)
 

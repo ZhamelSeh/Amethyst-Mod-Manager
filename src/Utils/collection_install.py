@@ -750,6 +750,15 @@ def run_collection_install(
     def _download_one(mod):
         nonlocal _dl_done, _dl_bytes_done
         mod_domain = (getattr(mod, "domain_name", "") or "").strip() or game_domain
+        # Expected archive size for cache validation / partial-download detection.
+        # The GraphQL mod list omits size_bytes for cross-domain entries (e.g. a
+        # Skyrim SE mod referenced by an imported/Enderal collection), so fall
+        # back to the manifest's source.fileSize like the manual path does. Without
+        # this, expected_size_bytes=0 disables the 95%-truncation check and a
+        # partially-downloaded archive gets extracted (and fails) instead of being
+        # redownloaded.
+        _exp_size = (schema_file_id_to_size.get(mod.file_id, 0)
+                     or getattr(mod, "size_bytes", 0) or 0)
         if _col_stop.is_set():
             with _dl_lock:
                 _dl_done += 1
@@ -792,8 +801,9 @@ def run_collection_install(
         for _ext_dir in _scan_dirs():
             _ext_found, _ext_complete = _find_cached_archive(
                 _ext_dir, mod.file_name or mod.mod_name or "",
-                getattr(mod, "size_bytes", 0) or 0, mod.mod_id, mod.file_id,
-                expected_md5=getattr(mod, "md5", "") or "")
+                _exp_size, mod.mod_id, mod.file_id,
+                expected_md5=(schema_file_id_to_md5.get(mod.file_id, "")
+                              or (getattr(mod, "md5", "") or "").strip().lower()))
             if _ext_found and _ext_complete:
                 log(f"Collection install: '{mod.mod_name}' found in {_ext_dir} — "
                     "using local copy, skipping download")
@@ -811,7 +821,7 @@ def run_collection_install(
                     game_domain=mod_domain, mod_id=mod.mod_id, file_id=mod.file_id,
                     progress_cb=_progress_cb, cancel=_col_stop,
                     known_file_name=mod.file_name or "",
-                    expected_size_bytes=getattr(mod, "size_bytes", 0) or 0,
+                    expected_size_bytes=_exp_size,
                     dest_dir=get_download_cache_dir_for_game(getattr(game, "name", "") or ""))
         except Exception as exc:
             import traceback as _tb
@@ -1206,16 +1216,43 @@ def run_collection_install(
     installed += _install_counters["installed"]
     skipped += _install_counters["skipped"]
 
-    # rebuild mod index once for all newly installed mods
+    # rebuild mod index once for all newly installed mods.
+    # NB: use the *canonical* game attrs (mod_folder_strip_prefixes /
+    # mod_install_extensions) + per-mod strip prefixes + root-flag set — the
+    # same params deploy_pipeline's rescan/build_filemap uses. Reading the
+    # non-existent strip_prefixes / install_extensions attrs would return None
+    # → an UNSTRIPPED index (Bethesda appends index as "Data/…"), so appended
+    # mods deploy double-nested / with wrong conflicts until a manual Refresh.
+    #
+    # The index MUST land where build_filemap / the conflict rebuild reads it:
+    # next to the EFFECTIVE filemap (get_effective_filemap_path().parent), NOT
+    # profile_dir. For a normal (shared-mods) append target those two differ —
+    # the shared game root vs <profile_dir> — so writing to profile_dir left the
+    # appended mods invisible to the reload (no root flags, no conflicts, no
+    # plugins) until Refresh. Only profile-specific-mods profiles (fresh
+    # collection installs) coincide, which masked the bug. Mirrors
+    # mod_install._update_indexes.
     if _install_counters["installed"] > 0:
         try:
             log("Updating mod index…")
             from Utils.filemap import rebuild_mod_index
+            from Utils.deploy import load_per_mod_strip_prefixes
+            from Nexus.nexus_meta import collect_root_flagged_mods
+            _staging = game.get_effective_mod_staging_path()
+            try:
+                _index_dir = game.get_effective_filemap_path().parent
+            except Exception:
+                _index_dir = profile_dir
+            try:
+                _rf_mods = collect_root_flagged_mods(modlist_path, _staging, log_fn=log)
+            except Exception:
+                _rf_mods = set()
             rebuild_mod_index(
-                profile_dir / "modindex.bin", game.get_effective_mod_staging_path(),
-                strip_prefixes=set(getattr(game, "strip_prefixes", None) or []),
-                allowed_extensions=set(getattr(game, "install_extensions", None) or []),
-                root_deploy_folders=set(getattr(game, "root_deploy_folders", None) or []),
+                _index_dir / "modindex.bin", _staging,
+                strip_prefixes=set(getattr(game, "mod_folder_strip_prefixes", None) or ()) or None,
+                per_mod_strip_prefixes=load_per_mod_strip_prefixes(profile_dir),
+                allowed_extensions=set(getattr(game, "mod_install_extensions", None) or ()) or None,
+                root_folder_mods=set(_rf_mods or ()) or None,
                 normalize_folder_case=getattr(game, "normalize_folder_case", True))
         except Exception as _idx_exc:
             log(f"Mod index rebuild skipped: {_idx_exc}")

@@ -3340,10 +3340,6 @@ Remove the appended-collection entry?</translation>
         <translation>Manage Prefixes</translation>
     </message>
     <message>
-        <source>Install queued — {0} will install after the current install finishes.</source>
-        <translation>Install queued — {0} will install after the current install finishes.</translation>
-    </message>
-    <message>
         <source>No active profile.</source>
         <translation>No active profile.</translation>
     </message>
@@ -3502,6 +3498,18 @@ Deploy anyway?</translation>
     <message>
         <source>No active profile — cannot configure groups.</source>
         <translation>No active profile — cannot configure groups.</translation>
+    </message>
+    <message>
+        <source>install</source>
+        <translation>install</translation>
+    </message>
+    <message>
+        <source>deploy</source>
+        <translation>deploy</translation>
+    </message>
+    <message>
+        <source>Install queued — {0} will install after the current {1} finishes.</source>
+        <translation>Install queued — {0} will install after the current {1} finishes.</translation>
     </message>
     <message>
         <source>LOOT Groups</source>

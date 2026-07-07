@@ -502,13 +502,22 @@ class CollectionDetailView(QWidget):
 
     def _is_paused(self) -> bool:
         """True if this collection's install is paused (in-memory registry or the
-        persisted ``collection_install_paused`` flag on its profile)."""
+        persisted ``collection_install_paused`` flag on its profile).
+
+        Either source only counts when the collection's profile still exists — a
+        deleted/imported-then-removed profile leaves a stale slug in the in-memory
+        registry, which would otherwise flip the button to "Resume Install" and
+        error on click. When the profile is gone we discard the stale slug so the
+        button falls back to "Install"."""
         slug = getattr(self._collection, "slug", "") or ""
+        _pname, pdir = self._collection_profile()
+        if pdir is None or not pdir.is_dir():
+            # Profile no longer exists — any paused state is meaningless.
+            if slug:
+                _PAUSED_COLLECTIONS.discard(slug)
+            return False
         if slug and slug in _PAUSED_COLLECTIONS:
             return True
-        _pname, pdir = self._collection_profile()
-        if pdir is None:
-            return False
         try:
             from Utils.profile_state import read_collection_install_paused
             return bool(read_collection_install_paused(pdir))

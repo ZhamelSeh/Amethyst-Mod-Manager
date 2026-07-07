@@ -46,11 +46,11 @@ def copy_mod_to_profile(src_staging: Path, src_profile_dir: Path,
                         target_staging: Path, target_profile_dir: Path,
                         mod_name: str, enabled: bool = True, *,
                         dest_name: "str | None" = None,
-                        game=None) -> "str | None":
+                        game=None, register: bool = True) -> "str | None":
     """Copy the ``<src_staging>/<mod_name>`` folder into *target_staging* (as
-    *dest_name* if given), copy its FOMOD/BAIN choice, and register it in the
-    target profile's ``modlist.txt`` (prepend = highest priority, dedup by name,
-    preserving *enabled*). Returns the staged dest name, or None on failure.
+    *dest_name* if given), copy its FOMOD/BAIN choice, and (when *register*)
+    prepend it to the target profile's ``modlist.txt``. Returns the staged dest
+    name, or None on failure.
 
     The caller must resolve collisions first: pass ``dest_name`` to install under
     a new name, or delete the existing folder to replace it. If the dest folder
@@ -59,7 +59,13 @@ def copy_mod_to_profile(src_staging: Path, src_profile_dir: Path,
     *game* (optional but recommended) lets us add the copied mod to the target
     staging's ``modindex.bin`` incrementally — without it, the target profile's
     cached index is stale and the mod is invisible to the filemap rebuild
-    (no deploy / no plugins / no conflicts) until a full Refresh."""
+    (no deploy / no plugins / no conflicts) until a full Refresh.
+
+    *register* controls the per-mod modlist prepend. When copying SEVERAL mods,
+    pass ``register=False`` and call :func:`register_mods_in_modlist` once with
+    the full ordered block afterwards — prepending each mod individually reverses
+    the group's relative order (the source-topmost mod is prepended first and
+    ends up lowest), matching the Tk single-block prepend."""
     src_folder = Path(src_staging) / mod_name
     if not src_folder.is_dir():
         return None
@@ -77,7 +83,8 @@ def copy_mod_to_profile(src_staging: Path, src_profile_dir: Path,
     if game is not None:
         _update_target_index(game, target_staging, target_profile_dir,
                              out, dest_folder)
-    _register_in_modlist(target_profile_dir / "modlist.txt", out, enabled)
+    if register:
+        _register_in_modlist(target_profile_dir / "modlist.txt", out, enabled)
     return out
 
 
@@ -135,12 +142,25 @@ def _update_target_index(game, target_staging: Path, target_profile_dir: Path,
 def _register_in_modlist(target_modlist: Path, name: str, enabled: bool) -> None:
     """Prepend *name* to the target modlist (dedup by name). No-op if already
     present."""
+    register_mods_in_modlist(target_modlist, [(name, enabled)])
+
+
+def register_mods_in_modlist(target_modlist: Path,
+                             mods: "list[tuple[str, bool]]") -> None:
+    """Prepend *mods* — ordered highest-priority-first — to the target modlist as
+    a single block (dedup by name), preserving their relative order. Mirrors the
+    Tk single-block prepend; do NOT call this per-mod in a loop, which reverses
+    the group."""
     from Utils.modlist import read_modlist, write_modlist, ModEntry
     try:
         entries = read_modlist(target_modlist) if target_modlist.exists() else []
     except Exception:
         entries = []
-    if name in {e.name for e in entries}:
-        return
-    entries = [ModEntry(name=name, enabled=enabled, locked=False)] + entries
-    write_modlist(target_modlist, entries)
+    existing_names = {e.name for e in entries}
+    new_entries = [
+        ModEntry(name=name, enabled=enabled, locked=False)
+        for name, enabled in mods
+        if name not in existing_names
+    ]
+    if new_entries:
+        write_modlist(target_modlist, new_entries + entries)

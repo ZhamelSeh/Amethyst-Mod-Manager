@@ -141,12 +141,14 @@ def index_installed_mod(
         strip_fs = frozenset(
             s.lower() for s in (getattr(game, "mod_folder_strip_prefixes", set()) or [])
         )
+        # Canonical attr is mod_install_extensions (NOT install_extensions,
+        # which doesn't exist → getattr None → no extension filtering, so the
+        # index over-includes files vs a Refresh). root_deploy_folders is a
+        # removed/ignored _scan_dir param, kept only for call-site compat.
         exts_fs = frozenset(
-            e.lower() for e in (getattr(game, "install_extensions", None) or [])
+            e.lower() for e in (getattr(game, "mod_install_extensions", None) or [])
         )
-        root_fs = frozenset(
-            s.lower() for s in (getattr(game, "root_deploy_folders", None) or [])
-        )
+        root_fs = frozenset()
         _, normal_files, root_files, _ = _scan_dir(
             mod_name, str(mod_dir), strip_fs, exts_fs, root_fs
         )

@@ -1709,22 +1709,30 @@ def _read_bain_readme(bain_root: str) -> "str | None":
 
 
 def _read_saved_fomod_selections(game, mod_name: str, log_fn: LogFn) -> "dict | None":
-    """Load a previously-saved FOMOD selection for *mod_name* (global config) so
-    the wizard restores + highlights the user's last choices (Tk parity)."""
+    """Load a previously-saved FOMOD selection for *mod_name* so the wizard
+    restores + highlights the user's last choices (Tk parity).
+
+    Reads the global per-game config first; when that's absent, falls back to
+    the profile-scoped copy (``<profile>/fomod/<mod>.json``) so selections still
+    restore for mods installed only under a profile."""
     game_name = getattr(game, "name", "")
     if not game_name:
         return None
-    try:
-        import json
-        from Utils.config_paths import get_fomod_selections_path
-        sel_path = get_fomod_selections_path(game_name, mod_name)
-        if sel_path.is_file():
-            with open(sel_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            log_fn("Restored previous FOMOD selections.")
-            return data
-    except (OSError, ValueError):
-        pass
+    import json
+    from Utils.config_paths import get_fomod_selections_path
+    candidates = [get_fomod_selections_path(game_name, mod_name)]
+    pdir = getattr(game, "_active_profile_dir", None)
+    if pdir:
+        candidates.append(Path(pdir) / "fomod" / f"{mod_name}.json")
+    for sel_path in candidates:
+        try:
+            if sel_path.is_file():
+                with open(sel_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                log_fn("Restored previous FOMOD selections.")
+                return data
+        except (OSError, ValueError):
+            continue
     return None
 
 
@@ -1751,22 +1759,30 @@ def _persist_fomod_selection(game, mod_name: str, selections,
 
 
 def _read_saved_bain_selections(game, mod_name: str, log_fn: LogFn) -> "dict | None":
-    """Load a previously-saved BAIN selection for *mod_name* (global config) so
-    the picker restores the user's last choices (Tk parity)."""
+    """Load a previously-saved BAIN selection for *mod_name* so the picker
+    restores the user's last choices (Tk parity).
+
+    Reads the global per-game config first; when that's absent, falls back to
+    the profile-scoped copy (``<profile>/bain/<mod>.json``) so selections still
+    restore for mods installed only under a profile."""
     game_name = getattr(game, "name", "")
     if not game_name:
         return None
-    try:
-        import json
-        from Utils.config_paths import get_bain_selections_path
-        sel_path = get_bain_selections_path(game_name, mod_name)
-        if sel_path.is_file():
-            with open(sel_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            log_fn("Restored previous BAIN selections.")
-            return data
-    except (OSError, ValueError, Exception):
-        pass
+    import json
+    from Utils.config_paths import get_bain_selections_path
+    candidates = [get_bain_selections_path(game_name, mod_name)]
+    pdir = getattr(game, "_active_profile_dir", None)
+    if pdir:
+        candidates.append(Path(pdir) / "bain" / f"{mod_name}.json")
+    for sel_path in candidates:
+        try:
+            if sel_path.is_file():
+                with open(sel_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                log_fn("Restored previous BAIN selections.")
+                return data
+        except (OSError, ValueError):
+            continue
     return None
 
 

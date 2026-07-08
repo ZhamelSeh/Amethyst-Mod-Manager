@@ -39,6 +39,7 @@ class ModFilesView(QWidget):
         self._mod_name: str | None = None
         self._stripped: set[str] = set()      # lower strip entries for this mod
         self._search = ""
+        self._search_exts: frozenset[str] = frozenset()
         self._inc_exts: set[str] = set()
         self._exc_exts: set[str] = set()
         self._ext_counts: dict[str, int] = {}
@@ -212,6 +213,9 @@ class ModFilesView(QWidget):
         def keep(rel_key: str, rel_str: str) -> bool:
             if not self._ext_ok(rel_key):
                 return False
+            if (self._search_exts
+                    and Path(rel_key).suffix.lower() not in self._search_exts):
+                return False
             if not self._conflict_ok(conflict_of(rel_key)):
                 return False
             if self._search and self._search not in rel_str.lower():
@@ -247,11 +251,11 @@ class ModFilesView(QWidget):
         self._model.set_root(root, by_path)
 
         # Restore / set expand.
-        search_active = bool(self._search)
+        search_active = bool(self._search or self._search_exts)
         if search_active:
             self._tree.expandAll()
         else:
-            self._restore_expanded(expanded, top_level_open=True)
+            self._restore_expanded(expanded, top_level_open=False)
 
     def _add_strip_placeholders(self, root: _Node, by_path: dict):
         """Synthetic greyed rows for strip entries not otherwise in the tree so
@@ -332,7 +336,9 @@ class ModFilesView(QWidget):
 
     # -- search (driven by the app's column-footer search box) --------------
     def _on_search(self, text: str):
-        self._search = (text or "").strip().lower()
+        from Utils.file_search import parse_file_query
+        needle, self._search_exts = parse_file_query(text)
+        self._search = needle
         t = getattr(self, "_search_timer", None)
         if t is None:
             t = QTimer(self)

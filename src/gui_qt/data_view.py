@@ -36,6 +36,7 @@ class DataView(QWidget):
         self._dirty = True
         self._is_visible = False           # is the Data sub-tab currently shown
         self._search = ""
+        self._search_exts: frozenset[str] = frozenset()
         self._inc_exts: set[str] = set()
         self._exc_exts: set[str] = set()
         self._only_conflicts = False
@@ -184,9 +185,15 @@ class DataView(QWidget):
             self.index_path, self.profile_dir)
 
         q = self._search
+        exts = self._search_exts
         keep = None
-        if q:
-            keep = lambda rk, mod: (q in rk) or (q in mod.casefold())
+        if q or exts:
+            def keep(rk, mod):
+                if exts and Path(rk).suffix.lower() not in exts:
+                    return False
+                if q and not (q in rk or q in mod.casefold()):
+                    return False
+                return True
         tree_dict = dtlogic.build_data_tree(
             entries, contested,
             only_conflicts=self._only_conflicts,
@@ -211,7 +218,7 @@ class DataView(QWidget):
 
         add(root, tree_dict, "")
         self._model.set_root(root)
-        if q:
+        if q or exts:
             self._tree.expandAll()
         else:
             self._restore_expanded(expanded)
@@ -252,7 +259,9 @@ class DataView(QWidget):
 
     # -- search -------------------------------------------------------------
     def _on_search(self, text: str):
-        self._search = (text or "").strip().casefold()
+        from Utils.file_search import parse_file_query
+        needle, self._search_exts = parse_file_query(text)
+        self._search = needle
         t = getattr(self, "_search_timer", None)
         if t is None:
             t = QTimer(self)

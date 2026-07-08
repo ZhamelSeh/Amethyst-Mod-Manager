@@ -1085,7 +1085,7 @@ class MainWindow(QMainWindow):
         v.addLayout(btns)
 
         search = QLineEdit()
-        search.setPlaceholderText(self.tr("Search files…"))
+        search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(
             lambda t: self._mod_files_view._on_search(t))
@@ -1115,7 +1115,7 @@ class MainWindow(QMainWindow):
         v.addLayout(btns)
 
         search = QLineEdit()
-        search.setPlaceholderText(self.tr("Search files…"))
+        search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(lambda t: self._data_view._on_search(t))
         v.addWidget(search)
@@ -1343,7 +1343,7 @@ class MainWindow(QMainWindow):
             self._on_tf_content_status)
 
         search = QLineEdit()
-        search.setPlaceholderText(self.tr("Search files…"))
+        search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(lambda t: self._text_files_view._on_search(t))
         v.addWidget(search)

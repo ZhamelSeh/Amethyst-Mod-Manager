@@ -36,6 +36,7 @@ class TextFilesView(QWidget):
         self._is_visible = False
         self._all_entries: list = []
         self._search = ""
+        self._search_exts: frozenset = frozenset()
         self._inc_exts: set = set()
         self._exc_exts: set = set()
         self._inc_srcs: set = set()
@@ -145,6 +146,10 @@ class TextFilesView(QWidget):
         if self._exc_srcs:
             entries = [e for e in entries
                        if tf.entry_source(e[1]) not in self._exc_srcs]
+        if self._search_exts:
+            exts = self._search_exts
+            entries = [e for e in entries
+                       if Path(e[0]).suffix.lower() in exts]
         if self._search:
             q = self._search
             entries = [e for e in entries
@@ -156,7 +161,8 @@ class TextFilesView(QWidget):
         self._model.set_root(self._build_tree(entries))
         # When filtering (search/content), expand so matches are visible;
         # otherwise restore what the user had open (start collapsed first time).
-        if self._search or self._content_matches is not None:
+        if (self._search or self._search_exts
+                or self._content_matches is not None):
             self._tree.expandAll()
         elif first_build:
             self._tree.collapseAll()
@@ -265,7 +271,9 @@ class TextFilesView(QWidget):
 
     # -- search -------------------------------------------------------------
     def _on_search(self, text: str):
-        self._search = (text or "").strip().casefold()
+        from Utils.file_search import parse_file_query
+        needle, self._search_exts = parse_file_query(text)
+        self._search = needle
         t = getattr(self, "_search_timer", None)
         if t is None:
             t = QTimer(self)

@@ -10,19 +10,21 @@ from PySide6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, Signal, QT_TRANSLATE_NOOP,
 )
 
-from gui_qt.plugin_state import PluginRow, save_plugins
+from gui_qt.plugin_state import PluginRow, save_plugins, compute_game_indexes
 
 COL_NAME = 0
 COL_FLAGS = 1
 COL_LOCK = 2
-COL_INDEX = 3
-COLUMNS = ["Plugin Name", "Flags", "", "Index"]
+COL_PRIORITY = 3    # list-position counter (000, 001…), labelled "P"
+COL_GAME_INDEX = 4  # MO2-style hex load index the game assigns (00, FE:000…)
+COLUMNS = ["Plugin Name", "Flags", "", "P", "Index"]
 # headerData() translates these at display time (self.tr(COLUMNS[i])); register
 # the literals so lupdate extracts them under the PluginModel context. Must be
 # explicit literal calls — lupdate can't see through a loop variable.
 _COL_TR = (
     QT_TRANSLATE_NOOP("PluginModel", "Plugin Name"),
     QT_TRANSLATE_NOOP("PluginModel", "Flags"),
+    QT_TRANSLATE_NOOP("PluginModel", "P"),
     QT_TRANSLATE_NOOP("PluginModel", "Index"),
 )
 
@@ -50,6 +52,7 @@ class PluginModel(QAbstractTableModel):
         self._highlights: dict[str, int] = {}
         # plugin name (lower) → non-default userlist group (flags tooltip).
         self._ul_groups: dict[str, str] = {}
+        self._game_indexes: list[str] = []
 
     def set_rows(self, rows, game=None, profile=None, profile_dir=None):
         self.beginResetModel()
@@ -59,6 +62,7 @@ class PluginModel(QAbstractTableModel):
         self._profile_dir = profile_dir
         self._locks = {}
         self._highlights = {}
+        self._game_indexes = compute_game_indexes(self._rows)
         if profile_dir is not None:
             try:
                 from Utils.profile_state import read_plugin_locks
@@ -91,7 +95,7 @@ class PluginModel(QAbstractTableModel):
         self._highlights = dict(highlights or {})
         if self._rows:
             self.dataChanged.emit(self.index(0, 0),
-                                  self.index(len(self._rows) - 1, COL_INDEX),
+                                  self.index(len(self._rows) - 1, COL_GAME_INDEX),
                                   [PHighlightRole])
 
     def toggle_lock(self, i: int):
@@ -143,8 +147,11 @@ class PluginModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             if col == COL_NAME:
                 return r.name
-            if col == COL_INDEX:
+            if col == COL_PRIORITY:
                 return f"{index.row():03d}"
+            if col == COL_GAME_INDEX:
+                i = index.row()
+                return self._game_indexes[i] if i < len(self._game_indexes) else ""
             return ""
         # Flags-column tooltips are handled per-icon by PluginDelegate.helpEvent
         # (Tk parity), not via a whole-cell Qt.ToolTipRole.
@@ -164,6 +171,9 @@ class PluginModel(QAbstractTableModel):
         self.dataChanged.emit(self.index(i, 0),
                               self.index(i, len(COLUMNS) - 1),
                               [RowRole, Qt.DisplayRole])
+        # Disabling/enabling a plugin renumbers every following plugin's game
+        # index, so refresh the whole column (not just this row).
+        self._refresh_game_indexes()
         self._save()
 
     def set_enabled(self, indices, enabled: bool):
@@ -179,6 +189,7 @@ class PluginModel(QAbstractTableModel):
         self.dataChanged.emit(self.index(lo, 0),
                               self.index(hi, len(COLUMNS) - 1),
                               [RowRole, Qt.DisplayRole])
+        self._refresh_game_indexes()
         self._save()
 
     def is_movable(self, i: int) -> bool:
@@ -219,8 +230,18 @@ class PluginModel(QAbstractTableModel):
         insert_at = dest if dest < first else dest - len(block)
         self._rows[insert_at:insert_at] = block
         self.endMoveRows()
+        self._refresh_game_indexes()
         self._save()
         return True
+
+    def _refresh_game_indexes(self):
+        """Recompute the cached MO2-style game indexes after an order/enabled
+        change and repaint that column (data() reads the cache)."""
+        self._game_indexes = compute_game_indexes(self._rows)
+        if self._rows:
+            self.dataChanged.emit(self.index(0, COL_GAME_INDEX),
+                                  self.index(len(self._rows) - 1, COL_GAME_INDEX),
+                                  [Qt.DisplayRole])
 
     def _save(self):
         if self._game is not None and self._profile:

@@ -10,19 +10,21 @@ from __future__ import annotations
 
 import textwrap
 
-from PySide6.QtCore import Qt, QRect, QSize, QEvent, QTimer
-from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter
+from PySide6.QtCore import Qt, QRect, QSize, QEvent, QTimer, QCoreApplication
+from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QAction
 from PySide6.QtWidgets import (
     QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView, QHeaderView,
-    QToolTip,
+    QToolTip, QToolButton, QMenu,
 )
+
+from gui_qt import column_state
 
 from gui_qt.theme_qt import active_palette, _c, contrast_text
 from gui_qt.icons import icon
 from gui_qt.modlist_header import TkStyleHeader
 from gui_qt.plugin_model import (
     PluginModel, RowRole, PFlagsRole, PHighlightRole,
-    COL_NAME, COL_FLAGS, COL_LOCK, COL_INDEX,
+    COL_NAME, COL_FLAGS, COL_LOCK, COL_PRIORITY, COL_GAME_INDEX, COLUMNS,
 )
 from gui_qt.plugin_state import (
     PF_MISSING, PF_LATE, PF_VMM, PF_ESL, PF_LOOT, PF_DIRTY, PF_TAGS, PF_MASTER,
@@ -62,9 +64,14 @@ FONT_PX = 14
 LOCK_SZ = 17
 
 # Per-column min/default widths; Plugin Name (col 0) auto-fills like the modlist.
-COL_DEFAULTS = {COL_FLAGS: 80, COL_LOCK: 40, COL_INDEX: 60}
-COL_MINS = {COL_NAME: 120, COL_FLAGS: 60, COL_LOCK: 36, COL_INDEX: 50}
+COL_DEFAULTS = {COL_FLAGS: 80, COL_LOCK: 40, COL_PRIORITY: 44, COL_GAME_INDEX: 60}
+COL_MINS = {COL_NAME: 120, COL_FLAGS: 60, COL_LOCK: 36,
+            COL_PRIORITY: 40, COL_GAME_INDEX: 50}
 NAME_MIN = COL_MINS[COL_NAME]
+
+# Columns hidden on a fresh INI (no saved state): only the game-index column;
+# everything else shows by default.
+_FIRST_RUN_HIDDEN = {COL_GAME_INDEX}
 
 
 class PluginDelegate(QStyledItemDelegate):
@@ -136,7 +143,7 @@ class PluginDelegate(QStyledItemDelegate):
             self._paint_flags(p, r, index.data(PFlagsRole) or 0)
         elif col == COL_LOCK:
             self._paint_lock(p, r, index.model().is_locked(index.row()))
-        elif col == COL_INDEX:
+        elif col in (COL_PRIORITY, COL_GAME_INDEX):
             p.setPen(text_color)
             _f = QFont(); _f.setPixelSize(FONT_PX); p.setFont(_f)
             p.drawText(r, Qt.AlignVCenter | Qt.AlignHCenter,
@@ -393,10 +400,24 @@ class PluginView(QTreeView):
         # no overflow). Plugin Name (col 0) is the fill column.
         h = TkStyleHeader(self, COL_MINS, COL_DEFAULTS)
         self.setHeader(h)
+        h.setSectionsClickable(True)
         h.setMinimumSectionSize(min(COL_MINS.values()))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         for col, w in COL_DEFAULTS.items():
             self.setColumnWidth(col, w)
+
+        # Column show/hide menu + width/order/hidden persistence, mirroring the
+        # modlist (saved to a separate [qt_columns_plugins] INI section).
+        self._restoring = False
+        self._pinning_name = False
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(400)
+        self._save_timer.timeout.connect(self._save_column_state)
+        h.sectionResized.connect(lambda *a: self._schedule_save())
+        h.sectionMoved.connect(self._on_section_moved)
+        self._build_column_menu_button(h)
+        self._restore_column_state()
 
         # Marker strip (coloured-tick gutter beside the scrollbar) — same as the
         # modlist, driven by PHighlightRole.
@@ -421,6 +442,122 @@ class PluginView(QTreeView):
     def _reposition_marker_strip(self):
         from gui_qt.marker_strip import reposition_marker_strip
         reposition_marker_strip(self)
+
+    # ---- column show/hide menu (eye button, over the checkboxes) ----------
+    def _build_column_menu_button(self, header):
+        """Eye button pinned to the LEFT of the Plugin Name header, centred over
+        the row checkbox column below; opens a checkable show/hide menu (Name and
+        the icon-only Lock column always stay)."""
+        btn = QToolButton(header)
+        # Tint the eye glyph to the theme foreground so it reads in both modes.
+        btn.setIcon(icon("eye1_white.png", 16, color=_c(active_palette(), "TEXT_MAIN")))
+        btn.setIconSize(QSize(16, 16))
+        btn.setCursor(Qt.ArrowCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setAutoRaise(True)
+        btn.setToolTip(self.tr("Show / hide columns"))
+        bg = _c(active_palette(), "BG_HEADER")
+        btn.setStyleSheet(
+            f"QToolButton {{ background: {bg}; border: none; padding: 0px; }}")
+        btn.clicked.connect(self._show_column_menu)
+        self._col_menu_btn = btn
+        self._position_column_menu_button()
+        btn.show()
+
+    _COL_BTN_W = 26
+
+    def _position_column_menu_button(self):
+        btn = getattr(self, "_col_menu_btn", None)
+        if btn is None:
+            return
+        h = self.header()
+        # Centre on the row checkbox below it: the delegate draws the checkbox at
+        # (col_left + 10, …) with width CHECK_BOX (see _paint_name).
+        col_left = h.sectionViewportPosition(COL_NAME)
+        cb_center = col_left + 10 + CHECK_BOX // 2
+        x = cb_center - self._COL_BTN_W // 2
+        btn.setGeometry(max(0, x), 0, self._COL_BTN_W, h.height())
+        btn.raise_()
+
+    def _show_column_menu(self):
+        menu = QMenu(self)
+        for col, name in enumerate(COLUMNS):
+            if col in (COL_NAME, COL_LOCK):
+                continue   # Name always shown; Lock is icon-only (no label)
+            a = QAction(QCoreApplication.translate("PluginModel", name), menu)
+            a.setCheckable(True)
+            a.setChecked(not self.isColumnHidden(col))
+            a.toggled.connect(lambda checked, c=col: self._set_column_visible(c, checked))
+            menu.addAction(a)
+        btn = self._col_menu_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _set_column_visible(self, col: int, visible: bool):
+        self.setColumnHidden(col, not visible)
+        if visible and self.columnWidth(col) <= 0:
+            # Qt collapses a hidden section to 0; restore a sensible width so the
+            # re-shown column is actually visible.
+            self.header().resizeSection(col, COL_DEFAULTS.get(col, 60))
+        self._fit_name_to_width()   # Name re-absorbs/releases the freed width
+        self.viewport().update()
+        self._schedule_save()
+
+    def _on_section_moved(self, logical, old_visual, new_visual):
+        """Persist column order after a drag-reorder, keeping Plugin Name pinned
+        as the first (stretch + menu-button) column."""
+        if self._restoring or self._pinning_name:
+            return
+        h = self.header()
+        if h.visualIndex(COL_NAME) != 0:
+            self._pinning_name = True
+            h.moveSection(h.visualIndex(COL_NAME), 0)
+            self._pinning_name = False
+        self._position_column_menu_button()
+        self.viewport().update()
+        self._schedule_save()
+
+    # ---- column-state persistence (keyed by logical column name) ----------
+    def _schedule_save(self):
+        if not self._restoring:
+            self._save_timer.start()
+
+    def _save_column_state(self):
+        h = self.header()
+        widths = {COLUMNS[c]: self.columnWidth(c) for c in range(len(COLUMNS))}
+        order = [COLUMNS[h.logicalIndex(v)] for v in range(len(COLUMNS))]
+        hidden = {COLUMNS[c] for c in range(len(COLUMNS)) if self.isColumnHidden(c)}
+        # Lock's label is "" — skip it from name-keyed persistence (would collide
+        # with an empty order token); its visibility never changes anyway.
+        widths.pop("", None)
+        hidden.discard("")
+        order = [n for n in order if n]
+        column_state.save_state(widths, order, hidden, None, True,
+                                section="qt_columns_plugins")
+
+    def _restore_column_state(self):
+        st = column_state.load_state(section="qt_columns_plugins", columns=COLUMNS)
+        self._restoring = True
+        try:
+            if not (st["widths"] or st["order"] or st["hidden"]):
+                # Fresh INI: hide only the game-index column; show the rest.
+                for col in _FIRST_RUN_HIDDEN:
+                    self.setColumnHidden(col, True)
+                return
+            name_to_col = {n: i for i, n in enumerate(COLUMNS) if n}
+            for name, w in st["widths"].items():
+                if name in name_to_col and name != "Plugin Name":  # Name stays stretch
+                    self.setColumnWidth(name_to_col[name], w)
+            for name in st["hidden"]:
+                if name in name_to_col:
+                    self.setColumnHidden(name_to_col[name], True)
+            h = self.header()
+            for visual, name in enumerate(st["order"]):
+                if name in name_to_col:
+                    cur = h.visualIndex(name_to_col[name])
+                    if cur != -1 and cur != visual:
+                        h.moveSection(cur, visual)
+        finally:
+            self._restoring = False
 
     # ---- search + filter row hiding --------------------------------------
     def _apply_hidden(self) -> None:
@@ -697,12 +834,14 @@ class PluginView(QTreeView):
         super().showEvent(event)
         self._fit_name_to_width()
         self._reposition_marker_strip()
+        self._position_column_menu_button()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_name_to_width()
         if hasattr(self, "_marker_strip"):
             self._reposition_marker_strip()
+        self._position_column_menu_button()
 
     def _fit_name_to_width(self):
         vp = self.viewport().width()

@@ -45,14 +45,15 @@ def _write(parser):
 
 
 def save_state(widths: dict[str, int], order: list[str],
-               hidden: set[str], sort_col: str | None, ascending: bool) -> None:
+               hidden: set[str], sort_col: str | None, ascending: bool,
+               section: str = _SECTION) -> None:
     parser = _read()
     # Rewrite the section from scratch so stale keys (incl. legacy lower-cased
     # ``w_*`` duplicates from older builds) are removed rather than accumulated.
-    if parser.has_section(_SECTION):
-        parser.remove_section(_SECTION)
-    parser.add_section(_SECTION)
-    sec = parser[_SECTION]
+    if parser.has_section(section):
+        parser.remove_section(section)
+    parser.add_section(section)
+    sec = parser[section]
     for name, w in widths.items():
         sec[f"w_{name}"] = str(int(w))
     sec["order"] = ",".join(order)
@@ -62,21 +63,22 @@ def save_state(widths: dict[str, int], order: list[str],
     _write(parser)
 
 
-def load_state():
+def load_state(section: str = _SECTION, columns: list[str] | None = None):
     """Return dict(widths, order, hidden, sort_col, ascending) or empty defaults."""
     parser = _read()
     out = {"widths": {}, "order": [], "hidden": set(),
            "sort_col": None, "ascending": True}
-    if not parser.has_section(_SECTION):
+    if not parser.has_section(section):
         return out
-    sec = parser[_SECTION]
+    sec = parser[section]
     # Map width keys case-insensitively back to canonical column names. A
     # ui_config write (default, lower-casing optionxform) shares this file and
     # can lower-case our ``w_Mod Name`` → ``w_mod name``; resolve against the
     # real column names so widths survive that round-trip instead of silently
     # resetting. Unknown keys fall back to their raw (case-preserved) name.
-    from gui_qt.modlist_model import COLUMNS
-    _canon = {c.lower(): c for c in COLUMNS}
+    if columns is None:
+        from gui_qt.modlist_model import COLUMNS as columns
+    _canon = {c.lower(): c for c in columns}
     for key, val in sec.items():
         if key.startswith("w_"):
             try:

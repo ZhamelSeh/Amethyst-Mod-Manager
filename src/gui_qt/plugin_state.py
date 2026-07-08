@@ -58,6 +58,34 @@ _EXT_ORDER = {".esm": 0, ".esp": 1, ".esl": 2}
 _OVERWRITE_NAME = "[Overwrite]"
 
 
+def compute_game_indexes(rows: list[PluginRow]) -> list[str]:
+    """Return the game's load index for each row, aligned to *rows* order.
+
+    - Disabled            → "" (no index).
+    - Light / ESL-flagged → "FE:xxx" (all share slot FE, sub-index rolls to
+      FF after 4096).
+    - Normal              → "%02X" of the running normal-plugin counter.
+
+    Medium / ESH (slot FD) is not handled — the model has no medium flag today
+    (matches current game support). TODO medium/ESH when a game needs it.
+    """
+    out: list[str] = []
+    num_esl = 0
+    num_skipped = 0
+    for pos, row in enumerate(rows):
+        if not row.enabled:
+            out.append("")
+            num_skipped += 1
+            continue
+        if row.flags & PF_ESL:
+            esl_pos = 254 + (num_esl // 4096)
+            out.append(f"{esl_pos:02X}:{num_esl % 4096:03X}")
+            num_esl += 1
+        else:
+            out.append(f"{pos - num_esl - num_skipped:02X}")
+    return out
+
+
 def plugins_path(game, profile: str) -> Path | None:
     if game is None or not profile:
         return None

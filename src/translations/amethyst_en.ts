@@ -4833,6 +4833,10 @@ Re-scan to verify.</translation>
         <translation>Flags</translation>
     </message>
     <message>
+        <source>P</source>
+        <translation>P</translation>
+    </message>
+    <message>
         <source>Index</source>
         <translation>Index</translation>
     </message>
@@ -4866,6 +4870,13 @@ Right-click a plugin and choose 'Plugin Rules'.</translation>
 Drag a plugin from the left pane to add a rule.</source>
         <translation>No rules yet.
 Drag a plugin from the left pane to add a rule.</translation>
+    </message>
+</context>
+<context>
+    <name>PluginView</name>
+    <message>
+        <source>Show / hide columns</source>
+        <translation>Show / hide columns</translation>
     </message>
 </context>
 <context>

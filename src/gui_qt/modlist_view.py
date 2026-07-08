@@ -74,6 +74,11 @@ class ModListView(QTreeView):
         self._drag_active = False
         self._press_row = -1
         self._press_pos = None
+        # Shift-click range locking: remember the last separator row whose lock
+        # box was clicked and whether that click locked (True) or unlocked it,
+        # so a following shift-click applies the same action across the range.
+        self._lock_anchor_row = -1
+        self._lock_range_locking = True
         self._drop_slot = -1              # insertion row for the drop indicator
         self._DRAG_THRESHOLD = 6          # px before a press becomes a drag
 
@@ -459,6 +464,24 @@ class ModListView(QTreeView):
         self._save_separator_state()
         self.viewport().update()
 
+    def _lock_box_click(self, row: int, shift: bool):
+        """Handle a click on a separator's lock box. Plain click toggles the one
+        separator and records it as the range anchor; shift-click applies the
+        anchor's last action (lock/unlock) to every separator in between."""
+        m = self.model()
+        if shift and 0 <= self._lock_anchor_row < m.rowCount():
+            m.set_sep_lock_range(self._lock_anchor_row, row,
+                                 self._lock_range_locking)
+            # Leave the anchor put so the range can be re-extended.
+        else:
+            e = m.entry(row)
+            was_locked = e is not None and m.is_sep_locked(e.display_name)
+            m.toggle_sep_lock(row)
+            self._lock_anchor_row = row
+            self._lock_range_locking = not was_locked
+        self._save_separator_state()
+        self.viewport().update()
+
     def set_all_collapsed(self, collapsed: bool):
         """Collapse or expand every separator (Expand all / Collapse all)."""
         self.model().set_all_collapsed(collapsed)
@@ -548,14 +571,14 @@ class ModListView(QTreeView):
         self.viewport().update(0, 0, self.viewport().width(),
                                SEP_H + delta + 1)
 
-    def _sticky_click(self, row: int, band: QRect, pos: QPoint):
+    def _sticky_click(self, row: int, band: QRect, pos: QPoint, shift: bool = False):
         """A click on the pinned band acts like a click on the real separator
         row: the lock box toggles the lock, anywhere else toggles collapse
         (then scrolls the separator into view so the result is visible)."""
         delegate = self.itemDelegate()
         lock = getattr(delegate, "_lock_rect", None)
         if lock is not None and lock(band).contains(pos):
-            self._toggle_lock_row(row)
+            self._lock_box_click(row, shift)
             return
         self._toggle_collapse_row(row)
         self.scrollTo(self.model().index(row, 0),
@@ -829,7 +852,8 @@ class ModListView(QTreeView):
             pos = event.position().toPoint()
             if (info is not None and info[0] == row
                     and info[1].contains(pos)):
-                self._sticky_click(row, info[1], pos)
+                shift = bool(event.modifiers() & Qt.ShiftModifier)
+                self._sticky_click(row, info[1], pos, shift)
             self._press_row = -1
             event.accept()
             return
@@ -839,7 +863,9 @@ class ModListView(QTreeView):
         if event.button() == Qt.LeftButton and self._press_row >= 0:
             row = self._press_row
             self._press_row = -1
-            if self._handle_separator_click(row, event.position().toPoint()):
+            shift = bool(event.modifiers() & Qt.ShiftModifier)
+            if self._handle_separator_click(row, event.position().toPoint(),
+                                            shift):
                 event.accept()
                 return
         self._press_row = -1
@@ -893,7 +919,7 @@ class ModListView(QTreeView):
                           self.visualRect(idx))
         return True
 
-    def _handle_separator_click(self, row: int, pos) -> bool:
+    def _handle_separator_click(self, row: int, pos, shift: bool = False) -> bool:
         """If *row* is a real (collapsible) separator, toggle its lock (when the
         release is on the lock box) or its collapse (anywhere else on the band).
         Returns True when handled."""
@@ -908,7 +934,7 @@ class ModListView(QTreeView):
         lock = getattr(delegate, "_lock_rect", None)
         row_rect = self.visualRect(m.index(row, COL_NAME))
         if lock is not None and lock(row_rect).contains(pos):
-            self._toggle_lock_row(row)
+            self._lock_box_click(row, shift)
         else:
             self._toggle_collapse_row(row)
         return True

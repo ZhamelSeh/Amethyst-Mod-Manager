@@ -664,6 +664,19 @@ class ModListModel(QAbstractTableModel):
             self._sep_locks[name] = not self._sep_locks.get(name, False)
         return self._sep_locks
 
+    def set_sep_lock_range(self, row_a: int, row_b: int, locked: bool) -> dict[str, bool]:
+        """Set the lock state of every (lockable) separator between *row_a* and
+        *row_b* inclusive — used by shift-click range selection on the lock
+        boxes. Pinned/boundary separators in the range are skipped."""
+        lo, hi = sorted((row_a, row_b))
+        lo = max(0, lo)
+        hi = min(len(self._entries) - 1, hi)
+        for r in range(lo, hi + 1):
+            e = self._entries[r]
+            if e.is_separator and e.name not in _PINNED_NAMES:
+                self._sep_locks[e.display_name] = locked
+        return self._sep_locks
+
     # ---- bulk separator / mod operations (footer buttons) -----------------
     def collapsible_separator_names(self) -> list[str]:
         """Display names of separators that can be collapsed (excludes the

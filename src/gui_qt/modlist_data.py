@@ -121,8 +121,11 @@ def read_meta_for_entries(entries: list[ModEntry], staging_dir: Path,
 
         if meta.installed:
             try:
-                installed[e.name] = datetime.fromisoformat(
-                    meta.installed).strftime("%Y-%m-%d")
+                dt = datetime.fromisoformat(meta.installed)
+                if dt.date() == datetime.now().date():
+                    installed[e.name] = dt.strftime("%H:%M")
+                else:
+                    installed[e.name] = dt.strftime("%m/%d/%y")
             except Exception:
                 installed[e.name] = meta.installed[:10]
 

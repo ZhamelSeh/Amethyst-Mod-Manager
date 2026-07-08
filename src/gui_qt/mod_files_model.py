@@ -140,15 +140,14 @@ class ModFilesModel(QAbstractItemModel):
                 return self._disable_state(node)
 
         if role == Qt.ForegroundRole and col == COL_NAME:
-            from PySide6.QtGui import QColor
-            from gui_qt.theme_qt import active_palette, _c
+            from gui_qt.theme_qt import active_palette, qc
             pal = active_palette()
             if node.synthetic or self._is_greyed(node):
-                return QColor(_c(pal, "FILE_DIM"))
+                return qc(pal, "FILE_DIM")
             if node.conflict == 1:
-                return QColor(_c(pal, "FILE_WIN"))
+                return qc(pal, "FILE_WIN")
             if node.conflict == -1:
-                return QColor(_c(pal, "FILE_LOSE"))
+                return qc(pal, "FILE_LOSE")
         return None
 
     # ---- check-state helpers ---------------------------------------------
@@ -244,7 +243,6 @@ class ModFilesModel(QAbstractItemModel):
     def refresh_all(self):
         """Repaint every cell (after a Top Level change recomputes top_level)."""
         if self.rowCount():
-            top = self.index(0, 0)
             self.dataChanged.emit(self.createIndex(0, 0, self._root.children[0]),
                                   self.createIndex(self.rowCount() - 1, COL_DISABLE,
                                                    self._root.children[-1]),

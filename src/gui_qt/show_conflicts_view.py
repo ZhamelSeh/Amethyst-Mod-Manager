@@ -9,17 +9,16 @@ data is computed on a worker thread via the neutral Utils.conflicts_view.
 
 from __future__ import annotations
 
-import threading
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QSplitter, QTreeWidget, QTreeWidgetItem,
 )
 
 from gui_qt.theme_qt import active_palette, _c, danger_close_button
-from gui_qt.safe_emit import safe_emit
+from gui_qt.worker import run_in_worker
 from Utils.conflicts_view import BSA_ROW_RE
 
 # Exact Tk tone colours (section headers) + BSA row tint.
@@ -125,17 +124,12 @@ class ShowConflictsView(QWidget):
         ctx = dict(self._ctx)
         mod = self._mod_name
 
-        def worker():
-            try:
-                from Utils.conflicts_view import compute_mod_conflicts
-                win, lose, none = compute_mod_conflicts(mod, **ctx)
-            except Exception as exc:
-                self._log(f"[conflicts] compute failed: {exc}")
-                safe_emit(self._ready, None, None, None)
-                return
-            safe_emit(self._ready, win, lose, none)
+        def compute():
+            from Utils.conflicts_view import compute_mod_conflicts
+            return compute_mod_conflicts(mod, **ctx)
 
-        threading.Thread(target=worker, daemon=True, name="show-conflicts").start()
+        run_in_worker(compute, self._ready, name="show-conflicts",
+                      unpack=True, error_result=(None, None, None))
 
     def _on_ready(self, win, lose, none):
         if win is None and lose is None and none is None:

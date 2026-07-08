@@ -1,8 +1,8 @@
 """In-window overlay shown when a mod's structure doesn't match the game and
 auto-strip failed — the user types a prefix to install the files under (e.g.
 ``bin/x64`` for CET, ``archive/pc/mod`` for REDmod). Qt equivalent of the Tk
-``_SetPrefixDialog``. NOT a top-level window (Steam-Deck gaming mode opens those
-behind the app) — a dimmed child overlay like `gui_qt/nexus_file_chooser.py`.
+``_SetPrefixDialog``. A dimmed child overlay via gui_qt/overlay_base.py (NOT a
+top-level window — Steam-Deck gaming mode opens those behind the app).
 
 `on_done(result)` is called with:
     str   — install under this prefix ("" = install as-is, no remap)
@@ -11,39 +11,29 @@ behind the app) — a dimmed child overlay like `gui_qt/nexus_file_chooser.py`.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QPlainTextEdit, QFrame,
+    QWidget, QHBoxLayout, QLabel, QLineEdit, QPushButton, QPlainTextEdit,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class SetPrefixOverlay(QWidget):
+class SetPrefixOverlay(OverlayBase):
     CARD_W = 580
     CARD_H = 560
+    MIN_W = 360
+    MIN_H = 300
 
     def __init__(self, host: QWidget, mod_name: str, required: set,
                  file_list: list, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         self._file_list = file_list
         p = active_palette()
 
-        self.setStyleSheet("background: rgba(0,0,0,150);")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("PrefixCard")
-        self._card.setStyleSheet(
-            f"#PrefixCard {{ background:{_c(p,'BG_DEEP')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(6)
+        _card, v = self._make_card("PrefixCard", margins=(16, 14, 16, 14),
+                                   spacing=6, bg_key="BG_DEEP")
 
         if mod_name:
             mn = QLabel(self.tr("Mod: {0}").format(mod_name))
@@ -97,11 +87,8 @@ class SetPrefixOverlay(QWidget):
         bar.addWidget(use)
         v.addLayout(bar)
 
-        host.installEventFilter(self)
         self._refresh_preview("")
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
         self._entry.setFocus()
 
     @classmethod
@@ -121,35 +108,5 @@ class SetPrefixOverlay(QWidget):
             paths.append(f"{prefix}/{d}" if prefix else d)
         self._tree.setPlainText(build_tree_str(paths))
 
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(360, w), max(300, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
     def _on_prefix(self):
         self._finish(self._entry.text().strip())
-
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        self._host.removeEventFilter(self)
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(None)
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

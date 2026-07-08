@@ -411,7 +411,6 @@ class OnboardingView(QWidget):
         return lbl
 
     def _folder_row(self, edit: QLineEdit, which: str) -> QHBoxLayout:
-        pal = self._pal
         row = QHBoxLayout()
         row.setAlignment(Qt.AlignCenter)
         edit.setFixedWidth(340)

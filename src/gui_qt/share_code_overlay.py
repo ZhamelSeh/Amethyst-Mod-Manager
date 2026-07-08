@@ -7,42 +7,32 @@ clipboard automatically on open too).
 ``ShareCodeImportOverlay`` — a multi-line paste box; ``on_done(code)`` on Import
 or ``on_done(None)`` on Cancel / Esc / backdrop click.
 
-Both are child overlays (NOT top-level windows — gaming-mode opens top-levels
-behind the app), modeled on ``gui_qt/text_input_overlay.py``.
+Both are child overlays via gui_qt/overlay_base.py, sharing a small local base
+with the title/sub/text-area builders.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QPlainTextEdit,
+    QWidget, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class _CodeOverlayBase(QWidget):
+class _CodeOverlayBase(OverlayBase):
     CARD_W = 560
     CARD_H = 320
+    MIN_W = 380
+    MIN_H = 200
+    CLICK_OUTSIDE_CANCELS = True
 
-    def __init__(self, host: QWidget):
-        super().__init__(host)
-        self._host = host
-        self._done = False
-        p = active_palette()
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("ShareCodeCard")
-        self._card.setStyleSheet(
-            f"#ShareCodeCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        self._v = QVBoxLayout(self._card)
-        self._v.setContentsMargins(18, 16, 18, 16)
-        self._v.setSpacing(8)
+    def __init__(self, host: QWidget, on_done=None):
+        super().__init__(host, on_done=on_done)
+        _card, self._v = self._make_card("ShareCodeCard")
 
     def _p(self):
         return active_palette()
@@ -70,46 +60,6 @@ class _CodeOverlayBase(QWidget):
             f" border-radius:5px; padding:6px; font-family:monospace; }}")
         return area
 
-    def _show(self):
-        self._host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
-
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(380, w), max(200, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        self._host.removeEventFilter(self)
-        cb = getattr(self, "_on_done", None)
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(None)
-        else:
-            super().keyPressEvent(event)
-
-    def mousePressEvent(self, event):
-        if not self._card.geometry().contains(event.position().toPoint()):
-            self._finish(None)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)
-
 
 class ShareCodeExportOverlay(_CodeOverlayBase):
     """Show a generated share code with a Copy-to-clipboard button. The code is
@@ -117,7 +67,6 @@ class ShareCodeExportOverlay(_CodeOverlayBase):
 
     def __init__(self, host: QWidget, code: str, mod_count: int, on_copy=None):
         super().__init__(host)
-        self._on_done = None
         self._code = code
         self._on_copy = on_copy
 
@@ -145,7 +94,7 @@ class ShareCodeExportOverlay(_CodeOverlayBase):
         bar.addWidget(self._copy_btn)
         self._v.addLayout(bar)
 
-        self._show()
+        self._present()
         self._copy()   # auto-copy on open
 
     def _copy(self):
@@ -162,8 +111,7 @@ class ShareCodeImportOverlay(_CodeOverlayBase):
     Import, ``on_done(None)`` on Cancel / Esc / backdrop click."""
 
     def __init__(self, host: QWidget, on_done):
-        super().__init__(host)
-        self._on_done = on_done
+        super().__init__(host, on_done=on_done)
 
         self._v.addWidget(self._title(self.tr("Import code")))
         self._v.addWidget(self._sub(self.tr(
@@ -197,7 +145,7 @@ class ShareCodeImportOverlay(_CodeOverlayBase):
         bar.addWidget(ok)
         self._v.addLayout(bar)
 
-        self._show()
+        self._present()
         self._area.setFocus()
 
     def _confirm(self):

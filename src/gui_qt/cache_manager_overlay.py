@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import Qt, QEvent, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QPushButton,
     QScrollArea, QSizePolicy,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.confirm_overlay import ConfirmOverlay
 from Utils.config_paths import get_download_cache_dir
@@ -30,9 +31,12 @@ from Utils.config_paths import get_download_cache_dir
 _ORPHANS = "\x00__orphans__"
 
 
-class CacheManagerOverlay(QWidget):
+class CacheManagerOverlay(OverlayBase):
     CARD_W = 560
     CARD_H = 560
+    MIN_W = 360
+    MIN_H = 300
+    CLICK_OUTSIDE_CANCELS = True
 
     # worker -> UI thread (queued, thread-safe). Guard .emit() for a destroyed
     # widget (daemon threads outlive a quick close). Payloads typed `object`
@@ -43,10 +47,8 @@ class CacheManagerOverlay(QWidget):
     def __init__(self, host: QWidget, active_game_name: str = "",
                  on_closed=None):
         super().__init__(host)
-        self._host = host
         self._on_closed = on_closed
         self._active = (active_game_name or "").strip()
-        self._done = False
         self._pal = active_palette()
         self._checks: dict[str, QCheckBox] = {}
         self._size_lbls: dict[str, QLabel] = {}
@@ -55,33 +57,19 @@ class CacheManagerOverlay(QWidget):
         self._sizes_ready.connect(self._on_sizes)
         self._clear_done.connect(self._on_clear_done)
 
-        p = self._pal
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("CacheCard")
         # Only style the card itself — the buttons inherit the global QSS
         # #DangerButton/#FormButton/#PrimaryButton rules (all with min-height:30
         # so the action-bar buttons stay the same size). A local #DangerButton
         # override here previously made "Clear All" a different height.
-        self._card.setStyleSheet(
-            f"#CacheCard {{ background:{_c(p,'BG_DEEP')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        outer = QVBoxLayout(self._card)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        _card, outer = self._make_card("CacheCard", margins=(0, 0, 0, 0),
+                                       spacing=0, bg_key="BG_DEEP")
 
         self._build_toolbar(outer)
         self._build_header(outer)
         self._build_list(outer)
         self._build_actions(outer)
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
         # Populating the list walks staging roots (orphaned_tmp_dirs) which can
         # be slow on disk — defer it a tick so the overlay paints instantly.
         self._total_lbl.setText(self.tr("Total: calculating…"))
@@ -390,16 +378,9 @@ class CacheManagerOverlay(QWidget):
         self._status_lbl.setStyleSheet(f"color:{color}; font-size:12px;")
         self._status_lbl.setText(text)
 
-    # ---- reposition / close ------------------------------------------------
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(360, w), max(300, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self):
+    # ---- close --------------------------------------------------------------
+    def _finish(self, result=None):
+        """Override: on_closed takes no arguments."""
         if self._done:
             return
         self._done = True
@@ -412,18 +393,3 @@ class CacheManagerOverlay(QWidget):
         self.deleteLater()
         if cb is not None:
             cb()
-
-    def mousePressEvent(self, event):
-        if not self._card.geometry().contains(event.position().toPoint()):
-            self._finish()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish()
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

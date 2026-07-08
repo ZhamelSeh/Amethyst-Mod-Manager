@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QLabel, QPlainTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QLabel, QPlainTextEdit
 
 from gui_qt.safe_emit import safe_emit
 from gui_qt.theme_qt import active_palette, _c

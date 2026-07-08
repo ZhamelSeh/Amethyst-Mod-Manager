@@ -6,10 +6,10 @@ columns and no checkboxes. Col 0 = Path (tree), col 1 = Winning Mod.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QStyledItemDelegate
 
-from gui_qt.theme_qt import active_palette, _c
+from gui_qt.theme_qt import active_palette, _c, qc
 from gui_qt.icons import icon
 from gui_qt.data_model import COL_NAME, COL_MOD
 
@@ -23,10 +23,10 @@ class DataDelegate(QStyledItemDelegate):
         super().__init__(parent or view)
         self._view = view
         p = active_palette()
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_dim = QColor(_c(p, "TEXT_DIM"))
-        self.c_win = QColor(_c(p, "FILE_WIN"))
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_dim = qc(p, "TEXT_DIM")
+        self.c_win = qc(p, "FILE_WIN")
+        self.c_sel = qc(p, "BG_SELECT")
         self.c_arrow = _c(p, "DROPDOWN_ARROW")   # expand/collapse arrow tint
 
     def paint(self, p, opt, index):

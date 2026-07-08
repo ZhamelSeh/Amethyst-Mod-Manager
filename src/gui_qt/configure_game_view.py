@@ -13,7 +13,6 @@ Handles both cases in one view: "Add" framing when the game is unconfigured,
 
 from __future__ import annotations
 
-import os
 import shutil
 import threading
 from pathlib import Path
@@ -28,6 +27,7 @@ from PySide6.QtWidgets import (
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.add_game_view import _game_logo
 from gui_qt.safe_emit import safe_emit
+from gui_qt.worker import run_in_worker, NO_EMIT
 from Utils.deploy import LinkMode
 
 # Left column width — the image panel and the options panel share it.
@@ -1049,13 +1049,13 @@ class ConfigureGameView(QWidget):
         self._game_status.setStyleSheet(f"color:{self._c('TEXT_WARN')};")
         sig = self._sig
 
-        def worker():
+        def scan():
             from Utils.staging_migrate import collect_staging_files
             files, size = collect_staging_files(old_root)
-            safe_emit(sig.staging_scanned, old_root, new_root, files, size)
+            return old_root, new_root, files, size
 
-        threading.Thread(target=worker, daemon=True,
-                         name="staging-scan").start()
+        run_in_worker(scan, sig.staging_scanned, name="staging-scan",
+                      unpack=True, error_result=NO_EMIT)
 
     def _on_staging_scanned(self, old_root, new_root, files, size):
         if not files:

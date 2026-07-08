@@ -1,7 +1,6 @@
 """In-window overlay shown when installing a mod whose folder already exists.
-Qt equivalent of the Tk ``_ReplaceModDialog`` — a dimmed child overlay (NOT a
-top-level window; Steam-Deck gaming mode opens those behind the app), like
-`gui_qt/set_prefix_overlay.py` / `gui_qt/nexus_file_chooser.py`.
+Qt equivalent of the Tk ``_ReplaceModDialog`` — a dimmed child overlay (see
+gui_qt/overlay_base.py).
 
 `on_done(result)` is called with:
     "replace"        — wipe the existing folder + reinstall (keep its position)
@@ -11,40 +10,27 @@ top-level window; Steam-Deck gaming mode opens those behind the app), like
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFrame,
+    QWidget, QHBoxLayout, QLabel, QLineEdit, QPushButton,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class ModExistsOverlay(QWidget):
+class ModExistsOverlay(OverlayBase):
     CARD_W = 460
     CARD_H = 240
+    MIN_W = 320
+    MIN_H = 180
+    ESC_RESULT = "cancel"
 
     def __init__(self, host: QWidget, mod_name: str, conflict: bool, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         p = active_palette()
 
-        # Scope the dim to THIS widget only (an un-scoped `background:` cascades
-        # to every child, overriding the buttons' themed QSS → they render as raw
-        # grey Qt buttons).
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("ExistsCard")
-        self._card.setStyleSheet(
-            f"#ExistsCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(18, 16, 18, 16)
-        v.setSpacing(8)
+        _card, v = self._make_card("ExistsCard")
 
         title = QLabel(self.tr("Mod Already Exists"))
         title.setStyleSheet(
@@ -100,10 +86,7 @@ class ModExistsOverlay(QWidget):
         bar.addWidget(replace)
         v.addLayout(bar)
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
 
     @classmethod
     def show_over(cls, host, mod_name, conflict, on_done):
@@ -122,33 +105,3 @@ class ModExistsOverlay(QWidget):
         if not name:
             return
         self._finish(f"rename:{name}")
-
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(320, w), max(180, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        self._host.removeEventFilter(self)
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish("cancel")
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

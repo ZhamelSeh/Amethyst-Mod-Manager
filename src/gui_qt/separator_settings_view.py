@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QCheckBox, QRadioButton, QButtonGroup, QFrame, QSizePolicy,
+    QCheckBox, QRadioButton, QButtonGroup, QFrame,
 )
 
 from gui_qt.theme_qt import active_palette, _c, danger_close_button

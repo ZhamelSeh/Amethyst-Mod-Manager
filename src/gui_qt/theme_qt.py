@@ -9,9 +9,13 @@ mechanism the Tk app uses.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from Utils.themes import load_palettes
 from Utils.ui_config import get_appearance_mode
+
+if TYPE_CHECKING:
+    from PySide6.QtGui import QColor
 
 
 # Fallback used if a palette is missing a key, so QSS never renders with an
@@ -559,7 +563,6 @@ def _apply_qpalette(app, p: dict) -> None:
     """Seed a role-based QPalette so stock widgets (menus, combos, tooltips,
     disabled states) read the theme colours even where QSS doesn't reach."""
     from PySide6.QtGui import QPalette, QColor
-    from PySide6.QtCore import Qt
 
     c = lambda k: QColor(_c(p, k))
     pal = QPalette()
@@ -676,6 +679,20 @@ def contrast_text(bg: str, dark: str = "#101010", light: str = "#ffffff") -> str
         return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
     lum = 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
     return dark if lum > 0.4 else light
+
+
+def qc(pal: dict, key: str) -> "QColor":
+    """QColor for palette *key* — shorthand for ``QColor(_c(pal, key))``,
+    the incantation every delegate __init__ repeats per colour."""
+    from PySide6.QtGui import QColor
+    return QColor(_c(pal, key))
+
+
+def qc_contrast(pal: dict, key: str) -> "QColor":
+    """Auto-contrasted text QColor for the fill at palette *key* (shorthand
+    for ``QColor(contrast_text(_c(pal, key)))``)."""
+    from PySide6.QtGui import QColor
+    return QColor(contrast_text(_c(pal, key)))
 
 
 # One fixed size for every in-view close button (see danger_close_button).

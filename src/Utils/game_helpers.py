@@ -145,7 +145,6 @@ def _cc_plugins_for_game(game) -> dict[str, str]:
 
 def _load_games() -> list[str]:
     """Discover game handlers and return sorted display names (configured games only)."""
-    global _GAMES
     new_games = discover_games()
     _GAMES.clear()
     _GAMES.update(new_games)

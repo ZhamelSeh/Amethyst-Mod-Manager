@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QPoint, Signal, QCoreApplication
 from PySide6.QtWidgets import (
-    QTabWidget, QTabBar, QWidget, QVBoxLayout, QMainWindow, QStackedWidget,
+    QTabWidget, QTabBar, QWidget, QMainWindow, QStackedWidget,
     QLabel, QMenu,
 )
 

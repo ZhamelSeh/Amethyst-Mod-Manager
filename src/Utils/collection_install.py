@@ -748,7 +748,7 @@ def run_collection_install(
 
     # ---- download producer -------------------------------------------
     def _download_one(mod):
-        nonlocal _dl_done, _dl_bytes_done
+        nonlocal _dl_done
         mod_domain = (getattr(mod, "domain_name", "") or "").strip() or game_domain
         # Expected archive size for cache validation / partial-download detection.
         # The GraphQL mod list omits size_bytes for cross-domain entries (e.g. a

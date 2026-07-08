@@ -33,7 +33,6 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
-import shutil
 import sys
 import time
 from bisect import bisect_left
@@ -1200,95 +1199,6 @@ def _scan_dir(
     return source_name, result, root_result, invalid_names
 
 
-def fix_flat_staging_folders(
-    staging_root: Path,
-    signal_filenames: "set[str] | None" = None,
-    signal_extensions: "set[str] | None" = None,
-    already_structured_markers: "set[str] | None" = None,
-) -> list[str]:
-    """Wrap any flat mod staging folders so files are one level deeper.
-
-    Some games (e.g. Stardew Valley) require mods to live inside a named
-    subdirectory: Mods/<ModName>/<files>.  The staging folder should therefore
-    look like mods/<StagingName>/<ModName>/<files>.
-
-    A common mistake is copying Mods/<ModName>/ directly into staging, giving
-    mods/<ModName>/<files> — the <ModName> wrapper is missing and deploy puts
-    the files straight into Mods/ instead of Mods/<ModName>/.
-
-    This function detects staging folders whose contents are entirely loose
-    files (no subdirectory at all) and moves those files into a new subfolder
-    named after the staging folder itself.
-
-    Only folders that contain *exclusively* loose files (no existing subdir) are
-    touched, so mods that are already correctly structured are never modified.
-
-    The "needs wrapping" signal is a marker file at the staging root:
-      - ``signal_filenames`` — exact lowercase names (default: ``manifest.json``
-        for Stardew/SMAPI).
-      - ``signal_extensions`` — lowercase extensions incl. dot.
-
-    ``already_structured_markers`` — lowercase filenames (e.g. ``metadata.lua``)
-    that, when found in any immediate subdirectory, mark the mod as already
-    correctly structured so it is left untouched.  This prevents a loose file
-    at the root (e.g. a JA3 Packs ``.hpk`` sibling of an existing
-    ``<ModName>/metadata.lua`` folder) from triggering a spurious wrap.
-
-    Returns a list of staging folder names that were restructured.
-    """
-    names = {n.lower() for n in (signal_filenames or {"manifest.json"})}
-    exts = {e.lower() for e in (signal_extensions or set())}
-    guard = {n.lower() for n in (already_structured_markers or set())}
-    fixed: list[str] = []
-    if not staging_root.is_dir():
-        return fixed
-
-    for mod_dir in staging_root.iterdir():
-        if not mod_dir.is_dir():
-            continue
-
-        children = list(mod_dir.iterdir())
-        if not children:
-            continue
-
-        # Already-correctly-structured guard: if any immediate subdirectory
-        # already contains a marker file (e.g. metadata.lua), the mod is NOT
-        # flat — a loose file at the root (e.g. a Packs .hpk sibling) is part of
-        # a multi-destination mod and must not trigger a wrap.
-        if guard and any(
-            sub.is_dir() and any(
-                f.is_file() and f.name.lower() in guard for f in sub.iterdir()
-            )
-            for sub in children
-        ):
-            continue
-
-        # A marker file at the staging root is the definitive signal that the
-        # mod was copied flat and needs wrapping — regardless of whether there
-        # are also subdirectories (assets/, i18n/, etc.) present.
-        has_signal = any(
-            c.is_file()
-            and (c.name.lower() in names or c.suffix.lower() in exts)
-            for c in children
-        )
-        if not has_signal:
-            continue
-
-        # Move everything (files and subdirs) into a new subfolder named after
-        # the staging folder so the mod loader finds <ModName>/manifest.json.
-        # The manager's own metadata (meta.ini) must stay at the staging root,
-        # or the mod can no longer be matched to its meta.ini after wrapping.
-        sub = mod_dir / mod_dir.name
-        sub.mkdir(exist_ok=True)
-        for child in children:
-            if child.is_file() and child.name.lower() in _EXCLUDE_NAMES:
-                continue
-            shutil.move(str(child), str(sub / child.name))
-        fixed.append(mod_dir.name)
-
-    return fixed
-
-
 @lru_cache(maxsize=2048)
 def _upper_count(s: str) -> int:
     return sum(1 for c in s if c.isupper())
@@ -1733,17 +1643,6 @@ def read_mod_index(
     with _index_cache_lock:
         _index_cache = (path_str, mtime, index)
     return index
-
-
-def invalidate_filemap_cache(output_path: Path) -> None:
-    """Discard the skip-if-unchanged snapshot for output_path.
-
-    Call this whenever the mod index changes (install, remove, rebuild) so the
-    next build_filemap() always writes a fresh filemap.txt rather than skipping.
-    """
-    with _filemap_winner_cache_lock:
-        _filemap_winner_cache.pop(str(output_path), None)
-    _drop_incr_state(str(output_path))
 
 
 def _write_mod_index(

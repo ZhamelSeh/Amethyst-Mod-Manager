@@ -17,9 +17,7 @@ full display name (e.g. 'Skyrim Special Edition').  Matching is case-insensitive
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from pathlib import Path
 
 
 def _setup_path():

@@ -19,8 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
-from gui_qt.theme_qt import active_palette, _c, danger_close_button, button_qss
-from gui_qt.icons import icon
+from gui_qt.theme_qt import active_palette, _c, danger_close_button, button_qss, qc
 from gui_qt.safe_emit import safe_emit
 from Utils.mod_files_versions import resolve_latest_name_match, fmt_size, sort_key
 
@@ -29,12 +28,12 @@ from Utils.mod_files_versions import resolve_latest_name_match, fmt_size, sort_k
 def _hl_colors(p: dict | None = None) -> dict[str, QColor]:
     p = p or active_palette()
     return {
-        "installed_bg": QColor(_c(p, "BG_GREEN_DEEP")),
-        "installed_fg": QColor(_c(p, "TEXT_OK_BRIGHT")),
-        "match_bg":     QColor(_c(p, "BG_ORANGE_DEEP")),
-        "match_fg":     QColor(_c(p, "STATUS_QUEUED")),
-        "old_bg":       QColor(_c(p, "BG_RED_DEEP")),
-        "old_fg":       QColor(_c(p, "TEXT_ERR_BRIGHT")),
+        "installed_bg": qc(p, "BG_GREEN_DEEP"),
+        "installed_fg": qc(p, "TEXT_OK_BRIGHT"),
+        "match_bg":     qc(p, "BG_ORANGE_DEEP"),
+        "match_fg":     qc(p, "STATUS_QUEUED"),
+        "old_bg":       qc(p, "BG_RED_DEEP"),
+        "old_fg":       qc(p, "TEXT_ERR_BRIGHT"),
     }
 
 

@@ -35,7 +35,7 @@ from Utils.config_paths import (
     get_game_config_path,
     get_profile_exe_args_path,
 )
-from Utils.xdg import host_env, spawn_watched, xdg_open
+from Utils.xdg import spawn_watched, xdg_open
 
 _LAUNCH_MODE_FILE = "exe_launch_mode.json"
 _CUSTOM_EXES_FILE = "custom_exes.json"

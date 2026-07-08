@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import threading
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -764,7 +765,6 @@ def scan_drives_for_exe(exe_names: list[str],
     abort the walk early.
     """
     import concurrent.futures
-    import threading as _threading
 
     names = {Path(e.replace("\\", "/")).name for e in exe_names if e}
     if not names:
@@ -796,7 +796,7 @@ def scan_drives_for_exe(exe_names: list[str],
         roots = [Path("/")]
 
     if stop_event is None:
-        stop_event = _threading.Event()
+        stop_event = threading.Event()
 
     def _scan_subtree(start: Path) -> Path | None:
         for dirpath, dirnames, filenames in os.walk(start, followlinks=False):

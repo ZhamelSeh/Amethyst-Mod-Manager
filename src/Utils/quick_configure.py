@@ -24,7 +24,7 @@ No Qt imports here — this module stays importable in headless tests.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from Utils.deploy import LinkMode
 

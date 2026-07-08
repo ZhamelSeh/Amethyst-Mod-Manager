@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from gui_qt.theme_qt import active_palette, _c, danger_close_button, button_qss
 from gui_qt.wheel_guard import no_wheel
+from gui_qt.worker import run_in_worker
 from Utils import exe_launch
 from Utils.wine_paths import to_wine_path
 
@@ -372,7 +373,7 @@ class ExeSettingsView(QWidget):
             return
         game, exe_path, log = self._game, self._exe_path, self._log
 
-        def worker():
+        def launch():
             result = exe_launch.prepare_tool_prefix(exe_path, selected, game,
                                                     log_fn=log)
             if result is None:
@@ -380,8 +381,7 @@ class ExeSettingsView(QWidget):
             _script, prefix_dir, _env = result
             exe_launch.launch_winetricks_in_prefix(prefix_dir / "pfx", log_fn=log)
 
-        threading.Thread(target=worker, daemon=True,
-                         name="exe-prefix-winetricks").start()
+        run_in_worker(launch, name="exe-prefix-winetricks")
 
     def _run_winecfg_in_prefix(self):
         selected = self._selected_proton()
@@ -389,7 +389,7 @@ class ExeSettingsView(QWidget):
             return
         game, exe_path, log = self._game, self._exe_path, self._log
 
-        def worker():
+        def launch():
             result = exe_launch.prepare_tool_prefix(exe_path, selected, game,
                                                     log_fn=log)
             if result is None:
@@ -398,8 +398,7 @@ class ExeSettingsView(QWidget):
             exe_launch.launch_wine_tool_in_prefix(
                 proton_script, prefix_dir, env, "winecfg", log_fn=log)
 
-        threading.Thread(target=worker, daemon=True,
-                         name="exe-prefix-winecfg").start()
+        run_in_worker(launch, name="exe-prefix-winecfg")
 
     def _install_java_into_prefix(self):
         """Install a Windows JRE (with JavaFX) into the jar's target prefix.

@@ -8,51 +8,40 @@ that whole group in one go. Archives with no matching plugin get a trailing
 
 Grouping/size/count come from ``Utils.bsa_pack_ops.collect_unpack_groups`` (shared
 with Tk). ``on_done(list[Path])`` is called with the chosen group's archives; the
-overlay closes itself. Follows the ``confirm_overlay.py`` convention with a scroll
-body (like ``download_locations_overlay.py``).
+overlay closes itself. Dimmed child overlay via gui_qt/overlay_base.py with a
+scroll body (like ``download_locations_overlay.py``).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea,
 )
 
 import Utils.bsa_pack_ops as ops
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class BsaUnpackOverlay(QWidget):
+class BsaUnpackOverlay(OverlayBase):
     CARD_W = 620
     CARD_H = 520
+    MIN_W = 400
+    MIN_H = 300
 
     def __init__(self, host: QWidget, *, mod_name: str, mod_dir: Path,
                  plugin_exts, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         p = active_palette()
-
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
 
         groups = ops.collect_unpack_groups(mod_dir, plugin_exts)
         all_archives = [a for g in groups for a in g.archives]
         kind_label = ops.unpack_kind_label(all_archives) if all_archives else "Archive"
 
-        self._card = QFrame(self)
-        self._card.setObjectName("UnpackCard")
-        self._card.setStyleSheet(
-            f"#UnpackCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(18, 16, 18, 14)
-        v.setSpacing(8)
+        _card, v = self._make_card("UnpackCard", margins=(18, 16, 18, 14))
 
         title_lbl = QLabel(self.tr("Unpack {0} — {1}").format(kind_label, mod_name))
         title_lbl.setStyleSheet(
@@ -97,10 +86,7 @@ class BsaUnpackOverlay(QWidget):
         bar.addWidget(close)
         v.addLayout(bar)
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
 
     def _group_row(self, g: ops.UnpackGroup, p) -> QWidget:
         row = QFrame()
@@ -147,34 +133,3 @@ class BsaUnpackOverlay(QWidget):
         top = host.window() if host is not None else None
         return cls(top or host, mod_name=mod_name, mod_dir=mod_dir,
                    plugin_exts=plugin_exts, on_done=on_done)
-
-    # -- internals ----------------------------------------------------------
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(400, w), max(300, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        self._host.removeEventFilter(self)
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(None)
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

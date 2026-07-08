@@ -465,7 +465,7 @@ def run_vramr(
         f.write(f"GameDir             : {game_data_dir}\n")
         f.write(f"Preset              : {p['label']}\n")
         f.write(f"Resolutions         : D={diffuse} N={normal} P={parallax} M={material}\n")
-        f.write(f"Platform            : Linux (native optimise via CompressonatorCLI)\n\n")
+        f.write("Platform            : Linux (native optimise via CompressonatorCLI)\n\n")
 
     def _file_log(msg: str):
         with open(log_file, "a") as f:

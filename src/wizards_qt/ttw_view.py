@@ -24,7 +24,7 @@ from gui_qt.safe_emit import safe_emit
 from gui_qt.theme_qt import active_palette, _c
 from wizards_qt._view_base import GREEN, RED, WizardViewBase
 from Utils.ttw_tools import (
-    APP_DIR, EXE_NAME, GITHUB_REPO_URL, MODPUB_URL, OUTPUT_NAME,
+    EXE_NAME, GITHUB_REPO_URL, MODPUB_URL, OUTPUT_NAME,
     find_fo3_install, find_ttw_installer, ttw_mod_dir,
 )
 

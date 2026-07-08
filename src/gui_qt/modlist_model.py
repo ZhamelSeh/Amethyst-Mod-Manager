@@ -598,15 +598,27 @@ class ModListModel(QAbstractTableModel):
         """Enable/disable the mods at *rows* (skips separators + locked), then
         save + emit enabled_changed ONCE for the whole batch."""
         changed: list[tuple[str, bool]] = []
+        changed_rows: list[int] = []
         for r in rows:
             e = self._entries[r]
             if e.is_separator or e.locked or e.enabled == enabled:
                 continue
             e.enabled = enabled
             changed.append((e.name, enabled))
-            self.dataChanged.emit(self.index(r, 0),
-                                  self.index(r, len(COLUMNS) - 1),
-                                  [EntryRole, Qt.DisplayRole])
+            changed_rows.append(r)
+        # One dataChanged per contiguous run, not per row — Enable/Disable-All
+        # on a large modlist would otherwise trigger a repaint per mod.
+        changed_rows.sort()
+        run_start = prev = None
+        for r in changed_rows + [None]:
+            if prev is not None and (r is None or r != prev + 1):
+                self.dataChanged.emit(self.index(run_start, 0),
+                                      self.index(prev, len(COLUMNS) - 1),
+                                      [EntryRole, Qt.DisplayRole])
+                run_start = None
+            if r is not None and run_start is None:
+                run_start = r
+            prev = r
         if changed:
             self.save()
             self.enabled_changed.emit(changed)

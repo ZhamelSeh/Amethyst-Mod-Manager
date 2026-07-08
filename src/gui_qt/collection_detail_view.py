@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.safe_emit import safe_emit
+from gui_qt.worker import run_in_worker
 from Utils.collection_manifest import fmt_size
 
 
@@ -391,18 +392,11 @@ class CollectionDetailView(QWidget):
                         and self._pending_initial_rev is not None)
                else self._revision_number)
 
-        def worker():
-            try:
-                result = self._api.get_collection_detail(
-                    slug, domain, revision_number=rev)
-            except Exception as exc:
-                self._log(f"Collection detail error: {exc}")
-                safe_emit(self._detail_ready, (token, None))
-                return
-            safe_emit(self._detail_ready, (token, result))
-
-        threading.Thread(target=worker, daemon=True,
-                         name="collection-detail").start()
+        run_in_worker(
+            lambda: (token, self._api.get_collection_detail(
+                slug, domain, revision_number=rev)),
+            self._detail_ready, name="collection-detail",
+            error_result=(token, None))
 
     def _on_detail_ready(self, payload):
         token, result = payload

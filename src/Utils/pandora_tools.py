@@ -79,7 +79,6 @@ def run_pandora(exe: Path, game: "BaseGame", proton_script: Path,
     from Utils.bethesda_registry import maybe_register_for_game
     from Utils.exe_args_builder import _bootstrap_pandora_settings
     from Utils.exe_launch import shutdown_prefix_wineserver
-    from Utils.steam_finder import proton_run_command
     from Utils.wine_paths import to_wine_path
 
     game_path = game.get_game_path()

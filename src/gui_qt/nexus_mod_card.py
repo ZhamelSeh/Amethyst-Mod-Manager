@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import Qt, QObject, Signal, QCoreApplication
 from PySide6.QtGui import QPixmap, QImage, QFontMetrics, QTextLayout
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QMenu,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
 )
 
 from gui_qt.theme_qt import active_palette, _c, contrast_text

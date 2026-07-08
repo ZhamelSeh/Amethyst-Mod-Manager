@@ -6,10 +6,10 @@ centred in the Top Level / Disable columns) and uses the separator arrow assets
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QColor, QPen, QBrush, QFont
+from PySide6.QtGui import QPen, QBrush, QFont
 from PySide6.QtWidgets import QStyledItemDelegate
 
-from gui_qt.theme_qt import active_palette, _c, contrast_text
+from gui_qt.theme_qt import active_palette, _c, qc, qc_contrast
 from gui_qt.icons import icon
 from gui_qt.mod_files_model import COL_NAME, COL_TOPLEVEL, COL_DISABLE
 
@@ -24,16 +24,16 @@ class ModFilesDelegate(QStyledItemDelegate):
         super().__init__(parent or view)
         self._view = view
         p = active_palette()
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_dim = QColor(_c(p, "FILE_DIM"))
-        self.c_win = QColor(_c(p, "FILE_WIN"))
-        self.c_lose = QColor(_c(p, "FILE_LOSE"))
-        self.c_border = QColor(_c(p, "BORDER_FAINT"))
-        self.c_check = QColor(_c(p, "CHECK_FILL"))
-        self.c_check_off = QColor(_c(p, "BG_DEEP"))
-        self.c_tick = QColor(contrast_text(_c(p, "CHECK_FILL")))   # tick reads on the checkbox fill
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
-        self.c_part = QColor(_c(p, "ACCENT"))
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_dim = qc(p, "FILE_DIM")
+        self.c_win = qc(p, "FILE_WIN")
+        self.c_lose = qc(p, "FILE_LOSE")
+        self.c_border = qc(p, "BORDER_FAINT")
+        self.c_check = qc(p, "CHECK_FILL")
+        self.c_check_off = qc(p, "BG_DEEP")
+        self.c_tick = qc_contrast(p, "CHECK_FILL")   # tick reads on the checkbox fill
+        self.c_sel = qc(p, "BG_SELECT")
+        self.c_part = qc(p, "ACCENT")
         self.c_arrow = _c(p, "DROPDOWN_ARROW")   # expand/collapse arrow tint
 
     def paint(self, p, opt, index):

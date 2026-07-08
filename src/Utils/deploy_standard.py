@@ -899,7 +899,6 @@ def deploy_filemap(
     # One lstat per task instead of islink+isfile (two stat-equivalent calls).
     # Files whose top-level folder was already wholesale-replaced above will
     # no longer exist here — the lstat just no-ops and the loop moves on.
-    _custom_backup_str = str(_custom_backup_dir)
     for _src_s, dst_s, _rel_lower, is_custom, _use_sym, _ov in tasks:
         if not is_custom:
             continue

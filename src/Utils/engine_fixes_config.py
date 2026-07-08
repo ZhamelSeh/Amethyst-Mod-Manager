@@ -271,7 +271,7 @@ def render_toml(base_text: str, values: dict[tuple[str, str], str]) -> str:
         ident = (section, key)
         if ident not in values:
             continue
-        indent, eq, _old, comment = m.group(1), m.group(3), m.group(4), m.group(5) or ""
+        indent, eq, comment = m.group(1), m.group(3), m.group(5) or ""
         lines[i] = f"{indent}{key}{eq}{values[ident]}{comment}"
         seen.add(ident)
 

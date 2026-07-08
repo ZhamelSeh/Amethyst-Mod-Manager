@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 import threading
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QObject, QT_TRANSLATE_NOOP
 from PySide6.QtGui import QFont

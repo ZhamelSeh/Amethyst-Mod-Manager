@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton, QTextEdit,
 )
 
-from gui_qt.theme_qt import active_palette, _c
+from gui_qt.theme_qt import active_palette, _c, qc
 
 
 class _LineNumberArea(QWidget):
@@ -201,8 +201,8 @@ class TextEditor(QWidget):
         v.addWidget(self._edit, 1)
 
         self._hl_format = QTextCharFormat()
-        self._hl_format.setBackground(QColor(_c(p, "ACCENT")))
-        self._hl_format.setForeground(QColor(_c(p, "TEXT_ON_ACCENT")))
+        self._hl_format.setBackground(qc(p, "ACCENT"))
+        self._hl_format.setForeground(qc(p, "TEXT_ON_ACCENT"))
 
     # -- load / save --------------------------------------------------------
     def load_file(self, path: Path, display_name: str = ""):

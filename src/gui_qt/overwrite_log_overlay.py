@@ -2,20 +2,21 @@
 
 Shows the files swept into the deploy target's ``overwrite/`` per restore, newest
 restore first, parsed from ``.mm_overwrite_log.txt``. Qt port of
-``gui/modlist_panel._show_overwrite_log``. A dimmed child overlay (NOT a top-level
-window — gaming-mode opens top-levels behind the app) with a scrollable body and a
-Close button. All widgets built once with real parents.
+``gui/modlist_panel._show_overwrite_log``. A dimmed child overlay (see
+gui_qt/overlay_base.py) with a scrollable body and a Close button. All widgets
+built once with real parents.
 """
 
 from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QTextEdit,
+    QWidget, QHBoxLayout, QLabel, QPushButton, QTextEdit,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
@@ -41,29 +42,18 @@ def parse_overwrite_log(text: str) -> "list[tuple[str, list[str]]]":
     return sections
 
 
-class OverwriteLogOverlay(QWidget):
+class OverwriteLogOverlay(OverlayBase):
     CARD_W = 640
     CARD_H = 520
+    MIN_W = 360
+    MIN_H = 240
 
     def __init__(self, host: QWidget, sections: "list[tuple[str, list[str]]]",
                  title: "str | None" = None):
         super().__init__(host)
-        self._host = host
-        self._done = False
         p = active_palette()
 
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("_OvlLogCard")
-        self._card.setStyleSheet(
-            f"#_OvlLogCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(8)
+        _card, v = self._make_card("_OvlLogCard", margins=(16, 14, 16, 14))
 
         header = QHBoxLayout()
         title_lbl = QLabel(
@@ -74,7 +64,7 @@ class OverwriteLogOverlay(QWidget):
         close = QPushButton(self.tr("Close"))
         close.setObjectName("FormButton")
         close.setCursor(Qt.PointingHandCursor)
-        close.clicked.connect(self._finish)
+        close.clicked.connect(lambda: self._finish())
         header.addWidget(close)
         v.addLayout(header)
 
@@ -86,10 +76,7 @@ class OverwriteLogOverlay(QWidget):
         body.setHtml(self._render(sections, p))
         v.addWidget(body, 1)
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
         self.setFocus()
 
     @classmethod
@@ -112,34 +99,3 @@ class OverwriteLogOverlay(QWidget):
                 parts.append(f"<div style='color:{dim};margin-left:12px'>"
                              f"{escape(f)}</div>")
         return "".join(parts)
-
-    # -- internals ----------------------------------------------------------
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(360, w), max(240, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self):
-        if self._done:
-            return
-        self._done = True
-        try:
-            self._host.removeEventFilter(self)
-        except Exception:
-            pass
-        self.hide()
-        self.deleteLater()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish()
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

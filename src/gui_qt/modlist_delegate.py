@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QRect, QSize, QEvent
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle, QToolTip
 
-from gui_qt.theme_qt import active_palette, _c, contrast_text
+from gui_qt.theme_qt import active_palette, _c, qc, qc_contrast
 from gui_qt.icons import icon
 from gui_qt.modlist_model import (
     EntryRole, ConflictRole, BsaConflictRole, FlagsRole, HighlightRole,
@@ -116,31 +116,31 @@ class ModRowDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         p = active_palette()
-        self.c_sep_bg = QColor(_c(p, "BG_SEP"))
-        self.c_sep_text = QColor(_c(p, "TEXT_SEP"))
-        self.c_row = QColor(_c(p, "BG_ROW"))
-        self.c_row_alt = QColor(_c(p, "BG_ROW_ALT"))
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
-        self.c_hover = QColor(_c(p, "BG_ROW_HOVER"))
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_text_dim = QColor(_c(p, "TEXT_DIM"))
-        self.c_text_on_sel = QColor(_c(p, "TEXT_ON_ACCENT"))
-        self.c_tick = QColor(contrast_text(_c(p, "CHECK_FILL")))   # tick reads on the checkbox fill
-        self.c_border = QColor(_c(p, "BORDER"))
+        self.c_sep_bg = qc(p, "BG_SEP")
+        self.c_sep_text = qc(p, "TEXT_SEP")
+        self.c_row = qc(p, "BG_ROW")
+        self.c_row_alt = qc(p, "BG_ROW_ALT")
+        self.c_sel = qc(p, "BG_SELECT")
+        self.c_hover = qc(p, "BG_ROW_HOVER")
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_text_dim = qc(p, "TEXT_DIM")
+        self.c_text_on_sel = qc(p, "TEXT_ON_ACCENT")
+        self.c_tick = qc_contrast(p, "CHECK_FILL")   # tick reads on the checkbox fill
+        self.c_border = qc(p, "BORDER")
         self.c_arrow = _c(p, "DROPDOWN_ARROW")   # separator collapse arrow tint
-        self.c_lock = QColor(_c(p, "TEXT_WARN"))
-        self.c_win = QColor(_c(p, "TEXT_OK_BRIGHT"))
-        self.c_lose = QColor(_c(p, "TEXT_ERR_BRIGHT"))
-        self.c_check = QColor(_c(p, "CHECK_FILL"))   # checkbox fill when enabled
-        self.c_check_off = QColor(_c(p, "BG_DEEP"))   # checkbox fill when disabled
-        self.c_overwrite_bg = QColor(_c(p, "OVERWRITE_SEP_BG"))  # Overwrite band
-        self.c_root_bg = QColor(_c(p, "ROOT_SEP_BG"))            # Root Folder band
+        self.c_lock = qc(p, "TEXT_WARN")
+        self.c_win = qc(p, "TEXT_OK_BRIGHT")
+        self.c_lose = qc(p, "TEXT_ERR_BRIGHT")
+        self.c_check = qc(p, "CHECK_FILL")   # checkbox fill when enabled
+        self.c_check_off = qc(p, "BG_DEEP")   # checkbox fill when disabled
+        self.c_overwrite_bg = qc(p, "OVERWRITE_SEP_BG")  # Overwrite band
+        self.c_root_bg = qc(p, "ROOT_SEP_BG")            # Root Folder band
         # Cross-panel highlight row tints (palette-driven; seeded from Tk colours).
-        self.c_hl_higher = QColor(_c(p, "CONFLICT_HL_WIN"))    # selection beats this mod (green)
-        self.c_hl_lower = QColor(_c(p, "CONFLICT_HL_LOSE"))    # this mod beats selection (red)
-        self.c_hl_anchor = QColor(_c(p, "CONFLICT_HL_ANCHOR")) # plugin-selected mod (orange)
-        self.c_root_text = QColor(_c(p, "ROOT_SEP_FG"))
-        self.c_overwrite_text = QColor(_c(p, "OVERWRITE_SEP_FG"))
+        self.c_hl_higher = qc(p, "CONFLICT_HL_WIN")    # selection beats this mod (green)
+        self.c_hl_lower = qc(p, "CONFLICT_HL_LOSE")    # this mod beats selection (red)
+        self.c_hl_anchor = qc(p, "CONFLICT_HL_ANCHOR") # plugin-selected mod (orange)
+        self.c_root_text = qc(p, "ROOT_SEP_FG")
+        self.c_overwrite_text = qc(p, "OVERWRITE_SEP_FG")
         # Shared row/label fonts — paint() runs per visible cell, so build
         # these once instead of allocating a QFont per call.
         self.f_row = QFont()

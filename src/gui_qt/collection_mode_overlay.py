@@ -7,10 +7,9 @@ Shown BEFORE the download/install pipeline to choose how to install a collection
   * ContinueOverlay — shown when this exact collection+revision is already in a
                       profile; a single "Continue Install" action.
 
-Borderless in-window overlays (NOT top-level QDialogs — gaming-mode opens
-top-levels behind the app). All widgets are built ONCE with real parents (no
-per-item unparented widgets that could flash as blank top-level windows — see the
-collection install-overlay fix).
+Borderless in-window overlays via gui_qt/overlay_base.py. All widgets are built
+ONCE with real parents (no per-item unparented widgets that could flash as
+blank top-level windows — see the collection install-overlay fix).
 
 ``on_done(result)`` is called with the SAME tuple shape the neutral wiring expects:
   ("new", None, False, False)
@@ -21,73 +20,29 @@ collection install-overlay fix).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QRadioButton, QCheckBox, QComboBox, QButtonGroup,
+    QHBoxLayout, QLabel, QPushButton, QRadioButton, QCheckBox, QComboBox,
+    QButtonGroup,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class _BaseModeOverlay(QWidget):
+class _BaseModeOverlay(OverlayBase):
     CARD_W = 480
     CARD_H = 300
+    MIN_W = 360
+    MIN_H = 220
 
-    def __init__(self, host: QWidget, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+    def __init__(self, host, on_done):
+        super().__init__(host, on_done=on_done)
         self._p = active_palette()
-
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("_ModeCard")
-        self._card.setStyleSheet(
-            f"#_ModeCard {{ background:{self._c('BG_PANEL')};"
-            f" border:1px solid {self._c('BORDER')}; border-radius:8px; }}")
-        host.installEventFilter(self)
+        _card, self._v = self._make_card("_ModeCard", margins=(20, 16, 20, 16))
 
     def _c(self, k):
         return _c(self._p, k)
-
-    # -- lifecycle ----------------------------------------------------------
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        try:
-            self._host.removeEventFilter(self)
-        except Exception:
-            pass
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(None)
-        else:
-            super().keyPressEvent(event)
-
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(360, w), max(220, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)
 
 
 class ModeOverlay(_BaseModeOverlay):
@@ -98,9 +53,7 @@ class ModeOverlay(_BaseModeOverlay):
         self._profiles = list(profiles or [])
         self._force_new = bool(force_new_profile)
         self._build()
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
 
     @classmethod
     def show_over(cls, host, profiles, on_done, force_new_profile: bool = False):
@@ -108,9 +61,7 @@ class ModeOverlay(_BaseModeOverlay):
         return cls(top or host, profiles, on_done, force_new_profile=force_new_profile)
 
     def _build(self):
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(20, 16, 20, 16)
-        v.setSpacing(8)
+        v = self._v
 
         title = QLabel(self.tr("Install Collection"), self._card)
         title.setStyleSheet(
@@ -207,9 +158,7 @@ class ContinueOverlay(_BaseModeOverlay):
         super().__init__(host, on_done)
         self._profile_name = profile_name
         self._build()
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
 
     @classmethod
     def show_over(cls, host, profile_name, on_done):
@@ -217,8 +166,7 @@ class ContinueOverlay(_BaseModeOverlay):
         return cls(top or host, profile_name, on_done)
 
     def _build(self):
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(20, 16, 20, 16)
+        v = self._v
         v.setSpacing(10)
 
         title = QLabel(self.tr("Continue Collection Install"), self._card)

@@ -13,13 +13,13 @@ import textwrap
 from PySide6.QtCore import Qt, QRect, QSize, QEvent, QTimer, QCoreApplication
 from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QAction
 from PySide6.QtWidgets import (
-    QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView, QHeaderView,
+    QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView,
     QToolTip, QToolButton, QMenu,
 )
 
 from gui_qt import column_state
 
-from gui_qt.theme_qt import active_palette, _c, contrast_text
+from gui_qt.theme_qt import active_palette, _c, qc, qc_contrast
 from gui_qt.icons import icon
 from gui_qt.modlist_header import TkStyleHeader
 from gui_qt.plugin_model import (
@@ -27,7 +27,7 @@ from gui_qt.plugin_model import (
     COL_NAME, COL_FLAGS, COL_LOCK, COL_PRIORITY, COL_GAME_INDEX, COLUMNS,
 )
 from gui_qt.plugin_state import (
-    PF_MISSING, PF_LATE, PF_VMM, PF_ESL, PF_LOOT, PF_DIRTY, PF_TAGS, PF_MASTER,
+    PF_MISSING, PF_LATE, PF_VMM, PF_ESL, PF_LOOT, PF_DIRTY, PF_TAGS,
     PF_USERLIST, PF_UL_CYCLE, format_loot_tooltip,
 )
 
@@ -78,30 +78,30 @@ class PluginDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         p = active_palette()
-        self.c_row = QColor(_c(p, "BG_ROW"))
-        self.c_row_alt = QColor(_c(p, "BG_ROW_ALT"))
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
-        self.c_hover = QColor(_c(p, "BG_ROW_HOVER"))
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_text_dim = QColor(_c(p, "TEXT_DIM"))
-        self.c_text_on_sel = QColor(_c(p, "TEXT_ON_ACCENT"))
-        self.c_tick = QColor(contrast_text(_c(p, "CHECK_FILL")))   # tick reads on the checkbox fill
-        self.c_border = QColor(_c(p, "BORDER"))
-        self.c_check = QColor(_c(p, "CHECK_FILL"))   # checkbox fill when enabled
-        self.c_check_off = QColor(_c(p, "BG_DEEP"))
-        self.c_esl = QColor(_c(p, "TONE_BLUE_SOFT"))
-        self.c_master = QColor(_c(p, "TEXT_WARN"))
+        self.c_row = qc(p, "BG_ROW")
+        self.c_row_alt = qc(p, "BG_ROW_ALT")
+        self.c_sel = qc(p, "BG_SELECT")
+        self.c_hover = qc(p, "BG_ROW_HOVER")
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_text_dim = qc(p, "TEXT_DIM")
+        self.c_text_on_sel = qc(p, "TEXT_ON_ACCENT")
+        self.c_tick = qc_contrast(p, "CHECK_FILL")   # tick reads on the checkbox fill
+        self.c_border = qc(p, "BORDER")
+        self.c_check = qc(p, "CHECK_FILL")   # checkbox fill when enabled
+        self.c_check_off = qc(p, "BG_DEEP")
+        self.c_esl = qc(p, "TONE_BLUE_SOFT")
+        self.c_master = qc(p, "TEXT_WARN")
         # Userlist dot (Tk parity: TEXT_WHITE fill, STATUS_BADGE_RED when the
         # plugin's userlist rules form a cycle).
-        self.c_ul_dot = QColor(_c(p, "TEXT_WHITE"))
-        self.c_ul_dot_cycle = QColor(_c(p, "STATUS_BADGE_RED"))
+        self.c_ul_dot = qc(p, "TEXT_WHITE")
+        self.c_ul_dot_cycle = qc(p, "STATUS_BADGE_RED")
         # Cross-panel highlight tints (exact Tk conflict colours).
-        self.c_hl_higher = QColor(_c(p, "FILE_WIN"))
-        self.c_hl_lower = QColor(_c(p, "FILE_LOSE"))
-        self.c_hl_anchor = QColor(_c(p, "FILE_ANCHOR"))
+        self.c_hl_higher = qc(p, "FILE_WIN")
+        self.c_hl_lower = qc(p, "FILE_LOSE")
+        self.c_hl_anchor = qc(p, "FILE_ANCHOR")
         # Masters of the selected plugin get their own green row tint (Tk
         # BG_GREEN_ROW), distinct from the conflict-higher green.
-        self.c_hl_master = QColor(_c(p, "BG_GREEN_ROW"))
+        self.c_hl_master = qc(p, "BG_GREEN_ROW")
 
     def sizeHint(self, opt, index):
         return QSize(opt.rect.width(), ROW_H)

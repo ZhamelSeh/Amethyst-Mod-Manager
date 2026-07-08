@@ -24,12 +24,13 @@ import threading
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
-    QScrollArea, QFrame, QCheckBox, QPushButton, QToolButton, QMenu,
-    QSizePolicy, QSplitter,
+    QScrollArea, QFrame, QCheckBox, QToolButton, QMenu,
+    QSplitter,
 )
 
 from gui_qt.theme_qt import active_palette, _c
 from gui_qt.safe_emit import safe_emit
+from gui_qt.worker import run_in_worker
 from gui_qt.selector_button import SelectorButton
 from gui_qt.nexus_mod_card import NexusModCard, ThumbnailLoader, CARD_W
 
@@ -377,15 +378,9 @@ class NexusBrowserView(QWidget):
         if self._cats_loaded or not self._domain:
             return
 
-        def worker():
-            try:
-                cats = self._api.get_game_categories(self._domain)
-            except Exception as exc:
-                self._log(f"Nexus: categories error: {exc}")
-                cats = []
-            safe_emit(self._cats_ready, cats)
-
-        threading.Thread(target=worker, daemon=True).start()
+        run_in_worker(lambda: self._api.get_game_categories(self._domain),
+                      self._cats_ready, name="nexus-categories",
+                      error_result=[])
 
     def _on_cats(self, cats):
         self._cats_loaded = True
@@ -789,22 +784,13 @@ class NexusBrowserView(QWidget):
             self._log("Nexus: an install is already in progress.")
             return
         self._installing = True
-        domain = getattr(entry, "domain_name", "") or self._domain
         mod_id = entry.mod_id
         name = entry.name or f"Mod {mod_id}"
         self._log(f"Nexus: preparing install for {name}…")
 
-        def worker():
-            ok = None
-            try:
-                user = self._api.validate()
-                ok = bool(user.is_premium)
-            except Exception as exc:
-                self._log(f"Nexus: could not check account: {exc}")
-                ok = None
-            safe_emit(self._premium_checked, entry, ok)
-
-        threading.Thread(target=worker, daemon=True).start()
+        run_in_worker(lambda: (entry, bool(self._api.validate().is_premium)),
+                      self._premium_checked, name="nexus-premium-check",
+                      unpack=True, error_result=(entry, None))
 
     def _on_premium_checked(self, entry, is_premium):
         domain = getattr(entry, "domain_name", "") or self._domain
@@ -819,16 +805,10 @@ class NexusBrowserView(QWidget):
             self._installing = False
             return
         # Premium: fetch the file list on a worker → back to UI for the chooser.
-        def worker():
-            files = []
-            try:
-                resp = self._api.get_mod_files(domain, mod_id)
-                files = list(resp.files)
-            except Exception as exc:
-                self._log(f"Nexus: file list error: {exc}")
-            safe_emit(self._files_ready, entry, files)
-
-        threading.Thread(target=worker, daemon=True).start()
+        run_in_worker(
+            lambda: (entry, list(self._api.get_mod_files(domain, mod_id).files)),
+            self._files_ready, name="nexus-file-list",
+            unpack=True, error_result=(entry, []))
 
     def _on_files_ready(self, entry, files):
         """UI thread: pick the file to install. >1 MAIN → in-window chooser."""

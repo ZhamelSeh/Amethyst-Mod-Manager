@@ -4,49 +4,39 @@ folders. Reads/writes the same Utils.download_locations settings as the Tk app
 (backward compatible). ``on_done(True)`` on Save, ``on_done(False)`` on
 cancel / Esc / backdrop click.
 
-Modeled on ``gui_qt/confirm_overlay.py`` (replaces the old QDialog version —
-gaming-mode opens top-level windows behind the app).
+Dimmed child overlay via gui_qt/overlay_base.py (replaces the old QDialog
+version — gaming-mode opens top-level windows behind the app).
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QListWidget,
-    QPushButton, QFrame,
+    QWidget, QHBoxLayout, QLabel, QCheckBox, QListWidget, QPushButton, QFrame,
 )
 
 import Utils.download_locations as dl
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class DownloadLocationsOverlay(QWidget):
+class DownloadLocationsOverlay(OverlayBase):
     CARD_W = 560
     CARD_H = 420
+    MIN_W = 420
+    MIN_H = 320
+    ESC_RESULT = False
+    CLICK_OUTSIDE_CANCELS = True
 
     # pick_folder's callback fires on the portal WORKER thread; marshal the
     # result to the GUI thread via this Signal before touching any widget.
     _folder_picked = Signal(object)
 
     def __init__(self, host: QWidget, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         p = active_palette()
 
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("DownloadLocationsCard")
-        self._card.setStyleSheet(
-            f"#DownloadLocationsCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(18, 16, 18, 16)
-        v.setSpacing(8)
+        _card, v = self._make_card("DownloadLocationsCard")
 
         title_lbl = QLabel(self.tr("Download locations"))
         title_lbl.setStyleSheet(
@@ -99,10 +89,7 @@ class DownloadLocationsOverlay(QWidget):
         self._folder_picked.connect(self._on_folder_picked)
         self._load()
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
 
     @classmethod
     def show_over(cls, host, on_done):
@@ -144,38 +131,3 @@ class DownloadLocationsOverlay(QWidget):
             not self._default_cb.isChecked(),
             not self._cache_cb.isChecked())
         self._finish(True)
-
-    # -- internals ----------------------------------------------------------
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(420, w), max(320, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def _finish(self, result: bool):
-        if self._done:
-            return
-        self._done = True
-        self._host.removeEventFilter(self)
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(False)
-        else:
-            super().keyPressEvent(event)
-
-    def mousePressEvent(self, event):
-        if not self._card.geometry().contains(event.position().toPoint()):
-            self._finish(False)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

@@ -12,14 +12,15 @@ Cancel / Esc / backdrop click → ``on_done(None)``.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent, QRect
-from PySide6.QtGui import QColor, QPen, QBrush
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QPen, QBrush
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QFrame, QStyledItemDelegate, QStyle,
+    QWidget, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QPushButton, QStyledItemDelegate, QStyle,
 )
 
-from gui_qt.theme_qt import active_palette, _c, contrast_text
+from gui_qt.overlay_base import OverlayBase
+from gui_qt.theme_qt import active_palette, _c, qc, qc_contrast
 
 CHECK_BOX = 17        # same as the modlist checkbox
 
@@ -32,14 +33,14 @@ class _CheckDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         p = active_palette()
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_on_sel = QColor(_c(p, "TEXT_ON_ACCENT"))
-        self.c_tick = QColor(contrast_text(_c(p, "CHECK_FILL")))   # tick reads on the checkbox fill
-        self.c_border = QColor(_c(p, "BORDER_FAINT"))
-        self.c_check = QColor(_c(p, "CHECK_FILL"))
-        self.c_check_off = QColor(_c(p, "BG_DEEP"))
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
-        self.c_hover = QColor(_c(p, "BG_ROW_HOVER"))
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_on_sel = qc(p, "TEXT_ON_ACCENT")
+        self.c_tick = qc_contrast(p, "CHECK_FILL")   # tick reads on the checkbox fill
+        self.c_border = qc(p, "BORDER_FAINT")
+        self.c_check = qc(p, "CHECK_FILL")
+        self.c_check_off = qc(p, "BG_DEEP")
+        self.c_sel = qc(p, "BG_SELECT")
+        self.c_hover = qc(p, "BG_ROW_HOVER")
 
     def paint(self, p, opt, index):
         r = opt.rect
@@ -80,33 +81,18 @@ class _CheckDelegate(QStyledItemDelegate):
         return s
 
 
-class FavouriteWizardsOverlay(QWidget):
+class FavouriteWizardsOverlay(OverlayBase):
     CARD_W = 460
     CARD_H = 460
+    MIN_W = 320
+    MIN_H = 240
+    CLICK_OUTSIDE_CANCELS = True
 
     def __init__(self, host: QWidget, items, favourites, on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         p = active_palette()
 
-        # Scope the dim backdrop to THIS widget only — a bare, unscoped
-        # ``background`` on the overlay cascades into every child (the list
-        # items and buttons), painting them black. Object-name selector keeps
-        # it on the backdrop.
-        self.setObjectName("_FavBackdrop")
-        self.setStyleSheet("#_FavBackdrop { background: rgba(0,0,0,140); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("_FavCard")
-        self._card.setStyleSheet(
-            f"#_FavCard {{ background:{_c(p,'BG_PANEL')};"
-            f" border:1px solid {_c(p,'BORDER')}; border-radius:8px; }}")
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(8)
+        _card, v = self._make_card("_FavCard", margins=(16, 14, 16, 14))
 
         hdr = QLabel(self.tr("Favourite Wizard Tools"))
         hdr.setStyleSheet(
@@ -151,10 +137,7 @@ class FavouriteWizardsOverlay(QWidget):
         bar.addWidget(save)
         v.addLayout(bar)
 
-        host.installEventFilter(self)
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
         self._list.setFocus()
 
     @classmethod
@@ -167,14 +150,6 @@ class FavouriteWizardsOverlay(QWidget):
         item.setCheckState(
             Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
 
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(320, w), max(240, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
     def _save(self):
         chosen = set()
         for i in range(self._list.count()):
@@ -182,32 +157,3 @@ class FavouriteWizardsOverlay(QWidget):
             if it.checkState() == Qt.Checked:
                 chosen.add(it.data(Qt.UserRole))
         self._finish(chosen)
-
-    def _finish(self, result):
-        if self._done:
-            return
-        self._done = True
-        try:
-            self._host.removeEventFilter(self)
-        except Exception:
-            pass
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def mousePressEvent(self, event):
-        if not self._card.geometry().contains(event.position().toPoint()):
-            self._finish(None)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(None)
-        else:
-            super().keyPressEvent(event)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

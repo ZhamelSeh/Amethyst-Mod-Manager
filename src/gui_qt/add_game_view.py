@@ -19,11 +19,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui import QPixmap, QPainter, QColor
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
-    QScrollArea, QPushButton, QFrame, QSizePolicy, QCheckBox,
+    QScrollArea, QPushButton, QFrame, QCheckBox,
 )
 
 from gui_qt.theme_qt import active_palette, _c

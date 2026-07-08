@@ -11,8 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QLabel, QAbstractItemView,
-    QHeaderView,
+    QWidget, QVBoxLayout, QTreeView, QAbstractItemView,
 )
 
 import Utils.downloads_core as dc

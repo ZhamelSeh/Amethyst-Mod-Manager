@@ -6,10 +6,10 @@ headers, right-aligned size, and an Install/Reinstall button per archive row
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect, QEvent, QSize
-from PySide6.QtGui import QColor, QPen, QBrush, QFont
+from PySide6.QtGui import QPen, QBrush, QFont
 from PySide6.QtWidgets import QStyledItemDelegate
 
-from gui_qt.theme_qt import active_palette, _c, contrast_text
+from gui_qt.theme_qt import active_palette, qc, qc_contrast
 from gui_qt.downloads_model import (
     COL_CHECK, COL_NAME, COL_SIZE, COL_INSTALL, EntryRole, InstalledRole,
 )
@@ -29,23 +29,23 @@ class DownloadsDelegate(QStyledItemDelegate):
         self.on_install = None       # callback(path) when an Install button hit
         self.on_toggle_section = None  # callback(header_row) — select-all toggle
         p = active_palette()
-        self.c_text = QColor(_c(p, "TEXT_MAIN"))
-        self.c_dim = QColor(_c(p, "TEXT_DIM"))
-        self.c_border = QColor(_c(p, "BORDER_FAINT"))
-        self.c_check = QColor(_c(p, "CHECK_FILL"))
-        self.c_check_off = QColor(_c(p, "BG_DEEP"))
-        self.c_check_tick = QColor(contrast_text(_c(p, "CHECK_FILL")))  # tick on the checkbox fill
-        self.c_sel = QColor(_c(p, "BG_SELECT"))
-        self.c_header_bg = QColor(_c(p, "BG_HEADER"))
-        self.c_install = QColor(_c(p, "BTN_SUCCESS"))
-        self.c_reinstall = QColor(_c(p, "BTN_WARN"))   # orange (already installed)
-        self.c_blue = QColor(_c(p, "ACCENT"))          # Select-all button
+        self.c_text = qc(p, "TEXT_MAIN")
+        self.c_dim = qc(p, "TEXT_DIM")
+        self.c_border = qc(p, "BORDER_FAINT")
+        self.c_check = qc(p, "CHECK_FILL")
+        self.c_check_off = qc(p, "BG_DEEP")
+        self.c_check_tick = qc_contrast(p, "CHECK_FILL")  # tick on the checkbox fill
+        self.c_sel = qc(p, "BG_SELECT")
+        self.c_header_bg = qc(p, "BG_HEADER")
+        self.c_install = qc(p, "BTN_SUCCESS")
+        self.c_reinstall = qc(p, "BTN_WARN")   # orange (already installed)
+        self.c_blue = qc(p, "ACCENT")          # Select-all button
         # Button label colours are auto-contrasted off each button's own fill so
         # they stay readable on any theme (e.g. a bright-yellow BTN_WARN needs
         # dark text, not white). Text visibility beats palette choice.
-        self.c_install_text = QColor(contrast_text(_c(p, "BTN_SUCCESS")))
-        self.c_reinstall_text = QColor(contrast_text(_c(p, "BTN_WARN")))
-        self.c_selall_text = QColor(contrast_text(_c(p, "ACCENT")))
+        self.c_install_text = qc_contrast(p, "BTN_SUCCESS")
+        self.c_reinstall_text = qc_contrast(p, "BTN_WARN")
+        self.c_selall_text = qc_contrast(p, "ACCENT")
 
     # -- paint --------------------------------------------------------------
     def paint(self, p, opt, index):

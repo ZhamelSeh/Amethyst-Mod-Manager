@@ -652,7 +652,7 @@ class NexusOAuthClient:
         })
         auth_url = f"{_AUTHORIZE_URL}?{params}"
         self._on_status("Opening browser — please authorise in Nexus Mods...")
-        app_log(f"OAuth: opening auth URL")
+        app_log("OAuth: opening auth URL")
         open_url(auth_url)
 
         # 3. Wait for callback (5-minute timeout)

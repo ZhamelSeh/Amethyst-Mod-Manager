@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize, Signal, QTimer
-from PySide6.QtGui import QAction, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QMainWindow, QToolButton, QWidget, QSplitter, QApplication,
     QLabel, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QTextBrowser,
@@ -222,6 +222,8 @@ class MainWindow(QMainWindow):
     _amm_endorse_done = Signal(object)
     # Copy/Move-to-profile worker → UI thread (result dict).
     _copy_done = Signal(object)
+    # Collection update: staging meta.ini scan (worker) → apply (UI).
+    _col_update_scan_done = Signal(object)
     # Install-a-Nexus-mod-by-id flow (used by Missing Requirements) → UI thread.
     _qu_resolved = Signal(object, object)         # (queue list, skipped list)
     _qu_downloaded = Signal(object, object)       # (dl_items list, failed list)
@@ -434,6 +436,7 @@ class MainWindow(QMainWindow):
         self._endorse_done.connect(self._on_endorse_done)
         self._amm_endorse_done.connect(self._on_amm_endorse_done)
         self._copy_done.connect(self._on_copy_done)
+        self._col_update_scan_done.connect(self._finish_collection_update)
         # Install-a-Nexus-mod-by-id (Missing Requirements) flow.
         self._req_installing = False
         self._req_install_files.connect(self._on_req_install_files)
@@ -1580,12 +1583,15 @@ class MainWindow(QMainWindow):
         domain = (getattr(game, "nexus_game_domain", "") or "") if game else ""
 
         # Close per-collection detail tabs (they belong to the previous game).
+        # Swallow (a game switch must not abort) but leave a trace — a failure
+        # here leaves stale tabs from the previous game.
         try:
             for key in [k for k in list(self._tabs._keys)
                         if k.startswith("collection_detail_")]:
                 self._tabs.close_tab(key)
-        except Exception:
-            pass
+        except Exception as exc:
+            from Utils.app_log import app_log
+            app_log(f"game switch: closing collection tabs failed: {exc}")
 
         for attr, tab_key in (("_nexus_view", "nexus_browser"),
                               ("_collections_view", "collections")):
@@ -1755,7 +1761,7 @@ class MainWindow(QMainWindow):
 
         def _done(saved_defn, deleted):
             self._tabs.close_tab("custom_game")
-            from Utils.game_helpers import _load_games, _GAMES
+            from Utils.game_helpers import _load_games
             names = _load_games()
             self._gs.game_names = names
             real_names = [n for n in names if n != "No games configured"]
@@ -2550,8 +2556,6 @@ class MainWindow(QMainWindow):
         if game is None or not game.is_configured():
             self._notify(self.tr("No configured game selected."), "warning")
             return
-        domain = (getattr(game, "nexus_game_domain", "")
-                  or getattr(collection, "game_domain", "") or "")
         api = self._ensure_nexus_api()
         if api is None:
             self._notify(self.tr("Log in first: Nexus ▸ Login to Nexus ▸ Login via SSO."),
@@ -2807,47 +2811,68 @@ class MainWindow(QMainWindow):
             to_add=to_add_labels, orphans=list(diff.orphans), on_done=_done)
 
     def _apply_collection_update(self, info, profile_dir, pname, slug, diff):
-        """UI thread: user confirmed — snapshot the modlist, remove stale +
-        bundled/patched mods, build update_context, then continue-install."""
-        import configparser
-        from Utils.modlist import read_modlist
-        from Utils import mod_remove
+        """UI thread: user confirmed — scan staging for this collection's
+        bundled/patched mods in a worker (meta.ini per mod = too slow for the
+        UI thread on big collections), then finish on the UI thread."""
+        import threading
+        from gui_qt.safe_emit import safe_emit
         game = info["game"]
-        try:
-            snapshot = list(read_modlist(profile_dir / "modlist.txt")) \
-                if (profile_dir / "modlist.txt").is_file() else []
-        except Exception:
-            snapshot = []
 
-        # Bundled/patched mods for THIS collection are force-reinstalled (their
-        # contents/patches may have changed) — port of Tk 1974-2001.
-        slug_lower = (slug or "").strip().lower()
-        bundled_or_patched: set[str] = set()
-        try:
-            staging_path = Path(game.get_effective_mod_staging_path())
-        except Exception:
-            staging_path = None
-        if staging_path is not None and staging_path.is_dir() and slug_lower:
-            for mod_dir in staging_path.iterdir():
-                if not mod_dir.is_dir():
-                    continue
-                meta = mod_dir / "meta.ini"
-                if not meta.is_file():
-                    continue
-                cp = configparser.ConfigParser()
-                try:
-                    cp.read(meta, encoding="utf-8")
-                except Exception:
-                    continue
-                if not cp.has_section("General"):
-                    continue
-                if (cp["General"].get("fromCollection") or "").strip().lower() != slug_lower:
-                    continue
-                if (cp["General"].getboolean("fromCollectionBundled", fallback=False)
-                        or cp["General"].getboolean("fromCollectionPatched", fallback=False)):
-                    bundled_or_patched.add(mod_dir.name.lower())
+        def worker():
+            import configparser
+            from Utils.modlist import read_modlist
+            try:
+                snapshot = list(read_modlist(profile_dir / "modlist.txt")) \
+                    if (profile_dir / "modlist.txt").is_file() else []
+            except Exception:
+                snapshot = []
 
-        all_remove_lower = {n.lower() for n in diff.removals} | bundled_or_patched
+            # Bundled/patched mods for THIS collection are force-reinstalled
+            # (their contents/patches may have changed) — port of Tk 1974-2001.
+            slug_lower = (slug or "").strip().lower()
+            bundled_or_patched: set[str] = set()
+            try:
+                staging_path = Path(game.get_effective_mod_staging_path())
+            except Exception:
+                staging_path = None
+            if staging_path is not None and staging_path.is_dir() and slug_lower:
+                for mod_dir in staging_path.iterdir():
+                    if not mod_dir.is_dir():
+                        continue
+                    meta = mod_dir / "meta.ini"
+                    if not meta.is_file():
+                        continue
+                    cp = configparser.ConfigParser()
+                    try:
+                        cp.read(meta, encoding="utf-8")
+                    except Exception:
+                        continue
+                    if not cp.has_section("General"):
+                        continue
+                    if (cp["General"].get("fromCollection") or "").strip().lower() != slug_lower:
+                        continue
+                    if (cp["General"].getboolean("fromCollectionBundled", fallback=False)
+                            or cp["General"].getboolean("fromCollectionPatched", fallback=False)):
+                        bundled_or_patched.add(mod_dir.name.lower())
+            safe_emit(self._col_update_scan_done,
+                      {"info": info, "profile_dir": profile_dir, "pname": pname,
+                       "diff": diff, "snapshot": snapshot,
+                       "bundled_or_patched": bundled_or_patched})
+
+        threading.Thread(target=worker, daemon=True,
+                         name="col-update-scan").start()
+
+    def _finish_collection_update(self, payload):
+        """UI thread: remove stale + bundled/patched mods, build
+        update_context, then continue-install."""
+        from Utils import mod_remove
+        info = payload["info"]; profile_dir = payload["profile_dir"]
+        pname = payload["pname"]; diff = payload["diff"]
+        snapshot = payload["snapshot"]
+        game = info["game"]
+
+        all_remove_lower = ({n.lower() for n in diff.removals}
+                            | payload["bundled_or_patched"])
         removed_lower: set[str] = set()
         if all_remove_lower:
             to_remove_names = [e.name for e in snapshot
@@ -2910,10 +2935,8 @@ class MainWindow(QMainWindow):
         # detail-view list; *mods* already excludes them.
         skipped_mods = list(info.get("skipped_mods") or [])
 
-        from Utils.game_helpers import (
-            _create_profile, _profiles_for_game, save_collection_url_to_profile)
-        from Utils.profile_state import (
-            write_collection_revision, write_collection_optional_skipped)
+        from Utils.game_helpers import _create_profile, _profiles_for_game
+        from Utils.profile_state import write_collection_optional_skipped
         import re as _re
 
         # overwrite_existing is None for new/continue (fresh modlist write); a bool
@@ -4588,7 +4611,6 @@ class MainWindow(QMainWindow):
         Resolves collisions (single → Replace/Rename/Cancel overlay; multi → one
         Replace-or-skip prompt), copies on a worker thread, and — for a move —
         removes the sources here afterwards. Port of Tk _copy_mod(s)_to_profile."""
-        from pathlib import Path
         from Utils import mod_copy
         game = self._gs.game
         src_staging = self._gs.staging_dir()
@@ -5686,9 +5708,11 @@ class MainWindow(QMainWindow):
         surface (Tk parity: top_bar._run_deploy silent=)."""
         game = self._gs.game
         if game is None or not game.is_configured():
+            self._auto_deploy_in_progress = False
             self._notify(self.tr("No configured game selected."), "warning")
             return
         if not hasattr(game, "deploy"):
+            self._auto_deploy_in_progress = False
             self._notify(self.tr("'{0}' does not support deployment.").format(game.name), "warning")
             return
         # Serialize: coalesce a request that arrives mid-deploy into one re-run.
@@ -6179,7 +6203,6 @@ class MainWindow(QMainWindow):
     def _open_game_dir(self, which: str):
         """Open one of the game's on-disk folders (game selector ▸ Open ▸ …).
         Mirrors gui/dialogs ProtonTools folder openers."""
-        from pathlib import Path
         game = self._gs.game
         if game is None or not game.is_configured():
             self._notify(self.tr("No configured game selected."), "warning")
@@ -8335,7 +8358,6 @@ class MainWindow(QMainWindow):
         The walk covers every mod folder, so it runs on a daemon worker —
         a generation counter drops a stale result (profile switched or a
         newer scan started mid-walk)."""
-        import threading
         staging = self._gs.staging_dir()
         if staging is None:
             return
@@ -8345,17 +8367,15 @@ class MainWindow(QMainWindow):
         # worker walks the disk.
         entries = list(self._modlist_model.natural_entries())
 
-        def worker():
-            from gui_qt.modlist_data import compute_sizes
-            try:
-                sizes, size_bytes = compute_sizes(entries, staging)
-            except Exception as exc:
-                print(f"[gui_qt] size scan failed: {exc}", flush=True)
-                return
-            self._sizes_ready.emit(gen, sizes, size_bytes)
+        from gui_qt.worker import run_in_worker, NO_EMIT
 
-        threading.Thread(target=worker, daemon=True,
-                         name="modlist-sizes").start()
+        def scan():
+            from gui_qt.modlist_data import compute_sizes
+            sizes, size_bytes = compute_sizes(entries, staging)
+            return gen, sizes, size_bytes
+
+        run_in_worker(scan, self._sizes_ready, name="modlist-sizes",
+                      unpack=True, error_result=NO_EMIT)
 
     def _on_sizes_ready(self, gen, sizes, size_bytes):
         if gen != getattr(self, "_sizes_gen", 0):
@@ -8876,20 +8896,14 @@ class MainWindow(QMainWindow):
         self._plugin_sort_btn.setEnabled(False)
         self._notify(self.tr("Running LOOT on {0} plugins…").format(len(plugin_names)), "info")
 
-        import threading
+        from gui_qt.worker import run_in_worker
 
-        def worker():
+        def sort():
             from LOOT.loot_sorter import sort_plugins
-            try:
-                result = sort_plugins(
-                    log_fn=lambda m: print(f"[loot] {m}", flush=True), **kw)
-            except Exception as exc:
-                print(f"[loot] sort failed: {exc}", flush=True)
-                self._sort_plugins_ready.emit(None)
-                return
-            self._sort_plugins_ready.emit(result)
+            return sort_plugins(
+                log_fn=lambda m: print(f"[loot] {m}", flush=True), **kw)
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_in_worker(sort, self._sort_plugins_ready, name="loot-sort")
 
     def _on_sort_plugins_ready(self, result):
         self._sort_running = False
@@ -8972,7 +8986,6 @@ class MainWindow(QMainWindow):
         game/profile switch (or a newer refresh) has superseded."""
         if not hasattr(self, "_framework_banner"):
             return
-        import threading
         self._framework_gen += 1
         gen = self._framework_gen
         # Snapshot inputs on the UI thread — GameState can be swapped under a
@@ -8982,17 +8995,16 @@ class MainWindow(QMainWindow):
         filemap_path = (staging.parent / "filemap.txt") if staging is not None else None
         modlist_path = self._gs.modlist_path()
 
-        def worker():
-            from Utils.framework_detect import detect_frameworks
-            try:
-                statuses = detect_frameworks(game, filemap_path, modlist_path,
-                                             rf_toggle_enabled=True)
-            except Exception as exc:
-                print(f"[gui_qt] framework detect error: {exc}", flush=True)
-                statuses = []
-            self._framework_statuses_ready.emit(gen, statuses)
+        from gui_qt.worker import run_in_worker
 
-        threading.Thread(target=worker, daemon=True).start()
+        def detect():
+            from Utils.framework_detect import detect_frameworks
+            return gen, detect_frameworks(game, filemap_path, modlist_path,
+                                          rf_toggle_enabled=True)
+
+        run_in_worker(detect, self._framework_statuses_ready,
+                      name="framework-detect", unpack=True,
+                      error_result=(gen, []))
 
     def _on_framework_statuses(self, gen: int, statuses):
         if gen != self._framework_gen or not hasattr(self, "_framework_banner"):
@@ -9983,7 +9995,6 @@ def _apply_app_identity(app) -> None:
     3. setApplicationName() — helps the X11 WM_CLASS / labels. (We avoid
        setApplicationDisplayName, which Qt would append to every window title.)
     """
-    import os
     from pathlib import Path
     from PySide6.QtGui import QIcon
 
@@ -10121,7 +10132,6 @@ def run() -> int:
     # has already run (IPC socket released, restore-on-close done); re-exec the
     # same interpreter + argv in place.
     if _RESTART_REQUESTED:
-        import os
         # Drop a one-shot "--nxm <url>" from the relaunch argv so a stale NXM
         # link isn't reprocessed on the fresh start.
         argv = list(sys.argv)

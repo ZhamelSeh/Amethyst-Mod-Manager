@@ -546,7 +546,6 @@ def sync_plugins_from_filemap_combined(
     removed = len(existing) - len(kept)
 
     # --- 6. Add: filemap plugins the user hasn't seen yet (and not disabled).
-    kept_lower = {e.name.lower() for e in kept}
     new_entries: list[PluginEntry] = []
     for low, original in filemap_names.items():
         if low in known_lower:

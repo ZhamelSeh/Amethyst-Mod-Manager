@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QHBoxLayout, QLabel, QPushButton, QRadioButton, QVBoxLayout,
+    QButtonGroup, QHBoxLayout, QLabel, QRadioButton, QVBoxLayout,
     QWidget,
 )
 

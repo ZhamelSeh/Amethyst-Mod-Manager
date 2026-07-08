@@ -5,37 +5,37 @@ Shown when the user clicks "Update Collection": presents the reconciliation diff
 between the installed revision and the revision being viewed (mods to remove /
 update / add / orphan) and asks the user to confirm before the install runs.
 
-Borderless in-window overlay (NOT a top-level QDialog — gaming-mode opens
-top-levels behind the app). All widgets are built ONCE with real parents (no
-per-item unparented widgets that could flash as blank top-level windows — see the
-collection install-overlay fix).
+Borderless in-window overlay via gui_qt/overlay_base.py. All widgets are built
+ONCE with real parents (no per-item unparented widgets that could flash as
+blank top-level windows — see the collection install-overlay fix).
 
 ``on_done(True)`` on Apply Update, ``on_done(False)`` on Cancel / Escape.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QScrollArea,
 )
 
+from gui_qt.overlay_base import OverlayBase
 from gui_qt.theme_qt import active_palette, _c
 
 
-class UpdateOverlay(QWidget):
+class UpdateOverlay(OverlayBase):
     CARD_W = 560
     CARD_H = 460
+    MIN_W = 400
+    MIN_H = 300
+    ESC_RESULT = False
 
     def __init__(self, host: QWidget, *, profile_name: str,
                  from_rev, to_rev, to_remove: "list[str]",
                  to_update: "list[str]", to_add: "list[str]",
                  orphans: "list[str]", on_done):
-        super().__init__(host)
-        self._host = host
-        self._on_done = on_done
-        self._done = False
+        super().__init__(host, on_done=on_done)
         self._p = active_palette()
         self._profile_name = profile_name or ""
         self._from_rev = from_rev
@@ -45,21 +45,8 @@ class UpdateOverlay(QWidget):
         self._to_add = list(to_add or [])
         self._orphans = list(orphans or [])
 
-        self.setObjectName("OverlayBackdrop")
-        self.setStyleSheet("#OverlayBackdrop { background: rgba(0,0,0,150); }")
-        self.setGeometry(host.rect())
-
-        self._card = QFrame(self)
-        self._card.setObjectName("_UpdateCard")
-        self._card.setStyleSheet(
-            f"#_UpdateCard {{ background:{self._c('BG_PANEL')};"
-            f" border:1px solid {self._c('BORDER')}; border-radius:8px; }}")
-        host.installEventFilter(self)
-
         self._build()
-        self._reposition()
-        self.show()
-        self.raise_()
+        self._present()
         self.setFocus()
 
     @classmethod
@@ -72,9 +59,7 @@ class UpdateOverlay(QWidget):
 
     # -- build --------------------------------------------------------------
     def _build(self):
-        v = QVBoxLayout(self._card)
-        v.setContentsMargins(20, 16, 20, 16)
-        v.setSpacing(8)
+        _card, v = self._make_card("_UpdateCard", margins=(20, 16, 20, 16))
 
         title = QLabel(self.tr("Update Collection"), self._card)
         title.setStyleSheet(
@@ -159,37 +144,3 @@ class UpdateOverlay(QWidget):
                 f"color:{self._c('TEXT_DIM')}; font-size:11px;"
                 " background:transparent;")
             layout.addWidget(none_lbl)
-
-    # -- lifecycle ----------------------------------------------------------
-    def _finish(self, result: bool):
-        if self._done:
-            return
-        self._done = True
-        try:
-            self._host.removeEventFilter(self)
-        except Exception:
-            pass
-        cb = self._on_done
-        self.hide()
-        self.deleteLater()
-        if cb is not None:
-            cb(result)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._finish(False)
-        else:
-            super().keyPressEvent(event)
-
-    def _reposition(self):
-        self.setGeometry(self._host.rect())
-        w = min(self.CARD_W, self._host.width() - 40)
-        h = min(self.CARD_H, self._host.height() - 40)
-        self._card.setFixedSize(max(400, w), max(300, h))
-        self._card.move((self.width() - self._card.width()) // 2,
-                        (self.height() - self._card.height()) // 2)
-
-    def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Resize:
-            self._reposition()
-        return super().eventFilter(obj, event)

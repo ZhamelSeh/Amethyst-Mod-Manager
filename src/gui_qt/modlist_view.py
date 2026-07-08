@@ -9,7 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QCoreApplication, QEvent
 from PySide6.QtGui import QPainter, QColor, QPen, QAction
 from PySide6.QtWidgets import (
-    QTreeView, QAbstractItemView, QHeaderView, QToolButton, QMenu,
+    QTreeView, QAbstractItemView, QToolButton, QMenu,
     QStyleOptionViewItem, QToolTip,
 )
 
@@ -17,7 +17,6 @@ from gui_qt.modlist_model import (
     ModListModel, COLUMNS, COL_NAME, COL_CATEGORY, COL_PRIORITY, COL_FLAGS,
     COL_CONFLICTS, COL_INSTALLED, COL_VERSION, COL_SIZE, HighlightRole,
 )
-from PySide6.QtWidgets import QWidget
 from gui_qt.modlist_delegate import ModRowDelegate, SEP_H
 from gui_qt import column_state
 from gui_qt.modlist_header import TkStyleHeader

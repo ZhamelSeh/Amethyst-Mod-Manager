@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
     # Carries (generation, ConflictData) from a worker thread to the UI thread
     # (queued connection — thread-safe). See _rebuild_conflicts_async.
     _conflicts_ready = Signal(int, object)
+    # (generation, bsa_codes, bsa_overrides, bsa_overridden_by) — BSA-only
+    # recompute after a plugin toggle/reorder (no filemap rebuild).
+    _bsa_conflicts_ready = Signal(int, object, object, object)
     # (generation, list[FrameworkStatus]) from the framework-detect worker —
     # detect_frameworks reads filemap.txt + the mod index, too slow for the UI
     # thread on a big modlist. See _refresh_framework_banner.
@@ -288,6 +291,7 @@ class MainWindow(QMainWindow):
         self._gs = GameState()
         self._gs.load()
         self._conflicts_ready.connect(self._on_conflicts_ready)
+        self._bsa_conflicts_ready.connect(self._on_bsa_conflicts_ready)
         self._framework_statuses_ready.connect(self._on_framework_statuses)
         # Drops stale framework-detect results (game switched mid-compute).
         self._framework_gen = 0
@@ -9116,6 +9120,52 @@ class MainWindow(QMainWindow):
             return
         self._framework_banner.set_statuses(statuses)
 
+    def _recompute_bsa_conflicts_async(self):
+        """A plugin toggle/reorder changed the plugin load order. BSAs load at
+        their plugin's position, so BSA conflict winners may have changed — but
+        the deployed file set (filemap.txt / modindex.bin), loose conflicts,
+        plugin ownership and framework states are all unaffected. So recompute
+        ONLY the BSA conflicts off-thread (re-reads the freshly-written
+        loadorder.txt) and repaint just the BSA icons on the modlist — instead
+        of the full _rebuild_conflicts_async, which rebuilds the filemap and
+        reloads both the modlist and the Plugins panel. Tk parity: plugin
+        toggle → recompute_bsa_conflicts (BSA-only), NOT a filemap rebuild."""
+        import threading
+        g = self._gs.game
+        if g is None or not self._gs.profile:
+            return
+        gen = getattr(self, "_bsa_conflict_gen", 0) + 1
+        self._bsa_conflict_gen = gen
+
+        def worker():
+            try:
+                bsa_codes, bsa_over, bsa_overby = self._gs._build_bsa_conflicts(
+                    g, lambda _m: None)
+            except Exception as exc:
+                print(f"[gui_qt] BSA recompute failed: {exc}", flush=True)
+                return
+            self._bsa_conflicts_ready.emit(gen, bsa_codes, bsa_over, bsa_overby)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_bsa_conflicts_ready(self, gen, bsa_codes, bsa_over, bsa_overby):
+        if gen != getattr(self, "_bsa_conflict_gen", 0):
+            return   # superseded by a newer plugin toggle
+        # Keep the cached conflict data's BSA maps in sync so a later full
+        # rebuild path / highlight lookup sees the current winners.
+        if getattr(self, "_conflict_data", None) is not None:
+            self._conflict_data.bsa_codes = bsa_codes
+            self._conflict_data.bsa_overrides = bsa_over
+            self._conflict_data.bsa_overridden_by = bsa_overby
+        self._modlist_model.set_bsa_conflicts(bsa_codes)
+        # Cross-panel highlights follow the BSA override maps (loose maps unchanged).
+        loose_over = loose_overby = None
+        if getattr(self, "_conflict_data", None) is not None:
+            loose_over = self._conflict_data.overrides
+            loose_overby = self._conflict_data.overridden_by
+        self._modlist_view.set_conflict_maps(
+            loose_over or {}, loose_overby or {}, bsa_over, bsa_overby)
+
     def _rebuild_conflicts_async(self, rescan_index: bool = False):
         """Build the filemap off-thread; the worker emits _conflicts_ready
         (queued → UI thread). A generation counter drops results from a
@@ -9436,10 +9486,14 @@ class MainWindow(QMainWindow):
         # columns (one colored row per framework the game declares).
         self._plugin_model = PluginModel()
         # A plugin reorder/toggle changes BSA load order (BSAs load at their
-        # plugin's position), so recompute conflicts when the order is saved —
-        # reuses the same rebuild path as mod toggles. _build_bsa_conflicts
-        # re-reads the freshly-written loadorder.txt.
-        self._plugin_model.order_changed.connect(self._rebuild_conflicts_async)
+        # plugin's position), so recompute BSA conflicts when the order is saved.
+        # BSA-ONLY: a plugin toggle doesn't touch the deployed file set, so the
+        # filemap/modindex, loose conflicts and the Plugins panel itself are all
+        # unaffected — recompute just the BSA winners (re-reads the freshly-
+        # written loadorder.txt) instead of a full filemap rebuild + modlist/
+        # plugins reload. Tk parity: recompute_bsa_conflicts.
+        self._plugin_model.order_changed.connect(
+            self._recompute_bsa_conflicts_async)
         self._plugin_model.save_failed.connect(
             lambda msg: self._notify(msg, "error"))
         self._plugin_view = PluginView(self._plugin_model)

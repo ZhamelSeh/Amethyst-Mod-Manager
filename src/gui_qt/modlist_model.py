@@ -346,6 +346,18 @@ class ModListModel(QAbstractTableModel):
                                   [ConflictRole, BsaConflictRole, Qt.DisplayRole])
         self._resort_if_key("conflicts")
 
+    def set_bsa_conflicts(self, bsa_conflicts: dict[str, int]) -> None:
+        """Update ONLY the BSA conflict codes, leaving loose conflicts + flags
+        untouched. Used when a plugin toggle/reorder changes BSA load order —
+        the filemap/loose conflicts are unaffected, so only the BSA icons need
+        repainting (Tk parity: recompute_bsa_conflicts)."""
+        self._bsa_conflicts = bsa_conflicts or {}
+        if self._entries:
+            self.dataChanged.emit(self.index(0, COL_NAME),
+                                  self.index(len(self._entries) - 1, COL_CONFLICTS),
+                                  [BsaConflictRole, Qt.DisplayRole])
+        self._resort_if_key("conflicts")
+
     def loose_conflict_code(self, name: str) -> int:
         """Loose-file conflict code for *name* (0 when the mod has no loose
         conflict; BSA-only conflicts don't count)."""

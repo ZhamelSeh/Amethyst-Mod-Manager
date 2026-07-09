@@ -1074,7 +1074,9 @@ def _remove_separators_multi(view, model, sep_rows):
             e = model.entry(r)
             if e is not None and e.is_separator:
                 removed.append(e.name)
-                model.remove_row(r)
+                model.remove_row(r, save=False)
+        if removed:
+            model.save()  # single save for the whole batch
         cb = getattr(view, "on_separators_removed", None)
         if callable(cb) and removed:
             cb(removed)
@@ -1121,7 +1123,8 @@ def _remove_mods_multi(view, model, mod_rows):
             except Exception as exc:
                 print(f"[gui_qt] mod removal failed: {exc}", flush=True)
         for r in sorted(rows, reverse=True):
-            model.remove_row(r)
+            model.remove_row(r, save=False)
+        model.save()  # single save → one filemap rebuild for the whole batch
         _notify_mods_removed(view)
 
     ConfirmOverlay.show_over(

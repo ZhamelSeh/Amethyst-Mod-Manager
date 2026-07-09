@@ -207,9 +207,12 @@ def _delete_selected(win):
                                                      flush=True))
             except Exception as exc:
                 print(f"[gui_qt] mod removal failed: {exc}", flush=True)
-        # Drop the rows high-to-low so indices stay stable.
+        # Drop the rows high-to-low so indices stay stable, saving once at the
+        # end (per-row save fires a full filemap rebuild each time).
         for r in sorted(rows, reverse=True):
-            m.remove_row(r)
+            m.remove_row(r, save=False)
+        if rows:
+            m.save()
 
     from gui_qt.confirm_overlay import ConfirmOverlay
     ConfirmOverlay.show_over(

@@ -906,7 +906,10 @@ class ModListModel(QAbstractTableModel):
         self._rebuild_display()
         self.save()
 
-    def remove_row(self, row: int) -> None:
+    def remove_row(self, row: int, save: bool = True) -> None:
+        """Drop *row*. Pass save=False when removing several rows in a loop and
+        call save() once at the end — save() fires on_saved() which kicks off a
+        full conflict/filemap rebuild, so per-row saving rebuilds N times."""
         e = self._entries[row]
         if e.name in _PINNED_NAMES or (not e.is_separator and e.locked):
             return
@@ -917,7 +920,8 @@ class ModListModel(QAbstractTableModel):
             if ni >= 0:
                 del self._natural[ni]
         self.endRemoveRows()
-        self.save()
+        if save:
+            self.save()
 
     # ---- drag-reorder (beginMoveRows; selection/scroll preserved) ---------
     def supportedDropActions(self):

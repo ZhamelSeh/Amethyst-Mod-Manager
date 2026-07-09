@@ -4778,7 +4778,9 @@ class MainWindow(QMainWindow):
                     if (e := model.entry(r)) is not None
                     and not e.is_separator and e.name in removed_names]
             for r in sorted(rows, reverse=True):
-                model.remove_row(r)          # drops the row + saves modlist.txt
+                model.remove_row(r, save=False)
+            if rows:
+                model.save()  # single save → one filemap rebuild for the batch
         if payload.get("removed"):
             self._reload_modlist()
 

@@ -1440,6 +1440,16 @@ def install_collection_archive(
         if progress_fn is not None:
             progress_fn(done, total, phase)
 
+    # RE / Fluffy multi-mod archive: several independent mods from one archive
+    # (Tk parity: install_mod_from_archive ran this branch for collection
+    # installs too). _install_multi_mod stages/meta/indexes/modlists each mod
+    # and cleans up the extract dir itself.
+    if prepared.is_multi_mod():
+        name = _install_multi_mod(prepared, log_fn, _pp)
+        if name is not None:
+            _fire_on_installed(on_installed, False)
+        return name
+
     is_fomod_install = False
     file_list: "list[tuple[str, str, bool]] | None" = None
     stage_src_root = str(prepared.extract_dir)   # copier's src root
@@ -1571,6 +1581,7 @@ def install_collection_archive(
         # ---- stage --------------------------------------------------------
         dest_root = staging_root / prepared.mod_name
         _preserved_endorsed = False
+        old_bundle_spec = None
         if dest_root.exists():
             # Collections pre-disambiguate folder names, so a collision means a
             # genuine replace: silent when overwrite_existing is True/None.
@@ -1579,6 +1590,8 @@ def install_collection_archive(
                 _preserved_endorsed = bool(read_meta(dest_root / "meta.ini").endorsed)
             except Exception:
                 _preserved_endorsed = False
+            if prepared.is_bundle():
+                old_bundle_spec = _read_old_bundle_spec(dest_root)
             log_fn(f"Replacing existing mod folder: {prepared.mod_name}")
             shutil.rmtree(dest_root, ignore_errors=True)
 
@@ -1587,6 +1600,32 @@ def install_collection_archive(
             # FOMOD / BAIN produced an explicit src→dst list.
             dest_root.mkdir(parents=True, exist_ok=True)
             _copy_file_list(file_list, stage_src_root, dest_root, log_fn)
+        elif prepared.is_bundle():
+            # RE / Fluffy bundle: installs as ONE normal mod, same as
+            # finish_install — option folders stashed in <mod>/.mm_bundle/,
+            # selection materialised onto the mod root, spec in meta.ini's
+            # [Bundle] section (preserved by _write_install_meta below).
+            from Utils.re_bundle import (layout_to_spec, merge_bundle_spec,
+                                         write_bundle_spec,
+                                         materialize_selection, BUNDLE_LIB_DIR)
+            layout = prepared.bundle_layout
+            spec = layout_to_spec(layout)
+            log_fn(f"Installing bundle '{layout.bundle_name}' as one mod "
+                   f"'{prepared.mod_name}'.")
+            if old_bundle_spec is not None:
+                spec = merge_bundle_spec(spec, old_bundle_spec)
+                log_fn("Bundle: preserved existing option selection across "
+                       "reinstall/update.")
+            lib_dir = dest_root / BUNDLE_LIB_DIR
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            for child in sorted(Path(prepared.bundle_root).iterdir()):
+                if child.is_dir():
+                    _copy_file_list(resolve_direct_files(str(child)),
+                                    str(child), lib_dir / child.name, log_fn)
+            write_bundle_spec(dest_root / "meta.ini", spec)
+            materialize_selection(dest_root, spec)
+            log_fn(f"Bundle: {len(spec.selected_folders())} of "
+                   f"{layout.variant_count} option(s) active.")
         else:
             # Plain (non-FOMOD/BAIN) mod: normalise structure like the Tk direct
             # path. dinput mods (prebuilt_meta.root_folder) install verbatim.

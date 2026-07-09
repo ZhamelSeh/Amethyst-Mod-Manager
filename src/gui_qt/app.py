@@ -10301,8 +10301,15 @@ def run() -> int:
     # sink (set_app_log) is wired by MainWindow.__init__. Best-effort — a
     # failure here must never block startup.
     try:
-        from Utils.stderr_capture import install as _install_stderr_capture
+        from Utils.stderr_capture import (
+            install as _install_stderr_capture,
+            install_faulthandler as _install_faulthandler,
+        )
         _install_stderr_capture()
+        # Native crashes (segfaults from Qt/C code) can't reach a Python hook —
+        # faulthandler dumps a C-level traceback to a file in the logs dir so a
+        # crashed user still has something to share.
+        _install_faulthandler()
     except Exception:
         pass
     # Show the window immediately so its layout gets a real size (the deferred

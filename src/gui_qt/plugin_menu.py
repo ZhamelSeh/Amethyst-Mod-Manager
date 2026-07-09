@@ -174,10 +174,17 @@ def _build_plugin_menu(view, model, row, toggleable, multi,
             act(_mt("Remove selected from userlist"),
                 lambda ns=names: ul_remove(ns))
 
-    # ---- Show overlapping plugins… (stub — gated on loot_sort_enabled) ----
+    # ---- Show overlapping plugins… (gated on loot_sort_enabled) ----------
+    # Record overlap = full libloot load; runs on a worker thread (app side).
+    on_overlap = getattr(view, "on_show_overlapping", None)
     if not multi and getattr(game, "loot_sort_enabled", False):
         divider()
-        stub(_mt("Show overlapping plugins…"))
+        name = model.row(row).name
+        if callable(on_overlap):
+            act(_mt("Show overlapping plugins…"),
+                lambda n=name: on_overlap(n))
+        else:
+            stub(_mt("Show overlapping plugins…"))
 
     # ---- LOOT masterlist location links (stub — _loot_info not in Qt) -----
     if not multi:

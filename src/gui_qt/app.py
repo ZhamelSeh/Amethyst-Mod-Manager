@@ -198,6 +198,9 @@ class MainWindow(QMainWindow):
     _nexus_validated = Signal(object)          # (username str | None)
     # LOOT Sort Plugins worker → UI thread (SortResult | None on error).
     _sort_plugins_ready = Signal(object)
+    # LOOT record-overlap worker → UI thread: (target plugin name,
+    # list[str] overlaps | None on error). Full libloot load, so off-thread.
+    _overlap_ready = Signal(str, object)
     # Plugin reload worker → UI thread: (gen, rows, plugin_paths, userlist
     # state). The disk work (per-plugin header reads) runs off-thread; a
     # generation counter drops results from a superseded reload.
@@ -321,7 +324,9 @@ class MainWindow(QMainWindow):
         self._profile_settings_view = None
         self._dll_overrides_view = None
         self._sort_running = False
+        self._overlap_running = False
         self._sort_plugins_ready.connect(self._on_sort_plugins_ready)
+        self._overlap_ready.connect(self._on_overlap_ready)
         self._plugins_gen = 0
         self._plugins_loaded.connect(self._on_plugins_loaded)
         self._sizes_gen = 0
@@ -8607,6 +8612,7 @@ class MainWindow(QMainWindow):
         self._plugin_view.on_group_add = self._on_group_add
         self._plugin_view.on_userlist_remove = self._on_userlist_remove
         self._plugin_view.on_show_cycle = self._open_plugin_cycle_tab
+        self._plugin_view.on_show_overlapping = self._on_show_overlapping_plugins
         print(f"[gui_qt] plugins: {len(rows)} entries")
         # Last render step of first load — the plugin panel is now fully
         # populated. Dismiss the startup splash here (dropped one event-loop
@@ -8959,6 +8965,95 @@ class MainWindow(QMainWindow):
                 (self.tr("Sorted — 1 plugin moved.") if moved == 1
                  else self.tr("Sorted — {0} plugins moved.").format(moved)),
                 "success")
+
+    # ---- Show overlapping plugins (LOOT record overlap) -------------------
+    def _on_show_overlapping_plugins(self, plugin_name: str):
+        """Find plugins whose records overlap with *plugin_name* and highlight
+        them in the plugins list (Tk parity: plugin_panel_loot
+        _show_overlapping_plugins). A full libloot load is expensive, so it
+        runs on a worker thread; the result is applied on the UI thread."""
+        from LOOT.loot_sorter import is_available, unavailable_reason
+        if not is_available():
+            self._notify(self.tr("LOOT library not available — cannot check overlap."),
+                         "warning")
+            reason = unavailable_reason()
+            if reason:
+                from Utils.app_log import app_log
+                app_log(reason)
+            return
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._notify(self.tr("No configured game selected."), "warning")
+            return
+        if not getattr(game, "loot_sort_enabled", False):
+            self._notify(self.tr("LOOT sorting isn't supported for this game."), "warning")
+            return
+        rows = list(self._plugin_model._rows)
+        if not rows:
+            return
+        if getattr(self, "_overlap_running", False):
+            self._notify(self.tr("An overlap check is already running."), "info")
+            return
+
+        # Snapshot everything the worker needs — no model access mid-flight.
+        plugin_names = [r.name for r in rows]
+        kw = dict(
+            target_plugin=plugin_name,
+            plugin_names=plugin_names,
+            game_name=getattr(game, "name", self._gs.game_name),
+            game_path=game.get_game_path(),
+            staging_root=game.get_effective_mod_staging_path(),
+            game_type_attr=getattr(game, "loot_game_type", ""),
+            game_data_dir=(game.get_vanilla_plugins_path()
+                           if hasattr(game, "get_vanilla_plugins_path") else None),
+        )
+
+        self._overlap_running = True
+        self._notify(self.tr("Checking record overlap for {0}…").format(plugin_name), "info")
+
+        from gui_qt.worker import run_in_worker
+
+        def check():
+            from LOOT.loot_sorter import find_overlapping_plugins
+            overlaps = find_overlapping_plugins(
+                log_fn=lambda m: print(f"[loot] {m}", flush=True), **kw)
+            return (plugin_name, overlaps)
+
+        # error_result carries the target name with a None payload so the apply
+        # step can report the failure against the right plugin.
+        run_in_worker(check, self._overlap_ready, name="loot-overlap",
+                      unpack=True, error_result=(plugin_name, None))
+
+    def _on_overlap_ready(self, plugin_name: str, overlaps):
+        self._overlap_running = False
+        if overlaps is None:
+            self._notify(self.tr("Overlap check failed — see log."), "error")
+            return
+        if not overlaps:
+            self._notify(self.tr("{0}: no record overlap with other plugins.").format(plugin_name),
+                         "info")
+            self._plugin_view.set_master_highlight(set())
+            return
+
+        # Highlight the target + overlapping plugins (green tint + marker strip),
+        # then scroll the first highlighted row into view (Tk parity).
+        names_lower = {plugin_name.lower(), *(o.lower() for o in overlaps)}
+        self._plugin_view.set_master_highlight(names_lower)
+        m = self._plugin_model
+        first = next((i for i in range(m.rowCount())
+                      if m.row(i).name.lower() in names_lower), None)
+        if first is not None:
+            from gui_qt.plugin_model import COL_FLAGS
+            from PySide6.QtWidgets import QAbstractItemView
+            self._plugin_view.scrollTo(m.index(first, COL_FLAGS),
+                                       QAbstractItemView.PositionAtCenter)
+        self._append_log(
+            f"[loot] {plugin_name} overlaps with {len(overlaps)} plugin(s): "
+            + ", ".join(overlaps))
+        self._notify(
+            self.tr("{0} overlaps {1} plugin(s) — highlighted in list").format(
+                plugin_name, len(overlaps)),
+            "warning")
 
     def _plugins_supported(self) -> bool:
         """Whether the active game uses plugins (has plugin extensions). Games

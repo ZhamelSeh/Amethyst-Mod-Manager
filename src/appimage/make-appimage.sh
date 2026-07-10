@@ -182,6 +182,25 @@ for _l in libQt6Core libQt6Gui libQt6Widgets libQt6DBus libQt6Network \
     done
 done
 
+# ── Resolve libshiboken6 / libpyside6 ────────────────────────────────
+_pyside_dir="$(/usr/bin/python3 -c 'import PySide6, os; print(os.path.dirname(PySide6.__file__))')"
+[ -n "$_pyside_dir" ] && [ -d "$_pyside_dir" ] || {
+    echo "ERROR: could not locate the PySide6 package directory" >&2; exit 1; }
+_pyside_libs=()
+for _pat in \
+    "$_pyside_dir"/../shiboken6/libshiboken6.*.so* \
+    "$_pyside_dir"/libpyside6.*.so* \
+    "$_pyside_dir"/../shiboken6/Shiboken.*.so; do
+    for _so in $_pat; do
+        [ -e "$_so" ] && _pyside_libs+=("$_so")
+    done
+done
+[ "${#_pyside_libs[@]}" -gt 0 ] || {
+    echo "ERROR: no libshiboken6/libpyside6 libraries found under $_pyside_dir" >&2
+    echo "       (is the system 'pyside6' package installed?)" >&2
+    exit 1; }
+echo "  PySide6 runtime libs: ${#_pyside_libs[@]} found under $_pyside_dir"
+
 echo "=== Running quick-sharun ==="
 # Stdlib extension modules in lib-dynload are dlopened at runtime, so
 # quick-sharun's per-binary ldd trace never sees their DT_NEEDED entries
@@ -202,6 +221,7 @@ quick-sharun \
     /usr/lib/libuuid.so*               \
     /usr/lib/libmpdec.so*              \
     "${_qt_args[@]}"                   \
+    "${_pyside_libs[@]}"               \
     $( [ -f "$AUX_DIR/bin/bsdtar" ] && printf %s "$AUX_DIR/bin/bsdtar" )
 
 # Rewrite the wrapper's /usr/share path to "$APPDIR"/share — quick-sharun's

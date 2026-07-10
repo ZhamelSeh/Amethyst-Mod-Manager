@@ -261,13 +261,26 @@ install -Dm644 "${ASSETS_DIR}/mod-manager.png" \
 
 # ── Build the AppImage ───────────────────────────────────────────────
 echo "=== Building AppImage ==="
+# OUTNAME: appimagetool reads this from the env — naming the output here
+# (instead of renaming afterwards) keeps the generated .zsync consistent
+# with the final filename.
+# UPINFO: embedded update info + .zsync generation. Set explicitly so the
+# zsync glob matches OUTNAME; without this appimagetool guesses the same
+# thing from GITHUB_REPOSITORY, but the docs say not to rely on the guess.
+_gh_repo="${GITHUB_REPOSITORY:-ChrisDKN/Amethyst-Mod-Manager}"
+export OUTNAME="AmethystModManager-${VERSION}-${ARCH}.AppImage"
+export UPINFO="gh-releases-zsync|${_gh_repo%/*}|${_gh_repo#*/}|latest|*${ARCH}.AppImage.zsync"
 quick-sharun --make-appimage
 
-RAW_OUT=$(find "$OUTPATH" -maxdepth 2 -name '*.AppImage' -type f | head -1)
-FINAL="${FINAL_OUTPATH}/AmethystModManager-${VERSION}-${ARCH}.AppImage"
-if [ -n "$RAW_OUT" ]; then
-    mv "$RAW_OUT" "$FINAL"
+FINAL="${FINAL_OUTPATH}/${OUTNAME}"
+if [ -f "$OUTPATH/$OUTNAME" ]; then
+    mv "$OUTPATH/$OUTNAME" "$FINAL"
 fi
+# The .zsync must be published next to the AppImage for the embedded
+# update info to work (AppImageUpdate / Gear Lever / appimaged).
+for _zs in "$OUTPATH"/*.zsync; do
+    [ -e "$_zs" ] && mv "$_zs" "$FINAL_OUTPATH/"
+done
 
 echo ""
 echo "=== Build complete ==="

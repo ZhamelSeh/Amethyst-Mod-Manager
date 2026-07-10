@@ -174,6 +174,9 @@ class MainWindow(QMainWindow):
     # (generation, bsa_codes, bsa_overrides, bsa_overridden_by) — BSA-only
     # recompute after a plugin toggle/reorder (no filemap rebuild).
     _bsa_conflicts_ready = Signal(int, object, object, object)
+    # (generation) — filemap-only rebuild finished (disable fast path: the
+    # conflict scan was provably redundant). See _rebuild_filemap_light_async.
+    _filemap_light_done = Signal(int)
     # (generation, list[FrameworkStatus]) from the framework-detect worker —
     # detect_frameworks reads filemap.txt + the mod index, too slow for the UI
     # thread on a big modlist. See _refresh_framework_banner.
@@ -292,6 +295,7 @@ class MainWindow(QMainWindow):
         self._gs.load()
         self._conflicts_ready.connect(self._on_conflicts_ready)
         self._bsa_conflicts_ready.connect(self._on_bsa_conflicts_ready)
+        self._filemap_light_done.connect(self._on_filemap_light_done)
         self._framework_statuses_ready.connect(self._on_framework_statuses)
         # Drops stale framework-detect results (game switched mid-compute).
         self._framework_gen = 0
@@ -647,6 +651,7 @@ class MainWindow(QMainWindow):
         plugins (+ conflict-tinted ones) and picking a plugin highlights its
         owning mod (Tk parity)."""
         self._conflict_data = None
+        self._conflict_maps_current = False
         mv, pv = self._modlist_view, self._plugin_view
         mv.selectionModel().selectionChanged.connect(
             lambda *_: self._on_mod_selection_changed())
@@ -8253,9 +8258,10 @@ class MainWindow(QMainWindow):
                              name="modlist-meta").start()
         if not preserve_overlays:
             self._modlist_model.set_conflicts({}, {})   # clear stale; recomputed async
-        # Persist edits back to this modlist; rebuild conflicts after each save.
+        # Persist edits back to this modlist; rebuild conflicts after each save
+        # (pure reorders that can't change the filemap skip the rebuild).
         self._modlist_model.modlist_path = ml_path
-        self._modlist_model.on_saved = self._rebuild_conflicts_async
+        self._modlist_model.on_saved = self._on_modlist_saved
         self._modlist_view.staging_dir = staging
         self._modlist_view.profile_dir = self._gs.profile_dir()
         self._modlist_view.game = self._gs.game
@@ -9208,12 +9214,168 @@ class MainWindow(QMainWindow):
         self._modlist_view.set_conflict_maps(
             loose_over or {}, loose_overby or {}, bsa_over, bsa_overby)
 
+    def _on_modlist_saved(self, edit_ctx=None):
+        """modlist.txt was rewritten (every structural edit funnels here via
+        model.save()). edit_ctx classifies the edit (see model.save):
+          ("move", moved, crossed) — when the move provably can't have changed
+            the filemap, skip EVERYTHING (worker + plugins reload + auto-deploy
+            are all no-ops).
+          ("toggle", changes) — when a disable provably can't change any
+            conflict product, rebuild ONLY the filemap (the toggled mod's
+            entries must still leave it) and auto-deploy; skip the scan.
+          None/unknown → full rebuild."""
+        if edit_ctx is not None:
+            kind = edit_ctx[0]
+            if kind == "move" and self._move_skips_rebuild(edit_ctx[1:]):
+                return
+            if kind == "toggle" and self._toggle_skips_conflict_scan(edit_ctx[1]):
+                self._rebuild_filemap_light_async()
+                return
+        self._rebuild_conflicts_async()
+
+    def _move_skips_rebuild(self, move_ctx) -> bool:
+        """True when a reorder left every moved mod on the same side of all
+        its loose-conflict partners, so no filemap winner, conflict code or
+        override pair can have changed. BSA winners follow PLUGIN order and
+        are unaffected by a mod move; disabled mods aren't in the maps (empty
+        partners). Sufficiency of the direct-pair maps: provider stacks are
+        priority-ordered, so crossing ANY co-provider means first crossing a
+        direct neighbour in that stack — which IS in overrides/overridden_by.
+        Conservative: any doubt (stale/missing conflict data, unknown mod)
+        → full rebuild. AMM_MOVE_SKIP_REBUILD=0 kills the fast path."""
+        if os.environ.get("AMM_MOVE_SKIP_REBUILD") == "0":
+            return False
+        # Maps must describe the CURRENT modlist: _conflict_maps_current is
+        # armed only when a build's result is accepted and dropped whenever a
+        # rebuild is queued (a drag racing an in-flight toggle rebuild would
+        # otherwise test against the pre-toggle maps). Skipped moves keep the
+        # maps valid — that's exactly what this predicate proves.
+        if not getattr(self, "_conflict_maps_current", False):
+            return False
+        data = self._conflict_data
+        if data is None:
+            return False
+        moved, crossed = move_ctx
+        crossed_set = set(crossed)
+        if moved and crossed_set:
+            for m in moved:
+                partners = ((data.overrides.get(m) or set())
+                            | (data.overridden_by.get(m) or set()))
+                if partners & crossed_set:
+                    return False
+        self._append_log(
+            f"[filemap] move: no conflict crossing — rebuild skipped "
+            f"(moved={len(moved)}, crossed={len(crossed_set)})")
+        return True
+
+    def _toggle_skips_conflict_scan(self, changes) -> bool:
+        """True when a toggle batch is disable-only and every disabled mod has
+        no loose-conflict partners, no plugin files, no BSA/BA2 archives and
+        no framework-exe files — then no ConflictData product changes: codes/
+        override maps lose nothing (the mod's sets were empty), plugin_owner
+        and the plugins panel keep the same winners, BSA conflicts follow
+        plugin order + bsa_index (untouched), framework statuses can't flip
+        (matching is by exe basename — the mod ships none). Only the filemap
+        file set shrinks → _rebuild_filemap_light_async. Enables are never
+        skipped: the maps can't prove a disabled mod won't CREATE conflicts.
+        Capability sets come from the same accepted build as the maps (see
+        ConflictData), so the _conflict_maps_current guard covers them too.
+        AMM_TOGGLE_LIGHT=0 kills the fast path."""
+        if os.environ.get("AMM_TOGGLE_LIGHT") == "0":
+            return False
+        if not getattr(self, "_conflict_maps_current", False):
+            return False
+        data = self._conflict_data
+        if data is None or not changes:
+            return False
+        for name, enabled in changes:
+            if enabled:
+                return False
+            if name not in data.overrides and name not in data.overridden_by:
+                return False   # unknown to the maps → treat as stale
+            if data.overrides.get(name) or data.overridden_by.get(name):
+                return False
+            if (name in data.plugin_mods or name in data.bsa_mods
+                    or name in data.framework_file_mods):
+                return False
+        self._append_log(
+            f"[filemap] toggle: disable-only, no conflicts/plugins/BSAs — "
+            f"conflict scan skipped ({len(changes)} mod(s), filemap-only)")
+        return True
+
+    def _rebuild_filemap_light_async(self):
+        """Disable fast path: rebuild ONLY the filemap (the incremental delta
+        removes the toggled mods' entries) — _toggle_skips_conflict_scan proved
+        every conflict product unchanged, so skip the scan, the panel reloads
+        and the conflict-map repaints. Shares the build lock + generation with
+        _rebuild_conflicts_async so full rebuilds serialize/supersede normally;
+        _conflict_maps_current deliberately stays armed (the maps still
+        describe reality — that is exactly what the predicate proved)."""
+        import threading
+        self._reassert_profile_paths()
+        gen = getattr(self, "_conflict_gen", 0) + 1
+        self._conflict_gen = gen
+        if not hasattr(self, "_conflict_build_lock"):
+            self._conflict_build_lock = threading.Lock()
+        g = self._gs.game
+        profile = self._gs.profile
+        if g is None or not profile:
+            return
+
+        def worker():
+            from Utils.perftrace import span
+            with self._conflict_build_lock:
+                if gen != self._conflict_gen:
+                    return   # superseded while waiting — the newer build covers us
+                from Utils.deploy_pipeline import _build_filemap_for_game
+
+                def _fm_log(m):
+                    m = str(m)
+                    try:
+                        m.encode("utf-8")
+                    except UnicodeEncodeError:
+                        m = m.encode("utf-8", "backslashreplace").decode(
+                            "utf-8", "replace")
+                    print(f"[filemap] {m}", flush=True)
+                    self._append_log(f"[filemap] {m}")
+
+                try:
+                    with span("build_filemap(light)"):
+                        _build_filemap_for_game(
+                            g, profile, log_fn=_fm_log, rescan_index=False)
+                except Exception as exc:
+                    print(f"[gui_qt] light filemap rebuild failed: {exc}",
+                          flush=True)
+            self._filemap_light_done.emit(gen)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_filemap_light_done(self, gen: int):
+        """UI thread: a filemap-only rebuild finished. Refresh only what the
+        deployed file SET touches — conflict maps, plugins panel, filter data
+        and framework banner are untouched by construction."""
+        if gen != self._conflict_gen:
+            return   # superseded by a full rebuild — its handler covers this
+        from Utils.perftrace import span
+        with span("on_filemap_light_done"):
+            if hasattr(self, "_data_view"):
+                self._data_view.mark_dirty()
+            if hasattr(self, "_text_files_view"):
+                self._text_files_view.mark_dirty()
+            self._refresh_modlist_stats()
+            # Active filters may key on the enabled state — reapply from the
+            # in-memory FilterData (no disk rescan needed).
+            self._apply_modlist_filters()
+        self._maybe_auto_deploy()
+
     def _rebuild_conflicts_async(self, rescan_index: bool = False):
         """Build the filemap off-thread; the worker emits _conflicts_ready
         (queued → UI thread). A generation counter drops results from a
         superseded reload (user switched game before the build finished).
         rescan_index=True forces a full disk rescan (Refresh button)."""
         import threading
+        # The maps the move fast-path tests are about to be superseded.
+        self._conflict_maps_current = False
         self._reassert_profile_paths()
         gen = getattr(self, "_conflict_gen", 0) + 1
         self._conflict_gen = gen
@@ -9382,6 +9544,10 @@ class MainWindow(QMainWindow):
         from Utils.perftrace import span
         with span("on_conflicts_ready"):
             self._conflict_data = data
+            # These maps now describe the on-disk modlist — arm the move
+            # fast-path (see _move_skips_rebuild). Only valid if no newer
+            # rebuild was queued meanwhile; the gen check above ensures that.
+            self._conflict_maps_current = True
             with span("model.set_filemap_results"):
                 # Conflicts + the filemap-derived flag overlays (info=pre-RTX,
                 # root=custom root rule) in one dataChanged pass.
@@ -9433,11 +9599,16 @@ class MainWindow(QMainWindow):
             # rebuild — reloading earlier (on the toggle) races the stale filemap.
             with span("reload_plugins"):
                 self._reload_plugins()
-        # Auto deploy: if the game has auto_deploy enabled, deploy after every
-        # successful conflict/filemap rebuild (enable/disable/reorder/install) —
-        # but NOT when the rebuild was itself triggered by that auto-deploy
-        # (deploy → _reload_modlist → rebuild → here again), or we'd loop.
-        # Tk parity: gui.py _on_filemap_rebuilt.
+        self._maybe_auto_deploy()
+
+    def _maybe_auto_deploy(self):
+        """Auto deploy: if the game has auto_deploy enabled, deploy after every
+        successful conflict/filemap rebuild (enable/disable/reorder/install) —
+        but NOT when the rebuild was itself triggered by that auto-deploy
+        (deploy → _reload_modlist → rebuild → here again), or we'd loop.
+        Tk parity: gui.py _on_filemap_rebuilt. Called from _on_conflicts_ready
+        AND _on_filemap_light_done (a disabled mod's files must still leave
+        the game folder)."""
         if self._auto_deploy_in_progress:
             self._auto_deploy_in_progress = False
         else:

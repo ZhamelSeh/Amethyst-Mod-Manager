@@ -110,8 +110,8 @@ class ExeSettingsView(QWidget):
 
         # -- Java runtime (.jar only) ----------------------------------------
         if self._is_jar:
-            sec_jar, sj = section("Java runtime")
-            sj.addWidget(hint(
+            sec_jar, sj = section(self.tr("Java runtime"))
+            sj.addWidget(hint(self.tr(
                 "How to run this .jar:\n"
                 "Host: run with your system's java (no Proton). Set the Java "
                 "command in Launch Options, e.g. 'java -jar %command%' "
@@ -121,7 +121,7 @@ class ExeSettingsView(QWidget):
                 "in Launch Options / Launch arguments is appended as extra "
                 "flags. Which prefix follows the Proton version below "
                 "('Game default' = the game's prefix; a specific version = an "
-                "isolated prefix next to the jar)."))
+                "isolated prefix next to the jar).")))
             self._jar_runtime_combo = QComboBox()
             self._jar_runtime_combo.addItem(self.tr("Host (system java)"),
                                             exe_launch.JAR_RUNTIME_HOST)
@@ -140,10 +140,10 @@ class ExeSettingsView(QWidget):
             bv.addWidget(sec_jar)
 
         # -- Launch arguments ------------------------------------------------
-        sec_args, sa = section("Launch arguments")
-        sa.addWidget(hint(
+        sec_args, sa = section(self.tr("Launch arguments"))
+        sa.addWidget(hint(self.tr(
             "Arguments passed to the exe. Use Wine paths for file arguments "
-            "(e.g. Z:\\home\\...) — the buttons below insert them for you."))
+            "(e.g. Z:\\home\\...) — the buttons below insert them for you.")))
         self._args_box = QPlainTextEdit()
         self._args_box.setFixedHeight(90)
         sa.addWidget(self._args_box)
@@ -164,7 +164,7 @@ class ExeSettingsView(QWidget):
         bv.addWidget(sec_args)
 
         # -- Proton version ---------------------------------------------------
-        sec_proton, sp = section("Proton version")
+        sec_proton, sp = section(self.tr("Proton version"))
         proton_row = QHBoxLayout()
         proton_row.setSpacing(8)
         self._proton_combo = QComboBox()
@@ -173,18 +173,18 @@ class ExeSettingsView(QWidget):
         proton_row.addWidget(self._proton_combo)
         proton_row.addStretch(1)
         sp.addLayout(proton_row)
-        sp.addWidget(hint(
+        sp.addWidget(hint(self.tr(
             "Use a specific Proton version with an isolated prefix next to the "
             "exe, instead of the game's prefix. Useful for tools that don't "
             "work with the game's Proton version. For Bethesda games the game "
             "path (registry), plugins.txt and My Games INIs are set up in the "
-            "prefix automatically at launch."))
+            "prefix automatically at launch.")))
         tool_row = QHBoxLayout()
         tool_row.setSpacing(6)
-        for label, cb in (("Run EXE in prefix…", self._run_exe_in_prefix),
-                          ("Run winecfg", self._run_winecfg_in_prefix),
-                          ("Run winetricks", self._run_winetricks_in_prefix),
-                          ("Open prefix folder", self._open_prefix_folder)):
+        for label, cb in ((self.tr("Run EXE in prefix…"), self._run_exe_in_prefix),
+                          (self.tr("Run winecfg"), self._run_winecfg_in_prefix),
+                          (self.tr("Run winetricks"), self._run_winetricks_in_prefix),
+                          (self.tr("Open prefix folder"), self._open_prefix_folder)):
             b = QPushButton(label)
             b.setObjectName("FormButton")
             b.setCursor(Qt.PointingHandCursor)
@@ -195,11 +195,11 @@ class ExeSettingsView(QWidget):
         bv.addWidget(sec_proton)
 
         # -- Launch options ----------------------------------------------------
-        sec_opts, so = section("Launch Options")
-        so.addWidget(hint(
+        sec_opts, so = section(self.tr("Launch Options"))
+        so.addWidget(hint(self.tr(
             "Steam-style options: env vars (KEY=VALUE), wrappers (e.g. "
             "gamemoderun), and %command% as placeholder for the full command. "
-            "Without %command%, appended as suffix."))
+            "Without %command%, appended as suffix.")))
         self._options_edit = QLineEdit()
         self._options_edit.setPlaceholderText(
             self.tr("e.g. PROTON_ENABLE_WAYLAND=0 gamemoderun %command%"))

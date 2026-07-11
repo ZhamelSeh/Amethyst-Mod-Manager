@@ -267,7 +267,7 @@ class PrefixManagerView(QWidget):
             f"Delete {n} tool prefix{'' if n == 1 else 'es'}{size_txt}?\n\n"
             "Prefixes are recreated automatically the next time each tool "
             "runs; installed dependencies (e.g. .NET) will re-install then.",
-            _done, confirm_label="Delete")
+            _done, confirm_label=self.tr("Delete"))
 
     def _run_delete(self, entries: list[PrefixEntry]):
         self._busy = True

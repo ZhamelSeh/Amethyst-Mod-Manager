@@ -378,23 +378,23 @@ class ConfigureGameView(QWidget):
             self._opt_checks[key] = cb
 
         add_check("script_extender_swap",
-                  "Swap launcher with script extender on deploy",
+                  self.tr("Swap launcher with script extender on deploy"),
                   hasattr(self._game, "script_extender_swap"))
         add_check("auto_deploy",
-                  "Auto deploy (deploy automatically on enable/disable/reorder)",
+                  self.tr("Auto deploy (deploy automatically on enable/disable/reorder)"),
                   True)
         add_check("archive_invalidation",
-                  "Automatic archive invalidation (prefer loose files over BSAs)",
+                  self.tr("Automatic archive invalidation (prefer loose files over BSAs)"),
                   hasattr(self._game, "archive_invalidation_enabled"))
         add_check("profile_ini_files",
-                  "Use profile-specific INI files",
+                  self.tr("Use profile-specific INI files"),
                   hasattr(self._game, "profile_ini_files"))
         add_check("profile_saves",
-                  "Use profile-specific saves",
+                  self.tr("Use profile-specific saves"),
                   hasattr(self._game, "profile_saves")
                   and getattr(self._game, "supports_profile_saves", True))
         add_check("prefix_numbering",
-                  "Prepend load-order numbers to mod folders",
+                  self.tr("Prepend load-order numbers to mod folders"),
                   hasattr(self._game, "prefix_numbering"))
 
         # BG3 patch-version radios.
@@ -404,8 +404,8 @@ class ConfigureGameView(QWidget):
             ov.addWidget(self._section_header(self.tr("Game Patch Version")))
             self._patch_group = QButtonGroup(self)
             self._patch_buttons = {}
-            for label, val in (("Patch 8", 8), ("Patch 7", 7), ("Patch 6", 6)):
-                rb = QRadioButton(label)
+            for val in (8, 7, 6):
+                rb = QRadioButton(self.tr("Patch {0}").format(val))
                 self._patch_group.addButton(rb)
                 self._patch_buttons[val] = rb
                 ov.addWidget(rb)
@@ -1139,15 +1139,15 @@ class ConfigureGameView(QWidget):
             self, "Move Mod Staging Files?", body,
             lambda ok: (self._run_staging_move(old_root, new_root, files)
                         if ok else self._finalize_save()),
-            confirm_label="Move", cancel_label="Skip", danger=False,
-            card_h=340)
+            confirm_label=self.tr("Move"), cancel_label=self.tr("Skip"),
+            danger=False, card_h=340)
 
     def _run_staging_move(self, old_root, new_root, files):
         from gui_qt.notifications import ProgressPopup
         self._game_status.setText(self.tr("Moving staging files…"))
         self._staging_popup = ProgressPopup(self.window())
         self._staging_popup.set_progress(0, len(files), phase=str(old_root),
-                                         title="Moving Mod Staging Files")
+                                         title=self.tr("Moving Mod Staging Files"))
         sig = self._sig
         game_name = self._game.name
 
@@ -1284,15 +1284,17 @@ class ConfigureGameView(QWidget):
         from gui_qt.confirm_overlay import ConfirmOverlay
         ConfirmOverlay.show_over(self, title, text,
                                  lambda ok: on_yes() if ok else None,
-                                 confirm_label="Yes")
+                                 confirm_label=self.tr("Yes"))
 
     def _on_remove(self):
         g = self._game
-        msg = (f"Remove the instance configuration for {g.name}?\n\n"
-               "Deleted: game config + generated caches; the game is restored to "
-               "vanilla.\nKept: your mods, profiles, and overwrite folders.\n\n"
-               "This cannot be undone.")
-        self._confirm(f"Remove Instance — {g.name}", msg, self._do_remove)
+        msg = self.tr(
+            "Remove the instance configuration for {0}?\n\n"
+            "Deleted: game config + generated caches; the game is restored to "
+            "vanilla.\nKept: your mods, profiles, and overwrite folders.\n\n"
+            "This cannot be undone.").format(g.name)
+        self._confirm(self.tr("Remove Instance — {0}").format(g.name), msg,
+                      self._do_remove)
 
     def _do_remove(self):
         """Restore the game to vanilla + drop config/caches on a daemon worker
@@ -1365,10 +1367,11 @@ class ConfigureGameView(QWidget):
                 target = dp
         if not target or not Path(target).is_dir():
             return
-        msg = (f"Scan {target} and remove leftover deployed mod files (hardlinks/"
-               "symlinks/copies) that weren't restored?\n\nVanilla game files are "
-               "kept. This cannot be undone.")
-        self._confirm(f"Clean Game Folder — {g.name}", msg,
+        msg = self.tr(
+            "Scan {0} and remove leftover deployed mod files (hardlinks/"
+            "symlinks/copies) that weren't restored?\n\nVanilla game files are "
+            "kept. This cannot be undone.").format(target)
+        self._confirm(self.tr("Clean Game Folder — {0}").format(g.name), msg,
                       lambda: self._do_clean(target))
 
     def _do_clean(self, target):

@@ -915,13 +915,13 @@ def _create_empty_mod_prompt(view, model, insert):
                 f"[General]\ninstalled={installed}\n", encoding="utf-8")
         except OSError as exc:
             ConfirmOverlay.show_message(
-                view, "Create empty mod",
-                f"Could not create the mod folder:\n{exc}")
+                view, _mt("Create empty mod"),
+                _mtf("Could not create the mod folder:\n{0}", exc))
             return
         insert(name)
 
-    TextInputOverlay.show_over(view, "Create empty mod", "Mod name:", _named,
-                               ok_label="Create")
+    TextInputOverlay.show_over(view, _mt("Create empty mod"), _mt("Mod name:"),
+                               _named, ok_label=_mt("Create"))
 
 
 def _show_overwrite_log(view, boundary_name=None):
@@ -985,8 +985,8 @@ def _rename(view, model, row):
         if callable(cb):
             cb(e.name, new.strip())
 
-    TextInputOverlay.show_over(view, "Rename", "New name:", _named,
-                               initial=e.display_name, ok_label="Rename")
+    TextInputOverlay.show_over(view, _mt("Rename"), _mt("New name:"), _named,
+                               initial=e.display_name, ok_label=_mt("Rename"))
 
 
 def _set_priority(view, model, row):
@@ -1000,7 +1000,8 @@ def _set_priority(view, model, row):
         model.set_priority(row, max(0, min(99999, val)))
 
     from PySide6.QtGui import QIntValidator
-    TextInputOverlay.show_over(view, "Set priority", f"Priority for {cur}:",
+    TextInputOverlay.show_over(view, _mt("Set priority"),
+                               _mtf("Priority for {0}:", cur),
                                _picked, initial="0",
                                validator=QIntValidator(0, 99999))
 
@@ -1010,8 +1011,8 @@ def _add_separator(view, model, row, above):
         if name and name.strip():
             model.add_separator(row, name.strip(), above)
 
-    TextInputOverlay.show_over(view, "Add separator", "Separator name:",
-                               _named, ok_label="Add")
+    TextInputOverlay.show_over(view, _mt("Add separator"),
+                               _mt("Separator name:"), _named, ok_label=_mt("Add"))
 
 
 def _notify_mods_removed(view):
@@ -1180,6 +1181,8 @@ _TR_MARKERS = (
     QT_TRANSLATE_NOOP("ModListMenu", "Abstain selected ({0})"),
     QT_TRANSLATE_NOOP("ModListMenu", "Add note"),
     QT_TRANSLATE_NOOP("ModListMenu", "Add note ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Add"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Add separator"),
     QT_TRANSLATE_NOOP("ModListMenu", "Add separator above"),
     QT_TRANSLATE_NOOP("ModListMenu", "Add separator below"),
     QT_TRANSLATE_NOOP("ModListMenu", "Bundle options…"),
@@ -1188,7 +1191,10 @@ _TR_MARKERS = (
     QT_TRANSLATE_NOOP("ModListMenu", "Check Updates ({0})"),
     QT_TRANSLATE_NOOP("ModListMenu", "Copy to profile"),
     QT_TRANSLATE_NOOP("ModListMenu", "Copy to profile ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Could not create the mod folder:\n{0}"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Create"),
     QT_TRANSLATE_NOOP("ModListMenu", "Create an empty mod below"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Create empty mod"),
     QT_TRANSLATE_NOOP("ModListMenu", "Create empty mod below"),
     QT_TRANSLATE_NOOP("ModListMenu", "Disable Root Folder install"),
     QT_TRANSLATE_NOOP("ModListMenu", "Disable Root Folder install ({0})"),
@@ -1204,10 +1210,12 @@ _TR_MARKERS = (
     QT_TRANSLATE_NOOP("ModListMenu", "Log"),
     QT_TRANSLATE_NOOP("ModListMenu", "Missing Requirements"),
     QT_TRANSLATE_NOOP("ModListMenu", "Missing Requirements ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Mod name:"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to profile"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to profile ({0})"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to separator"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to separator ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "New name:"),
     QT_TRANSLATE_NOOP("ModListMenu", "Open folder"),
     QT_TRANSLATE_NOOP("ModListMenu", "Open on Nexus"),
     QT_TRANSLATE_NOOP("ModListMenu", "Open on Nexus ({0})"),
@@ -1221,10 +1229,14 @@ _TR_MARKERS = (
     QT_TRANSLATE_NOOP("ModListMenu", "Remove note ({0})"),
     QT_TRANSLATE_NOOP("ModListMenu", "Remove separator"),
     QT_TRANSLATE_NOOP("ModListMenu", "Remove separators ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Rename"),
     QT_TRANSLATE_NOOP("ModListMenu", "Rename mod"),
     QT_TRANSLATE_NOOP("ModListMenu", "Rename separator"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Separator name:"),
     QT_TRANSLATE_NOOP("ModListMenu", "Separator settings…"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Set priority"),
     QT_TRANSLATE_NOOP("ModListMenu", "Set priority…"),
+    QT_TRANSLATE_NOOP("ModListMenu", "Priority for {0}:"),
     QT_TRANSLATE_NOOP("ModListMenu", "Show Conflicts"),
     QT_TRANSLATE_NOOP("ModListMenu", "Sort Alphabetically ({0})"),
     QT_TRANSLATE_NOOP("ModListMenu", "Unlock Separator"),

@@ -281,18 +281,20 @@ class CollectionsBrowserView(QWidget):
                 if query:
                     entries = self._api.search_collections(
                         domain, query, count=size, offset=page * size)
-                    status = (f"Search '{query}': page {page + 1} "
-                              f"({len(entries)} result(s))")
+                    status = self.tr("Search '{0}': page {1} "
+                                     "({2} result(s))").format(
+                                         query, page + 1, len(entries))
                 else:
                     entries = self._api.get_collections(
                         domain, count=size, offset=page * size)
-                    status = f"Collections: page {page + 1}"
+                    status = self.tr("Collections: page {0}").format(page + 1)
                 if not entries and page == 0:
-                    status = ("No collections found."
-                              if not query else f"No matches for '{query}'.")
+                    status = (self.tr("No collections found.")
+                              if not query
+                              else self.tr("No matches for '{0}'.").format(query))
             except Exception as exc:
                 self._log(f"Nexus: collections error: {exc}")
-                status = f"Error: {exc}"
+                status = self.tr("Error: {0}").format(exc)
                 entries = []
             safe_emit(self._results_ready, entries, status, token)
 

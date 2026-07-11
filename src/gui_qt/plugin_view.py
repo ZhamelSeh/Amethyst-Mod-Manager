@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import textwrap
 
-from PySide6.QtCore import Qt, QRect, QSize, QEvent, QTimer, QCoreApplication
+from PySide6.QtCore import (
+    Qt, QRect, QSize, QEvent, QTimer, QCoreApplication, QT_TRANSLATE_NOOP)
 from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QAction
 from PySide6.QtWidgets import (
     QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView,
@@ -35,10 +36,11 @@ _FLAG_SZ = 18
 _FLAG_GAP = 4
 
 # Header line for each master-check flag's bulleted tooltip (Tk parity).
+# Wrapped in self.tr() at show time (see _flag_tip); registered for lupdate.
 _MASTER_TIP_HEADERS = {
-    PF_MISSING: "Missing masters:",
-    PF_LATE: "Masters loaded after this plugin:",
-    PF_VMM: "Version mismatched masters:",
+    PF_MISSING: QT_TRANSLATE_NOOP("PluginDelegate", "Missing masters:"),
+    PF_LATE: QT_TRANSLATE_NOOP("PluginDelegate", "Masters loaded after this plugin:"),
+    PF_VMM: QT_TRANSLATE_NOOP("PluginDelegate", "Version mismatched masters:"),
 }
 
 # Flag bit → icon filename, painted left→right (order matches the Tk app:
@@ -298,10 +300,11 @@ class PluginDelegate(QStyledItemDelegate):
                 names = {PF_MISSING: row.missing_masters,
                          PF_LATE: row.late_masters,
                          PF_VMM: row.vmm_masters}.get(hit)
+            header = self.tr(_MASTER_TIP_HEADERS[hit])
             if names:
                 body = "\n".join(f"  - {n}" for n in names)
-                return f"{_MASTER_TIP_HEADERS[hit]}\n{body}"
-            return _MASTER_TIP_HEADERS[hit]
+                return f"{header}\n{body}"
+            return header
 
         if hit in (PF_LOOT, PF_DIRTY, PF_TAGS):
             if row is None or not row.loot_info:

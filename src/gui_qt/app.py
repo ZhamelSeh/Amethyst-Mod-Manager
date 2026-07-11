@@ -1284,10 +1284,10 @@ class MainWindow(QMainWindow):
 
         from gui_qt.confirm_overlay import ConfirmOverlay
         ConfirmOverlay.show_over(
-            self, "Remove archives",
-            f"Permanently delete {len(paths)} archive(s) from disk?\n\n"
+            self, self.tr("Remove archives"),
+            self.tr("Permanently delete {0} archive(s) from disk?\n\n").format(len(paths))
             + names + more,
-            _confirmed, confirm_label="Delete")
+            _confirmed, confirm_label=self.tr("Delete"))
 
     def _on_downloads_move(self):
         """Move the checked archives between the *configured* download locations.
@@ -1345,11 +1345,11 @@ class MainWindow(QMainWindow):
             more = f"\n… and {len(clashes) - 20} more" if len(clashes) > 20 else ""
             from gui_qt.confirm_overlay import ConfirmOverlay
             ConfirmOverlay.show_over(
-                self, "Overwrite archives",
-                f"{len(clashes)} file(s) already exist in that folder and will be "
-                f"overwritten:\n\n" + names + more,
+                self, self.tr("Overwrite archives"),
+                self.tr("{0} file(s) already exist in that folder and will be "
+                        "overwritten:\n\n").format(len(clashes)) + names + more,
                 lambda ok: _do_move() if ok else None,
-                confirm_label="Overwrite")
+                confirm_label=self.tr("Overwrite"))
         else:
             _do_move()
 
@@ -1593,7 +1593,7 @@ class MainWindow(QMainWindow):
         # Settings — icon-only square button on the far right. Opens a Settings
         # tab scoped over the Plugins panel.
         self._settings_button = self._icon_square_button(
-            "settings.png", tooltip="Settings", tint=_c(self._pal, "TEXT_MAIN"))
+            "settings.png", tooltip=self.tr("Settings"), tint=_c(self._pal, "TEXT_MAIN"))
         self._settings_button.clicked.connect(self._open_settings_tab)
         h.addWidget(self._settings_button)
 
@@ -3384,12 +3384,13 @@ class MainWindow(QMainWindow):
                 ctl.pause.set()
                 ctl.stop.set()
             if self._col_install_overlay is not None:
-                self._col_install_overlay.set_status("Cancelling…")
+                self._col_install_overlay.set_status(self.tr("Cancelling…"))
 
         ConfirmOverlay.show_over(
-            self, "Cancel install?",
-            "This will stop the install and delete the collection profile.",
-            _done, confirm_label="Cancel Install", cancel_label="Keep Going")
+            self, self.tr("Cancel install?"),
+            self.tr("This will stop the install and delete the collection profile."),
+            _done, confirm_label=self.tr("Cancel Install"),
+            cancel_label=self.tr("Keep Going"))
 
     # ---- completion ------------------------------------------------------
     def _on_col_finished(self, kind, payload):
@@ -3422,7 +3423,7 @@ class MainWindow(QMainWindow):
             import threading
             pd = payload.get("profile_dir") if isinstance(payload, dict) else None
             if ov is not None:
-                ov.set_status("Cancelling…")
+                ov.set_status(self.tr("Cancelling…"))
             game = self._gs.game
 
             def _cleanup_worker():
@@ -3462,7 +3463,7 @@ class MainWindow(QMainWindow):
         if kind == "paused":
             installed, profile_name = payload
             if ov is not None:
-                ov.finish(f"Paused — {installed} installed.")
+                ov.finish(self.tr("Paused — {0} installed.").format(installed))
                 QTimer.singleShot(1500, self._dismiss_col_overlay)
             self._select_installed_collection_profile(profile_name)
             # Register the paused slug + refresh any open detail view so its
@@ -3490,11 +3491,11 @@ class MainWindow(QMainWindow):
                                        installed, total, skipped_n)
             return
         if ov is not None:
-            ov.finish(f"Done — {installed}/{total} installed.")
+            ov.finish(self.tr("Done — {0}/{1} installed.").format(installed, total))
             QTimer.singleShot(1500, self._dismiss_col_overlay)
         self._select_installed_collection_profile(profile_name)
-        msg = f"Collection installed — {installed}/{total} mod(s)"
-        self._notify(msg + (f" ({skipped_n} skipped)" if skipped_n else ""), "success")
+        msg = self.tr("Collection installed — {0}/{1} mod(s)").format(installed, total)
+        self._notify(msg + (self.tr(" ({0} skipped)").format(skipped_n) if skipped_n else ""), "success")
         self._show_offsite_reminder()
 
     # ---- Import profile: local-bundle extraction -------------------------
@@ -3509,7 +3510,7 @@ class MainWindow(QMainWindow):
             return
         profile_dir = game.get_profile_root() / "profiles" / profile_name
         if ov is not None:
-            ov.set_status("Restoring bundled mods + profile files…")
+            ov.set_status(self.tr("Restoring bundled mods + profile files…"))
 
         def _worker():
             try:
@@ -3540,12 +3541,12 @@ class MainWindow(QMainWindow):
         profile_name, installed, total, skipped_n = payload
         ov = self._col_install_overlay
         if ov is not None:
-            ov.finish(f"Imported — {installed}/{total} installed.")
+            ov.finish(self.tr("Imported — {0}/{1} installed.").format(installed, total))
             QTimer.singleShot(1500, self._dismiss_col_overlay)
         # Rebuild the mod index for the imported bundle mods, then reload.
         self._select_installed_collection_profile(profile_name, rescan_index=True)
-        msg = f"Profile imported — {installed}/{total} mod(s)"
-        self._notify(msg + (f" ({skipped_n} skipped)" if skipped_n else ""),
+        msg = self.tr("Profile imported — {0}/{1} mod(s)").format(installed, total)
+        self._notify(msg + (self.tr(" ({0} skipped)").format(skipped_n) if skipped_n else ""),
                      "success")
         self._show_offsite_reminder()
 
@@ -3733,7 +3734,7 @@ class MainWindow(QMainWindow):
         TextInputOverlay.show_over(
             self, "Paste Nexus login code",
             "Paste the code from the Nexus 'Having issues?' page:", _pasted,
-            ok_label="Submit")
+            ok_label=self.tr("Submit"))
 
     def _nexus_clear_credentials(self):
         """Forget the saved OAuth tokens + legacy API key."""
@@ -4828,11 +4829,12 @@ class MainWindow(QMainWindow):
                     _launch({n: None for n in keep}, set())
 
             ConfirmOverlay.show_over(
-                self, "Copy to profile",
-                f"{len(existing)} of {len(names)} mod(s) already exist in "
-                f"'{target_profile}'. Replace them? (Cancel skips those.)",
-                _resolved, confirm_label="Replace", cancel_label="Skip",
-                danger=False)
+                self, self.tr("Copy to profile"),
+                self.tr("{0} of {1} mod(s) already exist in "
+                        "'{2}'. Replace them? (Cancel skips those.)").format(
+                            len(existing), len(names), target_profile),
+                _resolved, confirm_label=self.tr("Replace"),
+                cancel_label=self.tr("Skip"), danger=False)
 
     def _run_copy_to_profile(self, names, enabled_map, plan, replace_set, move,
                              src_staging, src_profile_dir, target_staging,
@@ -6470,30 +6472,30 @@ class MainWindow(QMainWindow):
                 return
             launch_exe_in_prefix(game, exe_path, log_fn=self._append_log)
 
-        pick_exe_file("Select EXE to run in this prefix", _picked)
+        pick_exe_file(self.tr("Select EXE to run in this prefix"), _picked)
 
     def _proton_install_vcredist(self):
         from Utils.proton_tools import install_vcredist
         self._run_proton_installer(
-            "Installing VC++ Redistributable",
+            self.tr("Installing VC++ Redistributable"),
             lambda plog: install_vcredist(self._gs.game, log_fn=plog))
 
     def _proton_install_d3dcompiler(self):
         from Utils.proton_tools import install_d3dcompiler_47
         self._run_proton_installer(
-            "Installing d3dcompiler_47",
+            self.tr("Installing d3dcompiler_47"),
             lambda plog: install_d3dcompiler_47(self._gs.game, log_fn=plog))
 
     def _proton_install_xact(self):
         from Utils.proton_tools import install_xact
         self._run_proton_installer(
-            "Installing XACT audio (XAudio2)",
+            self.tr("Installing XACT audio (XAudio2)"),
             lambda plog: install_xact(self._gs.game, log_fn=plog))
 
     def _proton_install_dotnet(self, version: str):
         from Utils.proton_tools import install_dotnet
         self._run_proton_installer(
-            f"Installing .NET {version}",
+            self.tr("Installing .NET {0}").format(version),
             lambda plog: install_dotnet(self._gs.game, version, log_fn=plog))
 
     def _run_proton_installer(self, title: str, worker_fn):
@@ -7173,7 +7175,7 @@ class MainWindow(QMainWindow):
         from gui_qt.text_input_overlay import TextInputOverlay
         TextInputOverlay.show_over(
             self, "Rename mod", "New name for the installed mod:", _named,
-            initial=name, ok_label="Rename")
+            initial=name, ok_label=self.tr("Rename"))
 
     def _rename_mod_on_disk(self, old_name: str, new_name: str) -> str | None:
         """Rename a mod: staging folder → new, modindex entry, modlist entry,
@@ -7417,7 +7419,7 @@ class MainWindow(QMainWindow):
 
     def _build_text_files_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
-        panel = FilterSidePanel(self._text_files_view.filter_spec(), title="Filters")
+        panel = FilterSidePanel(self._text_files_view.filter_spec(), title=self.tr("Filters"))
         panel.changed.connect(self._on_text_files_filter_changed)
         panel.close_requested.connect(self._toggle_text_files_filters)
         self._text_files_view.filetypes_changed.connect(
@@ -7451,7 +7453,7 @@ class MainWindow(QMainWindow):
         from gui_qt.modlist_filter import PLUGIN_STATUS_FILTERS
         items = [(key, label, True) for key, label in PLUGIN_STATUS_FILTERS]
         spec = [{"title": "By status", "type": "checks", "items": items}]
-        panel = FilterSidePanel(spec, title="Filters")
+        panel = FilterSidePanel(spec, title=self.tr("Filters"))
         panel.changed.connect(self._on_plugin_filter_changed)
         panel.close_requested.connect(self._toggle_plugin_filters)
         self._plugin_filter_state: dict = {}
@@ -7513,7 +7515,7 @@ class MainWindow(QMainWindow):
 
     def _build_downloads_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
-        panel = FilterSidePanel(self._downloads_view.filter_spec(), title="Filters")
+        panel = FilterSidePanel(self._downloads_view.filter_spec(), title=self.tr("Filters"))
         panel.changed.connect(self._on_downloads_filter_changed)
         panel.close_requested.connect(self._toggle_downloads_filters)
         self._downloads_view.filetypes_changed.connect(
@@ -7553,7 +7555,7 @@ class MainWindow(QMainWindow):
     def _build_data_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
         from gui_qt.data_view import DataView
-        panel = FilterSidePanel(DataView.filter_spec(), title="Filters")
+        panel = FilterSidePanel(DataView.filter_spec(), title=self.tr("Filters"))
         panel.changed.connect(self._on_data_filter_changed)
         panel.close_requested.connect(self._toggle_data_filters)
         self._data_view.filetypes_changed.connect(self._sync_data_filter_list)
@@ -7592,7 +7594,7 @@ class MainWindow(QMainWindow):
     def _build_mod_files_filter_panel(self):
         from gui_qt.filter_panel import FilterSidePanel
         from gui_qt.mod_files_view import ModFilesView
-        panel = FilterSidePanel(ModFilesView.filter_spec(), title="Filters")
+        panel = FilterSidePanel(ModFilesView.filter_spec(), title=self.tr("Filters"))
         panel.changed.connect(self._on_mod_files_filter_changed)
         panel.close_requested.connect(self._toggle_mod_files_filters)
         # Keep the panel's file-type list + Pack/Unpack enablement in sync.
@@ -7912,7 +7914,7 @@ class MainWindow(QMainWindow):
             {"title": "By category", "type": "dynamic", "id": "categories"},
             {"title": "By file type", "type": "dynamic", "id": "filetypes"},
         ]
-        panel = FilterSidePanel(spec, title="Filters")
+        panel = FilterSidePanel(spec, title=self.tr("Filters"))
         panel.changed.connect(self._on_modlist_filter_changed)
         panel.close_requested.connect(self._toggle_modlist_filters)
         self._modlist_filter_state: dict = {}
@@ -8691,7 +8693,8 @@ class MainWindow(QMainWindow):
             return
         from gui_qt.modlist_data import compute_plugin_stats
         s = compute_plugin_stats(self._plugin_model._rows)
-        lbl.setText(f"P:{s['total']} / Non-ESL:{s['non_esl']}")
+        lbl.setText(self.tr("P:{0} / Non-ESL:{1}").format(
+            s['total'], s['non_esl']))
         lbl.setToolTip(self.tr("{0} plugins ({1} ESL, {2} non-ESL)").format(
             s["total"], s["esl"], s["non_esl"]))
 

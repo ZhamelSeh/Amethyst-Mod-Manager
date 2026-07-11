@@ -324,7 +324,7 @@ class CollectionInstallOverlay(QWidget):
                 f"<div style='color:{self._c('TEXT_MAIN')}'>{escape(name)}</div>")
         for name in self._extract_queued.values():
             lines.append(
-                f"<div style='color:{_QUEUED_TONE}'>{escape(name)} — Queued</div>")
+                f"<div style='color:{_QUEUED_TONE}'>{escape(name)} {self.tr('— Queued')}</div>")
         self._ex_label.setText("".join(lines))
 
     # ---- lifecycle --------------------------------------------------------

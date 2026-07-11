@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QT_TRANSLATE_NOOP
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -37,7 +37,14 @@ def _hl_colors(p: dict | None = None) -> dict[str, QColor]:
     }
 
 
-_COLS = ["File", "Version", "Category", "Size", ""]
+# Translated at display time (setHorizontalHeaderLabels); register for lupdate.
+_COLS = [
+    QT_TRANSLATE_NOOP("ChangeVersionView", "File"),
+    QT_TRANSLATE_NOOP("ChangeVersionView", "Version"),
+    QT_TRANSLATE_NOOP("ChangeVersionView", "Category"),
+    QT_TRANSLATE_NOOP("ChangeVersionView", "Size"),
+    "",
+]
 
 
 class _LegendBar(QWidget):
@@ -175,7 +182,8 @@ class ChangeVersionView(QWidget):
 
         # File table.
         self._table = QTableWidget(0, len(_COLS))
-        self._table.setHorizontalHeaderLabels(_COLS)
+        self._table.setHorizontalHeaderLabels(
+            [self.tr(c) if c else "" for c in _COLS])
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionMode(QAbstractItemView.NoSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)

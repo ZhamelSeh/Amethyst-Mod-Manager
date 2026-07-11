@@ -3085,6 +3085,25 @@ It may already be modified. Verify game files in Steam/Heroic to get a clean exe
     </message>
 </context>
 <context>
+    <name>FrameworkBanner</name>
+    <message>
+        <source>✔  {0} Installed</source>
+        <translation>✔  {0} Installed</translation>
+    </message>
+    <message>
+        <source>●  {0} present in modlist but not deployed</source>
+        <translation>●  {0} present in modlist but not deployed</translation>
+    </message>
+    <message>
+        <source>●  {0} present in modlist but not enabled</source>
+        <translation>●  {0} present in modlist but not enabled</translation>
+    </message>
+    <message>
+        <source>✘  {0} Not Present</source>
+        <translation>✘  {0} Not Present</translation>
+    </message>
+</context>
+<context>
     <name>GpakView</name>
     <message>
         <source>GPAK tools — {0}</source>
@@ -3616,6 +3635,70 @@ It may already be modified. Verify game files in Steam/Heroic to get a clean exe
     <message>
         <source>Restart now</source>
         <translation>Restart now</translation>
+    </message>
+    <message>
+        <source>Deploy Method</source>
+        <translation>Deploy Method</translation>
+    </message>
+    <message>
+        <source>Symlink</source>
+        <translation>Symlink</translation>
+    </message>
+    <message>
+        <source>Symlink (Recommended)</source>
+        <translation>Symlink (Recommended)</translation>
+    </message>
+    <message>
+        <source>Hardlink</source>
+        <translation>Hardlink</translation>
+    </message>
+    <message>
+        <source>Hardlink (Recommended)</source>
+        <translation>Hardlink (Recommended)</translation>
+    </message>
+    <message>
+        <source>Swap launcher with script extender on deploy</source>
+        <translation>Swap launcher with script extender on deploy</translation>
+    </message>
+    <message>
+        <source>Auto deploy (on enable/disable/reorder)</source>
+        <translation>Auto deploy (on enable/disable/reorder)</translation>
+    </message>
+    <message>
+        <source>Automatic archive invalidation (prefer loose files over BSAs)</source>
+        <translation>Automatic archive invalidation (prefer loose files over BSAs)</translation>
+    </message>
+    <message>
+        <source>Use profile-specific INI files</source>
+        <translation>Use profile-specific INI files</translation>
+    </message>
+    <message>
+        <source>Use profile-specific saves</source>
+        <translation>Use profile-specific saves</translation>
+    </message>
+    <message>
+        <source>Prepend load-order numbers to mod folders</source>
+        <translation>Prepend load-order numbers to mod folders</translation>
+    </message>
+    <message>
+        <source>Game Patch Version</source>
+        <translation>Game Patch Version</translation>
+    </message>
+    <message>
+        <source>Patch 8</source>
+        <translation>Patch 8</translation>
+    </message>
+    <message>
+        <source>Patch 7</source>
+        <translation>Patch 7</translation>
+    </message>
+    <message>
+        <source>Patch 6</source>
+        <translation>Patch 6</translation>
+    </message>
+    <message>
+        <source>Plugins file name</source>
+        <translation>Plugins file name</translation>
     </message>
     <message>
         <source>Install-name Rules</source>
@@ -5301,6 +5384,18 @@ How would you like to handle the existing mod?</translation>
     <message>
         <source>Show / hide columns</source>
         <translation>Show / hide columns</translation>
+    </message>
+    <message>
+        <source>Enabled</source>
+        <translation>Enabled</translation>
+    </message>
+    <message>
+        <source>Disabled</source>
+        <translation>Disabled</translation>
+    </message>
+    <message>
+        <source>Hide separators</source>
+        <translation>Hide separators</translation>
     </message>
 </context>
 <context>

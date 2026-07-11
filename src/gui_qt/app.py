@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, Signal, QTimer
+from PySide6.QtCore import Qt, QSize, Signal, QTimer, QT_TRANSLATE_NOOP
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QMainWindow, QToolButton, QWidget, QSplitter, QApplication,
@@ -82,6 +82,31 @@ def _check_modio_updates(game, staging, log_fn, only_names=None):
 # Set when the user changes language: run() re-execs the process after the event
 # loop exits so the whole UI rebuilds in the new language.
 _RESTART_REQUESTED = False
+
+
+# Quick-configure submenu labels come from the GUI-free Utils.quick_configure and
+# are shown via self.tr(opt["label"]) / self.tr(clabel) in MainWindow — but
+# lupdate can't see through that variable, so the source literals are registered
+# here (context "MainWindow", matching the tr() call site) for extraction. Keep
+# in sync with build_quick_configure_options().
+_QUICK_CONFIGURE_TR = (
+    QT_TRANSLATE_NOOP("MainWindow", "Deploy Method"),
+    QT_TRANSLATE_NOOP("MainWindow", "Symlink"),
+    QT_TRANSLATE_NOOP("MainWindow", "Symlink (Recommended)"),
+    QT_TRANSLATE_NOOP("MainWindow", "Hardlink"),
+    QT_TRANSLATE_NOOP("MainWindow", "Hardlink (Recommended)"),
+    QT_TRANSLATE_NOOP("MainWindow", "Swap launcher with script extender on deploy"),
+    QT_TRANSLATE_NOOP("MainWindow", "Auto deploy (on enable/disable/reorder)"),
+    QT_TRANSLATE_NOOP("MainWindow", "Automatic archive invalidation (prefer loose files over BSAs)"),
+    QT_TRANSLATE_NOOP("MainWindow", "Use profile-specific INI files"),
+    QT_TRANSLATE_NOOP("MainWindow", "Use profile-specific saves"),
+    QT_TRANSLATE_NOOP("MainWindow", "Prepend load-order numbers to mod folders"),
+    QT_TRANSLATE_NOOP("MainWindow", "Game Patch Version"),
+    QT_TRANSLATE_NOOP("MainWindow", "Patch 8"),
+    QT_TRANSLATE_NOOP("MainWindow", "Patch 7"),
+    QT_TRANSLATE_NOOP("MainWindow", "Patch 6"),
+    QT_TRANSLATE_NOOP("MainWindow", "Plugins file name"),
+)
 
 
 class _FooterBar(QWidget):

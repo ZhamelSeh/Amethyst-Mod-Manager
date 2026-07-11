@@ -41,6 +41,22 @@ class FrameworkBanner(QWidget):
         self._v.setSpacing(1)
         self.hide()
 
+    def _render(self, st) -> str:
+        """Translated banner text for a FrameworkStatus. The neutral detector
+        builds an English `st.message`; here we re-render it from state+label so
+        it's translatable (and keeps the ✔/●/✘ glyph prefix). Falls back to the
+        English message for any unknown state."""
+        label = st.label
+        if st.state == STATE_INSTALLED:
+            return self.tr("✔  {0} Installed").format(label)
+        if st.state == STATE_NOT_DEPLOYED:
+            return self.tr("●  {0} present in modlist but not deployed").format(label)
+        if st.state == STATE_NOT_ENABLED:
+            return self.tr("●  {0} present in modlist but not enabled").format(label)
+        if st.state == STATE_MISSING:
+            return self.tr("✘  {0} Not Present").format(label)
+        return st.message
+
     def set_statuses(self, statuses) -> None:
         # Clear existing rows.
         while self._v.count():
@@ -54,7 +70,7 @@ class FrameworkBanner(QWidget):
         p = active_palette()
         for st in statuses:
             bg_key, fg_key = _STATE_COLORS.get(st.state, _STATE_COLORS[STATE_MISSING])
-            lbl = QLabel(st.message)
+            lbl = QLabel(self._render(st))
             lbl.setFixedHeight(ROW_H)
             lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
             lbl.setStyleSheet(

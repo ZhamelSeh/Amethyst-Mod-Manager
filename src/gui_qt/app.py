@@ -1497,6 +1497,7 @@ class MainWindow(QMainWindow):
                 None,
                 (self.tr("Install VC++ Redistributable"), self._proton_install_vcredist),
                 (self.tr("Install d3dcompiler_47"), self._proton_install_d3dcompiler),
+                (self.tr("Install XACT audio (XAudio2)"), self._proton_install_xact),
                 (self.tr(".NET runtime"), [
                     (self.tr(".NET {0}").format(v), (lambda v=v: self._proton_install_dotnet(v)))
                     for v in DOTNET_VERSIONS
@@ -6418,6 +6419,12 @@ class MainWindow(QMainWindow):
         self._run_proton_installer(
             "Installing d3dcompiler_47",
             lambda plog: install_d3dcompiler_47(self._gs.game, log_fn=plog))
+
+    def _proton_install_xact(self):
+        from Utils.proton_tools import install_xact
+        self._run_proton_installer(
+            "Installing XACT audio (XAudio2)",
+            lambda plog: install_xact(self._gs.game, log_fn=plog))
 
     def _proton_install_dotnet(self, version: str):
         from Utils.proton_tools import install_dotnet

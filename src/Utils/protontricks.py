@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -268,6 +269,7 @@ def _install_via_winetricks(
     prefix_path: Path,
     component: str,
     log_fn: Callable[[str], None],
+    timeout: int = 300,
 ) -> bool:
     """Install *component* directly via the bundled winetricks using WINEPREFIX."""
     if not _bundled_winetricks().is_file():
@@ -293,9 +295,11 @@ def _install_via_winetricks(
 
     log_fn(f"Installing {component} via winetricks (this may take a minute) …")
     try:
+        # -q = unattended: suppresses the per-DLL regsvr32 success dialogs
+        # (xact alone pops ~a dozen) and makes verb installers run silent.
         result = subprocess.run(
-            [winetricks, component],
-            capture_output=True, text=True, timeout=300, env=env,
+            [winetricks, "-q", component],
+            capture_output=True, text=True, timeout=timeout, env=env,
         )
         if result.returncode == 0:
             log_fn(f"{component} installed successfully.")
@@ -304,7 +308,7 @@ def _install_via_winetricks(
             log_fn(f"{component} install failed: {result.stderr or result.stdout or 'unknown error'}")
             return False
     except subprocess.TimeoutExpired:
-        log_fn(f"{component} install timed out after 5 minutes.")
+        log_fn(f"{component} install timed out after {timeout // 60} minutes.")
         return False
     except Exception as exc:
         log_fn(f"{component} error: {exc}")
@@ -315,26 +319,84 @@ def _install_via_protontricks(
     steam_id: str,
     component: str,
     log_fn: Callable[[str], None],
+    timeout: int = 300,
 ) -> bool:
     """Install *component* via system protontricks against *steam_id*."""
     cmd = _get_protontricks_cmd(steam_id)
     if cmd is None:
         return False
-    cmd = cmd + [component]
+    # -q = unattended (forwarded to winetricks inside the prefix) — no
+    # regsvr32 popups, silent verb installers.
+    cmd = cmd + ["-q", component]
     log_fn(f"Installing {component} via protontricks (this may take a minute) …")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             log_fn(f"{component} installed successfully.")
             return True
         log_fn(f"{component} install failed: {result.stderr or result.stdout or 'unknown error'}")
         return False
     except subprocess.TimeoutExpired:
-        log_fn(f"{component} install timed out after 5 minutes.")
+        log_fn(f"{component} install timed out after {timeout // 60} minutes.")
         return False
     except Exception as exc:
         log_fn(f"{component} error: {exc}")
         return False
+
+
+def winetricks_verb_dep_key(verb: str) -> str:
+    """Marker key for a generic winetricks verb (e.g. 'fontsmooth=rgb' → 'wt_fontsmooth_rgb')."""
+    return "wt_" + re.sub(r"\W+", "_", verb).strip("_")
+
+
+def install_winetricks_verb(
+    game,
+    verb: str,
+    log_fn: Callable[[str], None] | None = None,
+    *,
+    timeout: int = 300,
+) -> bool:
+    """Install a generic winetricks *verb* into *game*'s Proton prefix.
+
+    Uses the bundled winetricks with WINEPREFIX first (self-contained — no
+    protontricks needed on the system), falling back to system protontricks
+    against the game's Steam ID when winetricks fails or no prefix path is
+    configured. Success is recorded in the prefix's amethyst_deps.json so
+    repeat calls skip instantly. *timeout* is per attempt — pass a large
+    value for slow verbs like dotnet48.
+    """
+    _log = _safe_log(log_fn)
+    get_prefix = getattr(game, "get_prefix_path", None)
+    prefix = get_prefix() if callable(get_prefix) else None
+    if prefix is not None and not Path(prefix).is_dir():
+        prefix = None
+
+    key = winetricks_verb_dep_key(verb)
+    if prefix is not None and is_dep_installed(Path(prefix), key):
+        _log(f"{verb} already installed in this prefix — skipping.")
+        return True
+
+    def _mark():
+        if prefix is not None:
+            mark_dep_installed(Path(prefix), key)
+
+    if prefix is not None:
+        if _install_via_winetricks(Path(prefix), verb, _log, timeout):
+            _mark()
+            return True
+        _log("Falling back to protontricks …")
+
+    from Utils.steam_finder import game_steam_id
+    steam_id = game_steam_id(game)
+    if steam_id and _get_protontricks_cmd(steam_id) is not None:
+        if _install_via_protontricks(steam_id, verb, _log, timeout):
+            _mark()
+            return True
+        return False
+
+    if prefix is None:
+        _log(f"{verb}: no prefix path or working protontricks available — cannot install.")
+    return False
 
 
 def _download_verified(url: str, sha256: str, log_fn: Callable[[str], None]) -> bytes | None:

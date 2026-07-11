@@ -236,10 +236,10 @@ class MainWindow(QMainWindow):
     # Install-a-Nexus-mod-by-id flow (used by Missing Requirements) → UI thread.
     _qu_resolved = Signal(object, object)         # (queue list, skipped list)
     _qu_downloaded = Signal(object, object)       # (dl_items list, failed list)
-    _qu_dl_progress = Signal(int, int)            # aggregate (cur_bytes, total_bytes)
+    _qu_dl_progress = Signal("qlonglong", "qlonglong")  # aggregate (cur_bytes, total_bytes; 64-bit: >2GB)
     _req_install_files = Signal(object, object)   # (ctx dict, files|None)
     _req_install_dl = Signal(object, object, object)  # (archive|None, meta|None, dl_key)
-    _req_install_prog = Signal(object, object, int, int)  # (dl_key, name, downloaded, total)
+    _req_install_prog = Signal(object, object, "qlonglong", "qlonglong")  # (dl_key, name, downloaded, total bytes; 64-bit: >2GB)
     # Collection reset-load-order worker → UI thread (result dict).
     _reset_done = Signal(object)
     # Collection INSTALL worker → UI thread. Every callback is a single emit; the

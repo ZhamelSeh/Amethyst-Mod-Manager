@@ -65,7 +65,7 @@ class NexusBrowserView(QWidget):
     _premium_checked = Signal(object, object)       # (entry, is_premium|None)
     _files_ready = Signal(object, object)           # (entry, list[NexusModFile])
     _download_done = Signal(object, object, object)      # (archive_path|None, meta|None, dl_key)
-    _download_progress = Signal(object, object, int, int)  # (dl_key, name, downloaded, total)
+    _download_progress = Signal(object, object, "qlonglong", "qlonglong")  # (dl_key, name, downloaded, total bytes; 64-bit: >2GB)
 
     def __init__(self, api, domain, game, install_fn=None, log_fn=None,
                  progress_fn=None, parent=None):

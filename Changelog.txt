@@ -1,3 +1,8 @@
+- v2.0.3
+- Added ue5 pak conflict detection
+- Fixed alphabetical sorting when the priority column is reversed
+- Fixed overflow errors when installing via the NXM handler
+
 - v2.0.2
 ### Bug Fixes
 - Fixed segfault on startup caused by incompatible fontconfig files

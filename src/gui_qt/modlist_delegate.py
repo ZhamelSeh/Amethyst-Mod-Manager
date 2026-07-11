@@ -98,9 +98,9 @@ _LOOSE_CONFLICT_TIPS = {
     3:  "Loose file conflict - Full",
 }
 _BSA_CONFLICT_TIPS = {
-    1:  "BSA conflict - Winning",
-    -1: "BSA conflict - Losing",
-    2:  "BSA conflict - Partial",
+    1:  "Archive conflict - Winning",
+    -1: "Archive conflict - Losing",
+    2:  "Archive conflict - Partial",
 }
 
 def _contrasting_text_color(hex_bg: str) -> str:

@@ -238,17 +238,30 @@ class BaseGame(ABC):
     def archive_extensions(self) -> frozenset[str]:
         """
         File extensions of game-specific archive formats (e.g. ``.bsa``,
-        ``.ba2``) whose contents should be scanned for archive-level
-        conflict detection.
+        ``.ba2``, ``.pak``/``.utoc``) whose contents should be scanned for
+        archive-level conflict detection.
 
         When non-empty, the filemap rebuild also parses the table-of-contents
         of matching archive files inside each mod's staging folder and computes
         which files inside archives overlap between mods.
 
         Return an empty frozenset (the default) to disable archive conflict
-        detection entirely.  Only Bethesda-family games need this.
+        detection entirely.  Bethesda-family games use BSA/BA2; UE5 games
+        use pak/IoStore containers (see ``UE5Game``).
         """
         return frozenset()
+
+    @property
+    def archive_plugin_ordering(self) -> bool:
+        """
+        When True (the default), archive load order is refined by plugin
+        load order — Bethesda engines load a BSA at its owning plugin's
+        position, so conflict winners follow loadorder.txt.
+
+        Games whose archives are not plugin-tied (UE5 paks) return False so
+        archive conflict winners follow pure mod priority instead.
+        """
+        return True
 
     @property
     def filemap_exclude_dirs(self) -> frozenset[str]:

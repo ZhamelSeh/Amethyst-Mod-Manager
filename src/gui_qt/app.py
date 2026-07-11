@@ -786,12 +786,65 @@ class MainWindow(QMainWindow):
             self._tabs.focus_key("mf_bsa_preview")
             self._tabs.set_tab_title("mf_bsa_preview", name)
             return
-        widget = BsaPreview(_P(path), name)
+        widget = BsaPreview(_P(path), name,
+                            conflict_fn=self._bsa_preview_conflicts)
         widget.close_requested.connect(
             lambda: self._tabs.close_tab("mf_bsa_preview"))
         self._bsa_preview_widget = widget
         self._tabs.open_scoped_tab(
             widget, name, self._modlist_panel_stack, key="mf_bsa_preview")
+
+    def _bsa_preview_conflicts(self, archive_path):
+        """Per-file conflict codes for the archive preview: {contained_path:
+        +1 (this mod's copy wins) / -1 (loses)} judged for the archive's
+        owning mod against every enabled mod's archives — the same winner map
+        the modlist icons and Show Conflicts tab use. Runs on the preview's
+        daemon thread. Returns {} for unowned paths (overwrite/), disabled
+        mods, or any failure — the preview just shows no tints then."""
+        try:
+            from pathlib import Path as _P
+            g = self._gs.game
+            staging = self._gs.staging_dir()
+            ml = self._gs.modlist_path()
+            if g is None or staging is None or ml is None or not ml.is_file():
+                return {}
+            rel = _P(archive_path).resolve().relative_to(staging.resolve())
+            mod_name = rel.parts[0]
+
+            from Utils.bsa_filemap import read_bsa_index, compute_bsa_winner_map
+            from Utils.modlist import read_modlist
+            from Utils.ue_pak_reader import UE_ARCHIVE_EXTENSIONS
+            index = read_bsa_index(staging.parent / "bsa_index.bin") or {}
+            enabled = [e for e in read_modlist(ml)
+                       if not e.is_separator and e.enabled]
+            if mod_name not in {e.name for e in enabled}:
+                return {}
+            prio = [e.name for e in reversed(enabled)]
+            exts = frozenset(
+                getattr(g, "archive_extensions", frozenset()) or frozenset())
+            if getattr(g, "archive_plugin_ordering", True):
+                from Utils.plugins import read_loadorder
+                pdir = self._gs.profile_dir()
+                plugin_order = (read_loadorder(pdir / "loadorder.txt")
+                                if pdir is not None else None)
+                plugin_exts = frozenset(
+                    getattr(g, "plugin_extensions", []) or [])
+            else:
+                plugin_order = None
+                plugin_exts = None
+            winner, losers = compute_bsa_winner_map(
+                index, prio, plugin_order or None, plugin_exts or None,
+                staging.parent / "modindex.bin",
+                bool(exts & UE_ARCHIVE_EXTENSIONS))
+            codes = {}
+            for fp, lose_list in losers.items():
+                if winner.get(fp) == mod_name:
+                    codes[fp] = 1
+                elif mod_name in lose_list:
+                    codes[fp] = -1
+            return codes
+        except Exception:
+            return {}
 
     def _open_text_editor_tab(self, path, rel_str, find_kw=None):
         """Open a text file in a save-capable editor as a MODLIST-PANEL-SCOPED tab
@@ -4611,10 +4664,19 @@ class MainWindow(QMainWindow):
                       | set(cd.bsa_overrides.get(mod_name, set())))
         strip_prefixes = (getattr(game, "mod_folder_strip_prefixes", set())
                           | getattr(game, "mod_folder_strip_prefixes_post", set()))
-        plugin_order = [r.name for r in getattr(self._plugin_model, "_rows", [])
-                        if getattr(r, "enabled", False)]
+        # UE pak mounting is not plugin-driven — archive winners follow the
+        # engine's (_P boost, basename) mount order instead (empty plugin
+        # order + archive_name_ordering below select that path).
+        if getattr(game, "archive_plugin_ordering", True):
+            plugin_order = [r.name for r in getattr(self._plugin_model, "_rows", [])
+                            if getattr(r, "enabled", False)]
+        else:
+            plugin_order = []
         plugin_exts = frozenset(x.lower() for x in
                                 (getattr(game, "plugin_extensions", []) or ()))
+        from Utils.ue_pak_reader import UE_ARCHIVE_EXTENSIONS
+        archive_exts = frozenset(
+            getattr(game, "archive_extensions", frozenset()) or frozenset())
         ctx = {
             "staging_root": staging,
             "profile_dir": self._gs.profile_dir(),
@@ -4623,9 +4685,11 @@ class MainWindow(QMainWindow):
             "bsa_index_path": staging.parent / "bsa_index.bin",
             "strip_prefixes": strip_prefixes,
             "beaten_mods": beaten,
-            "archive_exts": getattr(game, "archive_extensions", frozenset()),
+            "archive_exts": archive_exts,
             "plugin_order": plugin_order,
             "plugin_exts": plugin_exts,
+            # UE paks resolve by (_P boost, basename) mount order.
+            "archive_name_ordering": bool(archive_exts & UE_ARCHIVE_EXTENSIONS),
         }
         # Reuse one tab: rebuild it for the new mod if already open.
         if self._tabs.has_key("show_conflicts"):
@@ -8193,6 +8257,8 @@ class MainWindow(QMainWindow):
         archive_exts = getattr(g, "archive_extensions", None) if g else None
         if archive_exts and ".ba2" in archive_exts:
             panel.set_check_label("filter_has_bsa", self.tr("Mods with BA2 archives"))
+        elif archive_exts and ".pak" in archive_exts:
+            panel.set_check_label("filter_has_bsa", self.tr("Mods with PAK archives"))
         else:
             panel.set_check_label("filter_has_bsa", self.tr("Mods with BSA archives"))
         # PGPatcher (PBR) is Skyrim SE only.
@@ -9293,14 +9359,18 @@ class MainWindow(QMainWindow):
 
     def _move_skips_rebuild(self, move_ctx) -> bool:
         """True when a reorder left every moved mod on the same side of all
-        its loose-conflict partners, so no filemap winner, conflict code or
-        override pair can have changed. BSA winners follow PLUGIN order and
-        are unaffected by a mod move; disabled mods aren't in the maps (empty
-        partners). Sufficiency of the direct-pair maps: provider stacks are
-        priority-ordered, so crossing ANY co-provider means first crossing a
-        direct neighbour in that stack — which IS in overrides/overridden_by.
-        Conservative: any doubt (stale/missing conflict data, unknown mod)
-        → full rebuild. AMM_MOVE_SKIP_REBUILD=0 kills the fast path."""
+        its conflict partners (loose AND archive), so no filemap winner,
+        conflict code or override pair can have changed. Archive partners
+        matter because orphan BSAs and UE paks rank by MOD priority — a move
+        across an archive partner flips that winner (plugin-tied BSAs follow
+        plugin order and are unaffected, but they're in the same maps, so
+        including them just makes the check more conservative). Disabled mods
+        aren't in the maps (empty partners). Sufficiency of the direct-pair
+        maps: provider stacks are priority-ordered, so crossing ANY
+        co-provider means first crossing a direct neighbour in that stack —
+        which IS in the override maps. Conservative: any doubt (stale/missing
+        conflict data, unknown mod) → full rebuild. AMM_MOVE_SKIP_REBUILD=0
+        kills the fast path."""
         if os.environ.get("AMM_MOVE_SKIP_REBUILD") == "0":
             return False
         # Maps must describe the CURRENT modlist: _conflict_maps_current is
@@ -9318,7 +9388,9 @@ class MainWindow(QMainWindow):
         if moved and crossed_set:
             for m in moved:
                 partners = ((data.overrides.get(m) or set())
-                            | (data.overridden_by.get(m) or set()))
+                            | (data.overridden_by.get(m) or set())
+                            | (data.bsa_overrides.get(m) or set())
+                            | (data.bsa_overridden_by.get(m) or set()))
                 if partners & crossed_set:
                     return False
         self._append_log(

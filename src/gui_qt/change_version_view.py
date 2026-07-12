@@ -326,13 +326,15 @@ class ChangeVersionView(QWidget):
         mod_id = int(getattr(self._meta, "mod_id", 0) or 0)
         self._log(f"Nexus: downloading {f.file_name or f.name}…")
 
-        # A minimal mod_info-like object for build_meta_from_download.
+        # A minimal mod_info-like fallback (used only if the API lookup below
+        # fails). Real installs pass a full NexusModInfo so author / uploader /
+        # summary / category land in meta.ini — fetch the same here.
         class _Info:
             pass
-        info = _Info()
-        info.mod_id = mod_id
-        info.domain_name = domain
-        info.name = getattr(self._meta, "nexus_name", "") or self._mod_name
+        stub = _Info()
+        stub.mod_id = mod_id
+        stub.domain_name = domain
+        stub.name = getattr(self._meta, "nexus_name", "") or self._mod_name
 
         def worker():
             archive = meta = None
@@ -349,6 +351,20 @@ class ChangeVersionView(QWidget):
                     expected_size_bytes=size, progress_cb=lambda d, t: None)
                 if result.success and result.file_path is not None:
                     archive = str(result.file_path)
+                    # Fetch full mod info (author, uploader, summary, category)
+                    # so the change-version install stamps the same metadata as
+                    # a fresh install or reinstall. Use GraphQL (like the NXM /
+                    # browser path) so this costs NO REST rate-limit call — the
+                    # download itself already spends the one allowed call. Fall
+                    # back to the stub only if the lookup fails.
+                    info = stub
+                    try:
+                        fetched, _ = self._api.get_mod_and_file_info_graphql(
+                            domain, mod_id, f.file_id)
+                        if fetched is not None:
+                            info = fetched
+                    except Exception:
+                        pass
                     try:
                         meta = build_meta_from_download(
                             game_domain=domain, mod_id=mod_id, file_id=f.file_id,

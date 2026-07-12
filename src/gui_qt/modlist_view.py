@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 
 from gui_qt.modlist_model import (
     ModListModel, COLUMNS, COL_NAME, COL_CATEGORY, COL_PRIORITY, COL_FLAGS,
-    COL_CONFLICTS, COL_INSTALLED, COL_VERSION, COL_SIZE, HighlightRole,
+    COL_CONFLICTS, COL_INSTALLED, COL_VERSION, COL_AUTHOR, COL_SIZE,
+    HighlightRole,
 )
 from gui_qt.modlist_delegate import ModRowDelegate, SEP_H
 from gui_qt import column_state
@@ -39,24 +40,27 @@ class _StayOpenMenu(QMenu):
 # _layout_columns data_defaults / data_mins. Name auto-fills the leftover.
 COL_DEFAULTS = {
     COL_CATEGORY: 120, COL_FLAGS: 70, COL_CONFLICTS: 95, COL_INSTALLED: 100,
-    COL_VERSION: 90, COL_PRIORITY: 75, COL_SIZE: 85,
+    COL_VERSION: 90, COL_AUTHOR: 110, COL_PRIORITY: 75, COL_SIZE: 85,
 }
 COL_MINS = {
     COL_NAME: 120, COL_CATEGORY: 90, COL_FLAGS: 60, COL_CONFLICTS: 90,
-    COL_INSTALLED: 90, COL_VERSION: 80, COL_PRIORITY: 70, COL_SIZE: 70,
+    COL_INSTALLED: 90, COL_VERSION: 80, COL_AUTHOR: 80, COL_PRIORITY: 70,
+    COL_SIZE: 70,
 }
 NAME_MIN = COL_MINS[COL_NAME]
 
 # Columns shown by default on a fresh INI (no persisted state). Tk parity:
-# Category, Installed, Size are hidden until the user enables them.
-_FIRST_RUN_HIDDEN = {COL_CATEGORY, COL_INSTALLED, COL_SIZE}
+# Category, Installed, Size are hidden until the user enables them; Author
+# (Nexus uploader) is likewise opt-in.
+_FIRST_RUN_HIDDEN = {COL_CATEGORY, COL_INSTALLED, COL_AUTHOR, COL_SIZE}
 
 # Header column → sort key (Tk _DATA_COL_SORT_KEYS; keys persisted by name via
 # column_state's sort_col, which stores the COLUMNS display name).
 _COL_TO_SORTKEY = {
     COL_NAME: "name", COL_CATEGORY: "category", COL_FLAGS: "flags",
     COL_CONFLICTS: "conflicts", COL_INSTALLED: "installed",
-    COL_VERSION: "version", COL_PRIORITY: "priority", COL_SIZE: "size",
+    COL_VERSION: "version", COL_AUTHOR: "author", COL_PRIORITY: "priority",
+    COL_SIZE: "size",
 }
 
 
@@ -1189,6 +1193,12 @@ class ModListView(QTreeView):
         for name in st["hidden"]:
             if name in name_to_col:
                 self.setColumnHidden(name_to_col[name], True)
+        # A column added after the state was saved (absent from the persisted
+        # order) keeps its first-run default — otherwise e.g. the new Author
+        # column would pop up visible for every existing user.
+        for col in _FIRST_RUN_HIDDEN:
+            if st["order"] and COLUMNS[col] not in st["order"]:
+                self.setColumnHidden(col, True)
         h = self.header()
         for visual, name in enumerate(st["order"]):
             if name in name_to_col:

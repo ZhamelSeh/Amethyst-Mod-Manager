@@ -47,6 +47,7 @@ class NexusModMeta:
     file_id: int = 0                   # Nexus file ID
     version: str = ""                  # mod version string
     author: str = ""                   # mod author
+    uploaded_by: str = ""              # Nexus username that uploaded the mod
     nexus_name: str = ""               # mod name on Nexus (may differ from folder)
     nexus_file_name: str = ""          # per-file display name on Nexus (file_details.name, e.g. "Engine Fixes - Main File")
     installation_file: str = ""        # original archive filename
@@ -128,6 +129,7 @@ _KEY_MAP: dict[str, str] = {
     "fileid":            "file_id",
     "version":           "version",
     "author":            "author",
+    "uploadedBy":        "uploaded_by",
     "nexusName":         "nexus_name",
     "nexusFileName":     "nexus_file_name",
     "installationFile":  "installation_file",
@@ -260,6 +262,10 @@ def write_meta(meta_ini_path: Path, meta: NexusModMeta) -> None:
             # that build a fresh NexusModMeta must not zero it.
             if attr == "file_size" and not value:
                 continue
+            # Same for the uploader: stamped by the install lookup / update
+            # check; a fresh NexusModMeta without it must not blank the value.
+            if attr == "uploaded_by" and not value:
+                continue
             cp.set(_SECTION, ini_key, str(value).replace("%", "%%"))
 
     meta_ini_path.parent.mkdir(parents=True, exist_ok=True)
@@ -323,6 +329,7 @@ def build_meta_from_download(
         meta.nexus_name = getattr(mod_info, "name", "")
         meta.version = getattr(mod_info, "version", "")
         meta.author = getattr(mod_info, "author", "")
+        meta.uploaded_by = getattr(mod_info, "uploaded_by", "") or ""
         meta.description = getattr(mod_info, "summary", "")
         meta.category_id = getattr(mod_info, "category_id", 0)
         meta.category_name = getattr(mod_info, "category_name", "") or ""
@@ -591,6 +598,7 @@ def resolve_nexus_meta_for_archive(
                 file_id=file_data.get("file_id", 0),
                 version=file_data.get("version", "") or file_data.get("mod_version", ""),
                 author=mod_data.get("author", ""),
+                uploaded_by=mod_data.get("uploaded_by", "") or "",
                 nexus_name=mod_data.get("name", ""),
                 nexus_file_name=file_data.get("name", "") or file_data.get("file_name", ""),
                 installation_file=archive_name,

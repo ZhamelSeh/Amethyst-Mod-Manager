@@ -27,7 +27,7 @@ DIVIDER_NAME = "__Ungrouped_Boundary__"
 
 # Sortable-column keys (match the Tk _sort_column strings; persisted to ini).
 SORT_KEYS = ("name", "category", "flags", "conflicts", "installed",
-             "version", "priority", "size")
+             "version", "author", "priority", "size")
 
 
 def make_divider() -> ModEntry:
@@ -79,6 +79,11 @@ def sort_key_fn(key: str, ctx: dict):
         cats = ctx.get("categories") or {}
         # Missing category sorts last (high Unicode sentinel — Tk parity).
         return lambda e: (cats.get(e.name, "") or "￿").lower()
+
+    if key == "author":
+        auths = ctx.get("authors") or {}
+        # Missing author sorts last, like category.
+        return lambda e: (auths.get(e.name, "") or "￿").lower()
 
     if key == "installed":
         inst = ctx.get("installed") or {}

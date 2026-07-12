@@ -207,6 +207,7 @@ class NexusModUpdateInfo:
     requirements: list["NexusModRequirement"] = field(default_factory=list)  # mod dependencies
     category_id: int = 0                    # Nexus mod category (e.g. Armor, Weapons)
     category_name: str = ""                 # Category display name
+    uploaded_by: str = ""                   # Nexus username that uploaded the mod
     files: list["NexusModFile"] = field(default_factory=list)  # from batch; avoids REST get_mod_files
 
 
@@ -873,6 +874,7 @@ class NexusAPI:
                     createdAt
                     updatedAt
                     fileSize
+                    uploader { name }
                     modCategory { name }
                 }
             }
@@ -910,6 +912,7 @@ class NexusAPI:
                     description=n.get("description", "") or "",
                     version=n.get("version", "") or "",
                     author=n.get("author", "") or "",
+                    uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                     category_id=0,
                     game_id=0,
                     domain_name=game_domain,
@@ -1338,6 +1341,7 @@ class NexusAPI:
                     summary
                     version
                     author
+                    uploader { name }
                     modCategory { categoryId name }
                     game { domainName }
                 }
@@ -1377,6 +1381,7 @@ class NexusAPI:
                 description="",
                 version=n.get("version", "") or "",
                 author=n.get("author", "") or "",
+                uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                 category_id=cat_id,
                 category_name=cat_name,
                 game_id=0,
@@ -1418,6 +1423,7 @@ class NexusAPI:
                     summary
                     updatedAt
                     viewerUpdateAvailable
+                    uploader { name }
                     modCategory { categoryId name }
                     modRequirements {
                         nexusRequirements {
@@ -1506,6 +1512,7 @@ class NexusAPI:
                         requirements=reqs,
                         category_id=cat_id,
                         category_name=cat_name,
+                        uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                         files=[],  # Mod has no files field in GraphQL; REST used for file checks
                     )
             except Exception as exc:
@@ -1638,6 +1645,7 @@ class NexusAPI:
                     summary
                     version
                     author
+                    uploader { name }
                     endorsements
                     downloads
                     pictureUrl
@@ -1683,6 +1691,7 @@ class NexusAPI:
                         description="",
                         version=n.get("version", "") or "",
                         author=n.get("author", "") or "",
+                        uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                         category_id=0,
                         game_id=0,
                         domain_name=domain,
@@ -1832,6 +1841,7 @@ class NexusAPI:
                     createdAt
                     updatedAt
                     fileSize
+                    uploader {{ name }}
                     modCategory {{ name }}
                 }}
             }}
@@ -1870,6 +1880,7 @@ class NexusAPI:
                     description=n.get("description", "") or "",
                     version=n.get("version", "") or "",
                     author=n.get("author", "") or "",
+                    uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                     category_id=0,
                     game_id=0,
                     domain_name=game_domain,
@@ -1943,6 +1954,7 @@ class NexusAPI:
                     createdAt
                     updatedAt
                     fileSize
+                    uploader {{ name }}
                     modCategory {{ name }}
                 }}
             }}
@@ -1980,6 +1992,7 @@ class NexusAPI:
                     description=n.get("description", "") or "",
                     version=n.get("version", "") or "",
                     author=n.get("author", "") or "",
+                    uploaded_by=(n.get("uploader") or {}).get("name", "") or "",
                     category_id=0,
                     game_id=0,
                     domain_name=game_domain,

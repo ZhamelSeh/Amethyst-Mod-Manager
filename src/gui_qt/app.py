@@ -8199,6 +8199,7 @@ class MainWindow(QMainWindow):
             {"title": "By status", "type": "checks", "items": items},
             {"title": "By category", "type": "dynamic", "id": "categories"},
             {"title": "By file type", "type": "dynamic", "id": "filetypes"},
+            {"title": "By author", "type": "dynamic", "id": "authors"},
         ]
         panel = FilterSidePanel(spec, title=self.tr("Filters"))
         panel.changed.connect(self._on_modlist_filter_changed)
@@ -8479,6 +8480,7 @@ class MainWindow(QMainWindow):
         data.missing_reqs = set(getattr(self, "_mod_missing_reqs", set()))
         data.ignored_missing_reqs = set(getattr(self, "_ignored_missing_reqs", frozenset()))
         data.category_names = dict(getattr(self, "_mod_categories", {}))
+        data.author_names = dict(getattr(self, "_mod_authors", {}))
         data.fomod_mods = set(getattr(self, "_mod_fomod", set()))
         data.bain_mods = set(getattr(self, "_mod_bain", set()))
         data.modified_mf_mods = self._build_modified_mf_mods()
@@ -8500,6 +8502,12 @@ class MainWindow(QMainWindow):
                       key=lambda c: ("(Uncategorized)" if c == "" else c).lower())
         panel.set_dynamic_items("categories", [
             (c, "(Uncategorized)" if c == "" else c, None) for c in cats])
+        # Authors (Nexus uploader). Only offer names we actually know — an
+        # "(Unknown)" bucket for un-stamped mods would just match everything not
+        # yet looked up, which isn't a useful filter.
+        auths = sorted({a for a in data.author_names.values() if a},
+                       key=str.lower)
+        panel.set_dynamic_items("authors", [(a, a, None) for a in auths])
         fts = sorted(data.filetype_counts.items(), key=lambda kv: kv[0])
         panel.set_dynamic_items("filetypes", [
             (ext, ext, count) for ext, count in fts])
@@ -8651,6 +8659,7 @@ class MainWindow(QMainWindow):
         self._modlist_context = prev_context
 
         self._mod_categories: dict[str, str] = {}
+        self._mod_authors: dict[str, str] = {}
         self._mod_updates: set[str] = set()
         self._mod_fomod: set[str] = set()
         self._mod_bain: set[str] = set()
@@ -8859,15 +8868,16 @@ class MainWindow(QMainWindow):
         if payload is None:
             return
         (versions, installed, flags, categories, updates,
-         fomod, bain, missing_reqs, descriptions) = payload
+         fomod, bain, missing_reqs, descriptions, authors) = payload
         self._mod_categories = categories
+        self._mod_authors = authors
         self._mod_updates = updates
         self._mod_fomod = fomod
         self._mod_bain = bain
         self._mod_missing_reqs = missing_reqs
         with span("on_modlist_meta_ready(apply)"):
             self._modlist_model.set_meta(versions, installed, categories,
-                                         descriptions)
+                                         descriptions, authors)
             self._modlist_model.set_flags(flags)
         # Prune any installed requirements from an open Missing Requirements panel
         # (this is the path the panel's own Install button lands on).
@@ -8979,16 +8989,16 @@ class MainWindow(QMainWindow):
                    and (subset is None or e.name in subset)]
         try:
             (_v, _i, flags, categories, updates, fomod, bain,
-             missing_reqs, _desc) = read_meta_for_entries(
+             missing_reqs, _desc, authors) = read_meta_for_entries(
                 entries, staging, self._ignored_missing_reqs,
                 profile_dir=self._gs.profile_dir(),
                 is_bg3=(getattr(self._gs.game, "game_id", "") == "baldurs_gate_3"))
         except Exception:
             return
         if subset is None:
-            (self._mod_categories, self._mod_updates, self._mod_fomod,
-             self._mod_bain, self._mod_missing_reqs) = (
-                categories, updates, fomod, bain, missing_reqs)
+            (self._mod_categories, self._mod_authors, self._mod_updates,
+             self._mod_fomod, self._mod_bain, self._mod_missing_reqs) = (
+                categories, authors, updates, fomod, bain, missing_reqs)
         else:
             # Merge: clear the requested names first (a cleared flag won't
             # appear in the subset result), then overlay the fresh values.
@@ -8996,6 +9006,9 @@ class MainWindow(QMainWindow):
                         if n not in subset}, **flags}
             self._mod_categories = {**{n: c for n, c in self._mod_categories.items()
                                        if n not in subset}, **categories}
+            self._mod_authors = {**{n: a for n, a in
+                                    getattr(self, "_mod_authors", {}).items()
+                                    if n not in subset}, **authors}
             for cur, fresh in ((self._mod_updates, updates),
                                (self._mod_fomod, fomod),
                                (self._mod_bain, bain),

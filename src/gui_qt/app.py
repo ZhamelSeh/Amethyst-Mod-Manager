@@ -6304,6 +6304,7 @@ class MainWindow(QMainWindow):
         # Refresh the modlist/conflicts + deployed-profile highlight after the op.
         self._reload_modlist()
         self._update_deployed_profile_highlight()
+        self._refresh_framework_banner()
         game_name = self._gs.game.name if self._gs.game else self.tr("Game")
         if success:
             msg = (self.tr("{0} Deployed") if kind == "deploy"

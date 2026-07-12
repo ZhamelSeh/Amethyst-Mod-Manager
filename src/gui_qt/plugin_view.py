@@ -15,7 +15,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter, QAction
 from PySide6.QtWidgets import (
     QTreeView, QStyledItemDelegate, QStyle, QAbstractItemView,
-    QToolTip, QToolButton, QMenu,
+    QToolTip, QToolButton,
 )
 
 from gui_qt import column_state
@@ -471,6 +471,12 @@ class PluginView(QTreeView):
             f"QToolButton {{ background: {bg}; border: none; padding: 0px; }}")
         btn.clicked.connect(self._show_column_menu)
         self._col_menu_btn = btn
+        # Hooks the window sets for the "Filters" submenu in the column menu:
+        # on_quick_filter(key, 0|1) applies a plugin status filter;
+        # quick_filter_state(key)->int reads its current tri-state for the
+        # check marks. (Mirrors the modlist column-menu quick filters.)
+        self.on_quick_filter = None
+        self.quick_filter_state = None
         self._position_column_menu_button()
         btn.show()
 
@@ -490,7 +496,8 @@ class PluginView(QTreeView):
         btn.raise_()
 
     def _show_column_menu(self):
-        menu = QMenu(self)
+        from gui_qt.modlist_view import _StayOpenMenu
+        menu = _StayOpenMenu(self)
         for col, name in enumerate(COLUMNS):
             if col in (COL_NAME, COL_LOCK):
                 continue   # Name always shown; Lock is icon-only (no label)
@@ -499,8 +506,28 @@ class PluginView(QTreeView):
             a.setChecked(not self.isColumnHidden(col))
             a.toggled.connect(lambda checked, c=col: self._set_column_visible(c, checked))
             menu.addAction(a)
+        # A "Filters" submenu giving quick access to the plugin "By status"
+        # filters from the Filters panel. Same include-mode (state 1) semantics;
+        # the window wires on_quick_filter so the panel stays in sync.
+        from gui_qt.modlist_filter import PLUGIN_STATUS_FILTERS
+        menu.addSeparator()
+        get = getattr(self, "quick_filter_state", None)
+        filters = _StayOpenMenu(self.tr("Filters"), menu)
+        for key, label in PLUGIN_STATUS_FILTERS:
+            # Labels are registered for translation under FilterSidePanel.
+            a = QAction(QCoreApplication.translate("FilterSidePanel", label), filters)
+            a.setCheckable(True)
+            a.setChecked(callable(get) and get(key) == 1)
+            a.toggled.connect(lambda checked, k=key: self._on_quick_filter(k, checked))
+            filters.addAction(a)
+        menu.addMenu(filters)
         btn = self._col_menu_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _on_quick_filter(self, key: str, on: bool):
+        cb = getattr(self, "on_quick_filter", None)
+        if callable(cb):
+            cb(key, 1 if on else 0)
 
     def _set_column_visible(self, col: int, visible: bool):
         self.setColumnHidden(col, not visible)

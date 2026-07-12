@@ -7708,6 +7708,25 @@ class MainWindow(QMainWindow):
             b.setProperty("active", active)
             b.style().unpolish(b); b.style().polish(b)
 
+    def _quick_plugin_filter_state(self, key: str) -> int:
+        """Current tri-state for a plugin status filter (for the column-menu
+        Filters submenu check marks). Reads the panel so it reflects edits."""
+        panel = getattr(self, "_plugin_filter_panel", None)
+        if panel is not None:
+            return panel.check_state(key)
+        return (getattr(self, "_plugin_filter_state", {}) or {}).get(key, 0)
+
+    def _on_quick_plugin_filter(self, key: str, state: int):
+        """Apply a plugin status filter chosen from the column menu by driving
+        the Filters panel checkbox, so the panel and menu stay in sync and the
+        normal filter pipeline (footer-button tint included) runs."""
+        panel = getattr(self, "_plugin_filter_panel", None)
+        if panel is not None:
+            panel.set_check(key, state)   # emits changed -> _on_plugin_filter_changed
+        else:   # panel not built yet — fall back to the state dict directly
+            self._plugin_filter_state[key] = state
+            self._apply_plugin_filters()
+
     def _apply_plugin_filters(self):
         """Push the filter-hidden row set to the plugin view (composes with the
         plugin search via the view's search/filter union)."""
@@ -9037,6 +9056,8 @@ class MainWindow(QMainWindow):
         self._plugin_view.on_userlist_remove = self._on_userlist_remove
         self._plugin_view.on_show_cycle = self._open_plugin_cycle_tab
         self._plugin_view.on_show_overlapping = self._on_show_overlapping_plugins
+        self._plugin_view.on_quick_filter = self._on_quick_plugin_filter
+        self._plugin_view.quick_filter_state = self._quick_plugin_filter_state
         print(f"[gui_qt] plugins: {len(rows)} entries")
         # Last render step of first load — the plugin panel is now fully
         # populated. Dismiss the startup splash here (dropped one event-loop

@@ -2862,8 +2862,8 @@ class Enderal(Fallout_3):
                 dialog_class_path="wizards.wrye_bash.WryeBashWizard",
             ),
             *self._xedit_wizard_tools(
-                build="TES5Edit", id_suffix="enderal",
-                nexus_url="https://www.nexusmods.com/skyrim/mods/25859?tab=files",
+                build="EnderalEdit", id_suffix="enderal",
+                nexus_url="https://www.nexusmods.com/enderal/mods/23?tab=files",
                 discord_mode="Enderal",
             ),
         ]
@@ -2952,8 +2952,8 @@ class EnderalSE(Fallout_3):
                 dialog_class_path="wizards.wrye_bash.WryeBashWizard",
             ),
             *self._xedit_wizard_tools(
-                build="SSEEdit", id_suffix="enderalse",
-                nexus_url="https://www.nexusmods.com/skyrimspecialedition/mods/164?tab=files",
+                build="EnderalSEEdit", id_suffix="enderalse",
+                nexus_url="https://www.nexusmods.com/enderalspecialedition/mods/78?tab=files",
                 discord_mode="EnderalSE",
             ),
         ]

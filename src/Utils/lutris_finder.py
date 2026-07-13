@@ -651,6 +651,83 @@ def lutris_wine_env(wine_bin: Path, prefix_path: "str | Path",
     return env
 
 
+def find_umu_run() -> Path | None:
+    """Locate a usable ``umu-run`` launcher.
+
+    umu is how Lutris itself runs Proton games outside Steam: it starts
+    Proton inside the Steam Linux Runtime container (pressure-vessel) with
+    its own compat plumbing, so no Steam client attach happens — the game
+    doesn't need to be owned on Steam and doesn't show as "running" there —
+    and the audio/library environment matches a real Steam launch.
+
+    Preference: a system install on PATH (umu-launcher package), then the
+    copy Lutris downloads into its runtime (native install, then Flatpak
+    Lutris's data dir), then Heroic's copy (modern Heroic launches Proton
+    games through umu too). The launcher copies are self-contained zipapps
+    with a ``python3`` shebang, so they run fine outside their launcher.
+    """
+    cand = shutil.which("umu-run")
+    if cand:
+        return Path(cand)
+    # Probe XDG_DATA_HOME and the literal home path separately: inside a
+    # sandbox XDG_DATA_HOME points at the sandbox's own data dir, not the
+    # host's ~/.local/share (same pattern as _lutris_root_candidates).
+    for data_dir in (_XDG_DATA, _HOME / ".local" / "share",
+                     _FLATPAK_APP / "data"):
+        p = data_dir / "lutris" / "runtime" / "umu" / "umu-run"
+        if p.is_file():
+            return p
+    # Heroic: a downloaded copy under its tools dir, or the build bundled
+    # next to legendary/gogdl (resources/app.asar.unpacked/build/bin/...;
+    # globbed since the arch/platform nesting has moved between releases).
+    heroic_flatpak = _HOME / ".var" / "app" / "com.heroicgameslauncher.hgl"
+    for config_dir in (_XDG_CONFIG, _HOME / ".config",
+                       heroic_flatpak / "config"):
+        p = config_dir / "heroic" / "tools" / "umu" / "umu-run"
+        if p.is_file():
+            return p
+    for app_root in (
+        Path("/opt/Heroic"),
+        Path("/var/lib/flatpak/app/com.heroicgameslauncher.hgl/current"
+             "/active/files/heroic"),
+        _HOME / ".local" / "share" / "flatpak" / "app"
+        / "com.heroicgameslauncher.hgl" / "current" / "active" / "files"
+        / "heroic",
+    ):
+        base = app_root / "resources" / "app.asar.unpacked" / "build" / "bin"
+        if base.is_dir():
+            try:
+                hit = next((h for h in base.glob("**/umu-run") if h.is_file()),
+                           None)
+            except OSError:
+                hit = None
+            if hit is not None:
+                return hit
+    return None
+
+
+def umu_run_command(umu_bin: Path, *args: str,
+                    env: "dict | None" = None) -> list[str]:
+    """Build the command to invoke ``umu-run <args>``.
+
+    The caller's env must carry WINEPREFIX/PROTONPATH (and optionally
+    GAMEID); umu derives everything else itself. Inside our own Flatpak
+    sandbox the launch is forwarded to the host via ``flatpak-spawn --host``
+    (pressure-vessel can't nest inside a sandbox); flatpak-spawn doesn't
+    forward the environment, so the env diff vs os.environ is re-exported
+    with ``--env=`` flags — same pattern as steam_finder.proton_run_command.
+    """
+    cmd = [str(umu_bin), *map(str, args)]
+    if Path("/.flatpak-info").exists() and shutil.which("flatpak-spawn"):
+        fwd = [
+            f"--env={k}={v}"
+            for k, v in (env or {}).items()
+            if os.environ.get(k) != v
+        ]
+        cmd = ["flatpak-spawn", "--host", *fwd, *cmd]
+    return cmd
+
+
 def ensure_steamuser_compat(prefix_path: "str | Path") -> None:
     """Symlink drive_c/users/steamuser to the real user dir in a classic
     lutris-wine prefix, so handler paths hardcoded to steamuser (Bethesda

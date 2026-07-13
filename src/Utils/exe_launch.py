@@ -1353,6 +1353,13 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
     Uses the game's prefix by default; a saved per-exe Proton override runs in
     an isolated prefix_<Proton>/ next to the exe (with Bethesda registry /
     plugins.txt / My Games setup mirrored from the wizard prefixes).
+
+    Non-Steam prefixes (Lutris, Heroic, hand-made): classic lutris-wine
+    prefixes run with the runner's own wine binary; Proton-managed ones run
+    through umu-run (as Lutris and modern Heroic do) so the launch never
+    attaches to the Steam client — no Steam ownership needed, no "running"
+    status in Steam, and the Steam Linux Runtime container is used (fixes
+    missing audio vs a raw `proton run`).
     """
     from Utils.proton_prefix import read_prefix_runner, resolve_compat_data
     from Utils.steam_finder import (
@@ -1365,6 +1372,7 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
 
     proton_override_name = load_proton_override(game, exe_path.name)
     lutris_env_extra = None  # set for classic lutris-wine prefixes only
+    umu_bin = None  # set for Lutris umu/Proton prefixes when umu-run exists
     if proton_override_name:
         # Try exact match first, then prefix match ("Proton 10" → "Proton 10.0")
         proton_script = find_any_installed_proton(proton_override_name)
@@ -1424,6 +1432,17 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
                     log_fn(f"Run EXE: using Lutris-configured Proton "
                            f"{proton_script.parent.name}.")
         if proton_script is None:
+            # Heroic records the game's runner in its GamesConfig — using it
+            # keeps tool launches on the same Proton Heroic itself uses.
+            try:
+                from Utils.heroic_finder import find_heroic_proton_for_prefix
+                proton_script = find_heroic_proton_for_prefix(prefix_path)
+            except Exception:
+                proton_script = None
+            if proton_script is not None:
+                log_fn(f"Run EXE: using Heroic-configured Proton "
+                       f"{proton_script.parent.name}.")
+        if proton_script is None:
             # Use the same Proton version the prefix was built with.
             preferred_runner = read_prefix_runner(compat_data)
             proton_script = find_any_installed_proton(preferred_runner)
@@ -1441,11 +1460,41 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
                 "(no per-game Steam mapping found)."
             )
 
+        # Steam-managed prefixes always live at steamapps/compatdata/<appid>;
+        # anything else (Lutris, Heroic, hand-made) is a non-Steam prefix.
+        steam_managed = compat_data.parent.name.lower() == "compatdata"
+        if lutris_env_extra is None and (lutris_is_prefix or not steam_managed):
+            # Non-Steam Proton prefix: launch through umu-run, the same
+            # launcher Lutris (and modern Heroic) use. Raw `proton run`
+            # attaches to the Steam client (SteamAppId + client install
+            # path), so the game shows as "running" in Steam, needs to be
+            # owned there, and runs outside the Steam Linux Runtime container
+            # (broken audio on some setups). umu runs Proton inside the
+            # container with no Steam client attach at all.
+            from Utils.lutris_finder import find_umu_run
+            umu_bin = find_umu_run()
+            if umu_bin is None:
+                log_fn("Run EXE: umu-run not found — falling back to `proton "
+                       "run` (the game may register with Steam).")
+
     env = strip_appimage_env(os.environ.copy())
     if lutris_env_extra is not None:
         # Bare wine invocation: WINEPREFIX + runner libs; no Steam client or
         # compat-data plumbing applies.
         env.update(lutris_env_extra)
+    elif umu_bin is not None:
+        # umu derives its own compat plumbing from WINEPREFIX + PROTONPATH;
+        # deliberately no STEAM_COMPAT_* / SteamAppId here — that's what
+        # makes the launch independent of the Steam client. Proton resolves
+        # the actual prefix as $WINEPREFIX/pfx (umu adds a pfx → . self-link
+        # when absent), so WINEPREFIX is the compat-data root — except for
+        # Lutris-shaped prefixes (drive_c at the prefix path itself; for a
+        # bare hand-made prefix resolve_compat_data returns the parent,
+        # which would be a different prefix).
+        env["WINEPREFIX"] = str(prefix_path if lutris_is_prefix
+                                else compat_data)
+        env["PROTONPATH"] = str(proton_script.parent)
+        env.setdefault("GAMEID", "umu-default")
     else:
         steam_root = find_steam_root_for_proton_script(proton_script)
         if steam_root is None:
@@ -1489,6 +1538,8 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
 
     runner_name = (proton_script.parent.parent.name
                    if lutris_env_extra is not None else proton_script.parent.name)
+    if umu_bin is not None:
+        runner_name = f"{runner_name} (umu)"
     log_fn(f"Run EXE: launching {exe_path.name} via {runner_name} ...")
 
     # Apply launch-option env vars before building the command: when the
@@ -1499,8 +1550,12 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
     if env_updates:
         env.update(env_updates)
 
-    base_cmd = proton_run_command(proton_script, "run", str(exe_path),
-                                  env=env) + extra_args
+    if umu_bin is not None:
+        from Utils.lutris_finder import umu_run_command
+        base_cmd = umu_run_command(umu_bin, str(exe_path), env=env) + extra_args
+    else:
+        base_cmd = proton_run_command(proton_script, "run", str(exe_path),
+                                      env=env) + extra_args
     if not launch_opts:
         final_cmd = base_cmd
     else:
@@ -1510,6 +1565,7 @@ def launch_exe_via_proton(exe_path: Path, game, log_fn=_noop_log) -> None:
     _env_keys = (
         "WINE_D3D_CONFIG", "PROTON_USE_WINED3D", "WINEDLLOVERRIDES",
         "STEAM_COMPAT_DATA_PATH", "WINEDEBUG", "DXVK_HUD", "PROTON_LOG",
+        "WINEPREFIX", "PROTONPATH", "GAMEID",
     )
     _env_summary = " ".join(
         f"{k}={env.get(k)}" for k in _env_keys if env.get(k) is not None

@@ -738,6 +738,25 @@ class BaseGame(ABC):
         return ""
 
     @property
+    def framework_launch_exes(self) -> dict[str, str]:
+        """
+        A mapping of display names to game-root-relative exe paths for
+        frameworks that *launch* the game (script extenders and the like).
+
+        Each entry that exists in the deployed game root is added to the
+        play-bar Run dropdown automatically — no manual "Add custom EXE"
+        needed. Unlike ``preferred_launch_exe`` the game's own Play entry is
+        left untouched; the framework appears as an extra dropdown item and
+        runs through the normal exe-via-Proton path (game prefix, Steam
+        app-id env, cwd = the exe's folder).
+
+        Only include launchers here — config GUIs / compilers declared in
+        ``frameworks`` (MGE XE gui, scc.exe, …) don't belong in the Run
+        dropdown. Return an empty dict (the default) to add nothing.
+        """
+        return {}
+
+    @property
     def steam_id(self) -> str:
         """
         Steam App ID for this game, e.g. '377160' for Fallout 4.

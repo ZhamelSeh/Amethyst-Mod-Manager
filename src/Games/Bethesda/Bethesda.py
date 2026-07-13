@@ -717,6 +717,15 @@ class Fallout_3(BaseGame):
             fw[self._archive_list_fix_name] = self._archive_list_fix_path
         return fw
 
+    @property
+    def framework_launch_exes(self) -> dict[str, str]:
+        # The script extender loader launches the game, so surface it in the
+        # play-bar Run dropdown when installed. Keyed off `frameworks` so
+        # subclasses that clear it (FO76) opt out automatically.
+        if "Script Extender" in self.frameworks:
+            return {"Script Extender": self._script_extender_exe}
+        return {}
+
     _PLUGINS_TXT_FILENAME = "plugins.txt"
 
     # Whether this game reads an in-prefix plugins.txt at all. FO76 and the

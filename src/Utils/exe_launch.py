@@ -12,6 +12,7 @@ identical to the Tk app so settings are shared between both:
       "__deploy_before_launch" → bool (default True)
       "__proton_override_<exe>" → Proton dir name ('' = game default)
       "__launch_options_<exe>" → Steam-style launch options string
+      "__hidden_auto_exes" → [exe names] hidden auto-detected framework exes
 - exe_args.json (global, or per-profile for profile-specific-mods profiles)
       exe_name → argument string
 
@@ -103,6 +104,60 @@ def remove_custom_exe(game, path: Path) -> None:
         save_custom_exes(game, remaining)
 
 
+def detect_framework_exes(game, framework_states: "dict | None" = None) -> list[Path]:
+    """Framework launcher exes (script extenders) for the play-bar dropdown.
+
+    Reads the game class's ``framework_launch_exes`` declaration and returns
+    the entries actually present in the game root (case-insensitive walk) so
+    the dropdown can list them without a manual "Add custom EXE". They launch
+    through launch_exe_via_proton like any custom exe: game prefix + Steam
+    app-id env for Steam installs, the Lutris/Heroic runner fallbacks
+    otherwise, cwd = the exe's folder (the game root for root-level loaders).
+
+    *framework_states* is an optional {label: STATE_*} map — the framework
+    banner's detect_frameworks result. An entry whose state is
+    STATE_NOT_DEPLOYED (staged in the modlist but not deployed yet) is
+    included as its FUTURE game-root path even though the file isn't on disk:
+    the Run button deploys first, which materialises it. Without the map only
+    on-disk exes are returned.
+
+    Skips entries the user hid from the dropdown (hide_auto_exe) and the
+    game's own resolved launch exe — a present preferred_launch_exe (OBSE64)
+    already IS the Play entry, so listing it again would duplicate it.
+    """
+    if game is None:
+        return []
+    try:
+        declared = getattr(game, "framework_launch_exes", None) or {}
+    except Exception:
+        declared = {}
+    if not declared:
+        return []
+    game_path = game.get_game_path() if hasattr(game, "get_game_path") else None
+    if game_path is None:
+        return []
+    from Utils.framework_detect import STATE_NOT_DEPLOYED, resolve_file_ci
+    hidden = load_hidden_auto_exes(game)
+    game_exe = resolve_game_exe(game)
+    out: list[Path] = []
+    for label, rel in declared.items():
+        exe = resolve_file_ci(Path(game_path), Path(rel))
+        if exe is None:
+            # Not in the game root — list it anyway when it's staged and a
+            # deploy would put it there (Run deploys before launching).
+            state = (framework_states or {}).get(label)
+            if state != STATE_NOT_DEPLOYED:
+                continue
+            exe = Path(game_path) / rel
+        if exe.name in hidden:
+            continue
+        if game_exe is not None and str(exe).lower() == str(game_exe).lower():
+            continue
+        if exe not in out:
+            out.append(exe)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # exe_launch_mode.json — per-game launch settings
 # ---------------------------------------------------------------------------
@@ -145,6 +200,19 @@ def load_launch_mode(game, exe_name: str) -> str:
 
 def save_launch_mode(game, exe_name: str, mode: str) -> None:
     _write_launch_mode_key(game, exe_name, mode)
+
+
+def load_hidden_auto_exes(game) -> set[str]:
+    """Exe basenames the user hid from the auto-detected dropdown entries."""
+    val = _read_launch_mode_data(game).get("__hidden_auto_exes", [])
+    return {str(n) for n in val} if isinstance(val, list) else set()
+
+
+def hide_auto_exe(game, exe_name: str) -> None:
+    """Hide an auto-detected framework exe from the play-bar dropdown."""
+    hidden = load_hidden_auto_exes(game)
+    hidden.add(exe_name)
+    _write_launch_mode_key(game, "__hidden_auto_exes", sorted(hidden))
 
 
 def load_deploy_before_launch(game) -> bool:

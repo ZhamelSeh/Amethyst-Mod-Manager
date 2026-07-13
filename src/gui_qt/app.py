@@ -5894,16 +5894,31 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- play bar
     def _refresh_play_selector(self):
-        """Repopulate the play-bar dropdown: the game + custom exes, restoring
-        this profile's saved selection (Tk stores the label in profile_state)."""
+        """Repopulate the play-bar dropdown: the game + auto-detected framework
+        launchers (installed script extenders) + custom exes, restoring this
+        profile's saved selection (Tk stores the label in profile_state)."""
         game = self._gs.game
         if game is None:
             self._play_exe_paths = {}
+            self._play_auto_exe_names = set()
             self._play_exe_selector.set_items(["—"], current="—")
             return
-        from Utils.exe_launch import load_custom_exes
+        from Utils.exe_launch import detect_framework_exes, load_custom_exes
         self._play_exe_paths = {}
+        self._play_auto_exe_names = set()
         items = [game.name]
+        # Framework states from the banner detect (worker) — lets staged-but-
+        # not-deployed extenders show up too. Only when the cached map belongs
+        # to this game+profile; detection is disk-only otherwise until the
+        # banner's detect lands and re-refreshes us.
+        key = (game.name, self._gs.profile)
+        cached = getattr(self, "_framework_states", None)
+        states = cached[1] if cached is not None and cached[0] == key else None
+        for p in detect_framework_exes(game, states):
+            if p.name not in self._play_exe_paths and p.name != game.name:
+                self._play_exe_paths[p.name] = p
+                self._play_auto_exe_names.add(p.name)
+                items.append(p.name)
         for p in load_custom_exes(game):
             if p.name not in self._play_exe_paths and p.name != game.name:
                 self._play_exe_paths[p.name] = p
@@ -5995,23 +6010,59 @@ class MainWindow(QMainWindow):
         exe_path = self._play_exe_paths.get(label)
         if exe_path is not None:
             # Custom exe → Proton in the game prefix (or per-exe override).
-            if not exe_path.is_file():
+            is_auto = label in self._play_auto_exe_names
+            can_deploy = hasattr(game, "deploy")
+            if not exe_path.is_file() and not (is_auto and can_deploy):
                 self._notify(self.tr("Executable not found: {0}").format(exe_path), "warning")
                 return
             target = (exe_launch.launch_jar if exe_launch.is_jar(exe_path)
                       else exe_launch.launch_exe_via_proton)
 
             def _launch_exe():
+                run_path = exe_path
+                if not run_path.is_file():
+                    # Staged extender materialised by the deploy that just
+                    # ran — re-resolve so on-disk casing wins.
+                    from Utils.framework_detect import resolve_file_ci
+                    gp = game.get_game_path() if hasattr(game, "get_game_path") else None
+                    resolved = None
+                    if gp is not None:
+                        try:
+                            resolved = resolve_file_ci(gp, run_path.relative_to(gp))
+                        except ValueError:
+                            resolved = None
+                    if resolved is None:
+                        self._notify(self.tr("Executable not found: {0}").format(run_path),
+                                     "warning")
+                        return
+                    run_path = resolved
                 threading.Thread(
                     target=target,
-                    args=(exe_path, game), kwargs={"log_fn": self._append_log},
+                    args=(run_path, game), kwargs={"log_fn": self._append_log},
                     daemon=True,
                 ).start()
 
-            # Per-exe "deploy on run": deploy exactly like the Deploy button,
-            # then launch once the (final, non-coalesced) deploy succeeds.
-            if (exe_launch.load_deploy_on_run(game, exe_path.name)
-                    and hasattr(game, "deploy")):
+            # Auto-detected script extenders must run against the CURRENT
+            # profile's files: deploy first when the exe is only staged (not
+            # deployed yet) or when a different profile (or nothing) is the
+            # one deployed. Otherwise the per-exe "deploy on run" setting
+            # decides, exactly like a manual custom exe.
+            force_deploy = False
+            if is_auto and can_deploy:
+                if not exe_path.is_file():
+                    force_deploy = True
+                else:
+                    try:
+                        deployed = (game.get_last_deployed_profile()
+                                    if game.get_deploy_active() else None)
+                    except Exception:
+                        deployed = None
+                    force_deploy = deployed != self._gs.profile
+
+            # Deploy exactly like the Deploy button, then launch once the
+            # (final, non-coalesced) deploy succeeds.
+            if can_deploy and (force_deploy
+                               or exe_launch.load_deploy_on_run(game, exe_path.name)):
                 self._post_deploy_action = _launch_exe
                 self._on_deploy()
             else:
@@ -6107,6 +6158,7 @@ class MainWindow(QMainWindow):
             exe_path=exe_path,
             on_close=_close,
             log_fn=self._append_log,
+            is_auto=exe_path.name in self._play_auto_exe_names,
         )
         self._exe_settings_view = view
         self._tabs.open_scoped_tab(view, self.tr("Configure: {0}").format(exe_path.name),
@@ -6366,6 +6418,9 @@ class MainWindow(QMainWindow):
         self._reload_modlist()
         self._update_deployed_profile_highlight()
         self._refresh_framework_banner()
+        # Deploy/restore adds/removes framework launchers (script extenders)
+        # in the game root — reflect that in the play-bar dropdown.
+        self._refresh_play_selector()
         game_name = self._gs.game.name if self._gs.game else self.tr("Game")
         if success:
             msg = (self.tr("{0} Deployed") if kind == "deploy"
@@ -9780,6 +9835,15 @@ class MainWindow(QMainWindow):
         if gen != self._framework_gen or not hasattr(self, "_framework_banner"):
             return
         self._framework_banner.set_statuses(statuses)
+        # Cache {label: state} for the play-bar dropdown (staged-but-not-
+        # deployed script extenders are listed and deploy on Run). Keyed by
+        # game+profile so a stale map from before a switch is never applied;
+        # the gen guard above means the result matches the CURRENT selection.
+        key = (self._gs.game.name if self._gs.game else None, self._gs.profile)
+        states = {s.label: s.state for s in (statuses or [])}
+        if getattr(self, "_framework_states", None) != (key, states):
+            self._framework_states = (key, states)
+            self._refresh_play_selector()
 
     def _recompute_bsa_conflicts_async(self):
         """A plugin toggle/reorder changed the plugin load order. BSAs load at
@@ -10262,8 +10326,10 @@ class MainWindow(QMainWindow):
 
         # Exe selector stretches with the plugins panel: its left edge hugs the
         # splitter separator, so dragging the split resizes the dropdown while
-        # Play + gear stay fixed at the right edge. Items = the game + manually
-        # added custom exes (no staging scan — wizard tools cover those).
+        # Play + gear stay fixed at the right edge. Items = the game +
+        # auto-detected framework launchers (installed script extenders) +
+        # manually added custom exes (no staging scan — wizard tools cover
+        # those).
         self._play_exe_selector = SelectorButton(
             items=["—"],
             current="—",
@@ -10276,6 +10342,7 @@ class MainWindow(QMainWindow):
         self._play_exe_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         h.addWidget(self._play_exe_selector, 1)
         self._play_exe_paths: dict[str, Path] = {}
+        self._play_auto_exe_names: set[str] = set()
 
         # ▶ Play — plain fixed-size button (label flips to "Run" for exes).
         self._play_btn = QPushButton(self.tr("▶  Play"))

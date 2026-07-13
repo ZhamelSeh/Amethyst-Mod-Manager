@@ -3,8 +3,10 @@
 Qt port of the non-launcher branch of Tk's ExeConfigPanel (gui/dialogs.py):
 launch arguments (+ insert game/mod path), Proton version override with the
 prefix tool buttons (run exe / winetricks / open folder), Steam-style launch
-options, and Remove EXE. "Hide from dropdown" / "Run from Data folder" are
-gone — the dropdown no longer scans, every listed exe is a manual entry.
+options, and Remove EXE. "Run from Data folder" is gone — the dropdown no
+longer scans the staging tree. Entries are manual custom exes, plus
+auto-detected framework launchers (installed script extenders) for which
+Remove becomes "Hide from dropdown" (they aren't in custom_exes.json).
 
 All persistence goes through Utils.exe_launch (same files the Tk app uses).
 The prefix tool workers run on daemon threads and only touch log_fn (the
@@ -36,12 +38,16 @@ class ExeSettingsView(QWidget):
     # Emitted from the Java-install worker to re-enable the button on the UI thread.
     _install_java_done = Signal()
 
-    def __init__(self, game, exe_path: Path, on_close, log_fn=None):
+    def __init__(self, game, exe_path: Path, on_close, log_fn=None,
+                 is_auto: bool = False):
         super().__init__()
         self._game = game
         self._exe_path = exe_path
         self._on_close = on_close or (lambda removed: None)
         self._log = log_fn or (lambda _m: None)
+        # Auto-detected framework entry (installed script extender): not in
+        # custom_exes.json, so "Remove" becomes "Hide from dropdown".
+        self._is_auto = is_auto
 
         from Utils.steam_finder import list_installed_proton
         self._proton_versions = (
@@ -225,7 +231,8 @@ class ExeSettingsView(QWidget):
         # -- Bottom bar ---------------------------------------------------------
         foot = QWidget(); foot.setObjectName("HeaderBar")
         fb = QHBoxLayout(foot); fb.setContentsMargins(12, 8, 12, 8); fb.setSpacing(6)
-        remove = QPushButton(self.tr("Remove EXE"))
+        remove = QPushButton(self.tr("Hide from dropdown") if self._is_auto
+                             else self.tr("Remove EXE"))
         remove.setCursor(Qt.PointingHandCursor)
         remove.setStyleSheet(button_qss("BTN_DANGER", padding="6px 14px"))
         remove.clicked.connect(self._on_remove)
@@ -287,8 +294,15 @@ class ExeSettingsView(QWidget):
         self._on_close(False)
 
     def _on_remove(self):
-        exe_launch.remove_custom_exe(self._game, self._exe_path)
-        self._log(f"[exe] removed {self._exe_path.name} from the exe list")
+        if self._is_auto:
+            # Auto-detected entry — persist the hide so it stays gone across
+            # refreshes; also drop any duplicate manual entry for the same exe.
+            exe_launch.hide_auto_exe(self._game, self._exe_path.name)
+            exe_launch.remove_custom_exe(self._game, self._exe_path)
+            self._log(f"[exe] hid {self._exe_path.name} from the exe dropdown")
+        else:
+            exe_launch.remove_custom_exe(self._game, self._exe_path)
+            self._log(f"[exe] removed {self._exe_path.name} from the exe list")
         self._on_close(True)
 
     # ---- insert helpers -----------------------------------------------------

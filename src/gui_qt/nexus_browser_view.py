@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QDate
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QScrollArea, QFrame, QCheckBox, QToolButton, QMenu,
@@ -47,6 +47,8 @@ TIME_RANGES = [
     ("7 days", 7),
     ("14 days", 14),
     ("28 days", 28),
+    ("3 months", 90),
+    ("6 months", 180),
     ("Year", 365),
 ]
 SECTIONS = ["Browse", "Tracked", "Endorsed", "Trending"]
@@ -89,6 +91,8 @@ class NexusBrowserView(QWidget):
         self._page = 0
         self._sort_key = "downloads"
         self._time_days = None
+        self._custom_time_label: str | None = None   # e.g. "Since 2026-03-01"
+        self._custom_time_date: QDate | None = None   # the picked calendar date
         self._query = ""
         self._search_mode = "Name"      # "Name" | "Author" (Browse search bar)
         # When an author browse is launched from a card's right-click, we search
@@ -213,7 +217,8 @@ class NexusBrowserView(QWidget):
         tb.addWidget(self._sort_sel)
         self._time_sel = SelectorButton(
             items=[lbl for lbl, _ in TIME_RANGES], current="All time",
-            prefix="Time: ", min_width=130, on_select=self._on_time_changed)
+            prefix="Time: ", min_width=130, on_select=self._on_time_changed,
+            actions=[(self.tr("Custom…"), self._pick_custom_time)])
         tb.addWidget(self._time_sel)
 
         self._adult_cb = QCheckBox(self.tr("Show adult"))
@@ -485,7 +490,46 @@ class NexusBrowserView(QWidget):
         self._reload()
 
     def _on_time_changed(self, label: str):
+        # A preset was chosen — drop any lingering custom range so it doesn't
+        # stay pinned in the dropdown next to the presets.
+        if self._custom_time_label and label != self._custom_time_label:
+            self._custom_time_label = None
+            self._time_sel.set_items(
+                [lbl for lbl, _ in TIME_RANGES], current=label)
         self._time_days = dict(TIME_RANGES).get(label)
+        self._page = 0
+        self._reload()
+
+    def _pick_custom_time(self):
+        """Open a borderless calendar overlay (like the colour picker) and filter
+        to mods uploaded since the picked date. The Nexus filter is one-ended
+        ('createdAt >= cutoff'), so a single 'since' date is converted to a
+        day-count and reuses the preset path."""
+        from gui_qt.date_picker_overlay import DatePickerOverlay
+        today = QDate.currentDate()
+        initial = self._custom_time_date or today.addMonths(-3)
+        DatePickerOverlay.show_over(
+            self, self.tr("Uploaded since…"), initial, today,
+            self._on_custom_time_picked)
+
+    def _on_custom_time_picked(self, picked: "QDate | None"):
+        if picked is None:               # cancelled / Esc / backdrop click
+            return
+        today = QDate.currentDate()
+        if not picked.isValid() or picked > today:
+            return
+        days = picked.daysTo(today)          # 0 = today (still valid; > 0 path)
+        self._custom_time_date = picked
+        iso = picked.toString("yyyy-MM-dd")
+        label = self.tr("Since {0}").format(iso)
+        self._custom_time_label = label
+        # Inject the custom label as a selectable item so the button can show it
+        # (set_current only accepts known items), then make it current.
+        items = [lbl for lbl, _ in TIME_RANGES] + [label]
+        self._time_sel.set_items(items, current=label)
+        # daysTo(today)==0 (today picked) would disable the filter in the API
+        # (created_since_days>0 guard); clamp to 1 day so "today" still filters.
+        self._time_days = max(days, 1)
         self._page = 0
         self._reload()
 
@@ -626,6 +670,12 @@ class NexusBrowserView(QWidget):
         self._query = ""
         self._selected_categories = []
         self._time_days = None
+        # Drop any custom "Since <date>" range and restore the preset list.
+        if self._custom_time_label:
+            self._custom_time_label = None
+            self._custom_time_date = None
+            self._time_sel.set_items(
+                [lbl for lbl, _ in TIME_RANGES], current="All time")
         self._fetch_token += 1              # invalidate any in-flight fetch
         # Clear the search box without re-triggering a search.
         try:

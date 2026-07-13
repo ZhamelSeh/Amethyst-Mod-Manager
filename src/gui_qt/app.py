@@ -2423,6 +2423,17 @@ class MainWindow(QMainWindow):
             return
 
         link = mod_link
+        # If the Nexus browser / Change Version tab is watching the download
+        # folders for this mod (non-premium install), the user picked
+        # 'Download with Mod Manager' instead — this flow installs it, so
+        # stop the watch (double install).
+        for _attr in ("_nexus_view", "_change_version_view"):
+            _v = getattr(self, _attr, None)
+            if _v is not None:
+                try:
+                    _v.cancel_manual_watch(link.mod_id)
+                except Exception:
+                    pass
         self._append_log(
             f"[nexus] downloading mod {link.mod_id} file {link.file_id} "
             f"from {link.game_domain}…")

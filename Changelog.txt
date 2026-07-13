@@ -13,6 +13,7 @@
 - Added a track right click option to mods in the Nexus browser
 ## Changes
 - A mods missing requirements/optional requirements are now flagged when they are installed
+- The Nexus browser and change version menu are now improved for free users, Pressing install will open the mod page as well as detect when the download is complete and install the archive automatically
 ### Bug Fixes
 - Fixed alphabetical sorting when the priority column is reversed
 - Fixed overflow errors when installing via the NXM handler

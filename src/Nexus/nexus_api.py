@@ -973,6 +973,55 @@ class NexusAPI:
             self._game_id_cache[game_domain] = gid
         return gid
 
+    def _enrich_files_from_rest(self, game_domain: str, mod_id: int,
+                                files: "list[NexusModFile]") -> None:
+        """Fill GraphQL modFiles gaps from the REST files endpoint (in place).
+
+        Nexus's newer upload pipeline returns ``sizeInBytes: null`` and a CDN
+        UUID *path* in ``uri`` (e.g. ``ed/8d/27/ed8d270a-…``) instead of the
+        archive filename. The REST endpoint still carries the real
+        ``file_name`` — which for these uploads is the exact browser-download
+        name — plus ``size_kb``. Without them, download detection and cache
+        matching have nothing to match on. Only called when at least one entry
+        is deficient, and merged strictly by ``file_id``, so the REST
+        wrong-mod bug (see get_mod_files docstring) can't corrupt anything —
+        unmatched ids are simply left as they were. Best-effort: REST errors
+        leave the GraphQL data untouched.
+        """
+        def _deficient(f: NexusModFile) -> bool:
+            no_size = not (f.size_in_bytes or f.size_kb)
+            bad_name = (not f.file_name) or ("/" in f.file_name)
+            return no_size or bad_name
+
+        if not any(_deficient(f) for f in files):
+            return
+        try:
+            data = self._get(f"/games/{game_domain}/mods/{mod_id}/files")
+            rest = {}
+            for r in data.get("files", []):
+                try:
+                    rest[int(r.get("file_id") or 0)] = r
+                except (TypeError, ValueError):
+                    continue
+            for f in files:
+                r = rest.get(f.file_id)
+                if r is None:
+                    continue
+                if (not f.file_name) or ("/" in f.file_name):
+                    fn = (r.get("file_name") or "").strip()
+                    if fn:
+                        f.file_name = fn
+                if not (f.size_in_bytes or f.size_kb):
+                    sz_b = r.get("size_in_bytes") or 0
+                    sz_kb = r.get("size_kb") or r.get("size") or 0
+                    if sz_b:
+                        f.size_in_bytes = int(sz_b)
+                        f.size_kb = int(sz_b) // 1024
+                    elif sz_kb:
+                        f.size_kb = int(sz_kb)
+        except Exception as exc:
+            app_log(f"REST file enrichment failed for {game_domain}/{mod_id}: {exc}")
+
     def get_mod_files(self, game_domain: str,
                       mod_id: int) -> NexusModFiles:
         """List all files uploaded for a mod.
@@ -1043,6 +1092,7 @@ class NexusAPI:
                                 uploaded_timestamp=ts,
                                 is_primary=(cat_name == "MAIN"),
                             ))
+                        self._enrich_files_from_rest(game_domain, mod_id, files)
                         return NexusModFiles(files=files, file_updates=[])
             except Exception as exc:
                 app_log(f"GraphQL modFiles error for {game_domain}/{mod_id}: {exc} — falling back to REST")

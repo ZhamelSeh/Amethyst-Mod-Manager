@@ -377,9 +377,20 @@ _root_flag_cache: dict[str, tuple[float, bool]] = {}
 
 def collect_root_flagged_mods(modlist_path: Path, staging_root: Path,
                               log_fn=None) -> set[str]:
-    """Return the set of enabled mods in *modlist_path* whose meta.ini sets
-    rootFolder=true. Malformed meta.ini files are logged (if *log_fn* is
-    provided) and skipped. Per-file results are mtime-cached."""
+    """Return the set of mods in *modlist_path* whose meta.ini sets
+    rootFolder=true — DISABLED mods included. Malformed meta.ini files are
+    logged (if *log_fn* is provided) and skipped. Per-file results are
+    mtime-cached.
+
+    Disabled mods MUST be included: the set drives rebuild_mod_index /
+    rescan_mods_in_index, and the index describes a mod's CONTENT (root mods
+    keep their Data/ prefix unstripped) independent of its enabled state.
+    Skipping disabled entries meant a root mod that was disabled during a
+    Refresh had its index entry rebuilt STRIPPED; enabling it later (no
+    rescan on toggle) root-deployed the stripped paths — e.g. a freshly
+    wizard-installed SKSE put Scripts/ in the game root instead of Data/.
+    For build_filemap the extra names are harmless — it only tests membership
+    for mods already in the enabled iteration."""
     from Utils.modlist import read_modlist
 
     flagged: set[str] = set()
@@ -388,7 +399,7 @@ def collect_root_flagged_mods(modlist_path: Path, staging_root: Path,
 
     fresh_cache: dict[str, tuple[float, bool]] = {}
     for entry in read_modlist(modlist_path):
-        if entry.is_separator or not entry.enabled:
+        if entry.is_separator:
             continue
         meta_path = staging_root / entry.name / "meta.ini"
         try:

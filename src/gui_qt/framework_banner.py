@@ -39,6 +39,7 @@ class FrameworkBanner(QWidget):
         self._v = QVBoxLayout(self)
         self._v.setContentsMargins(0, 0, 0, 0)
         self._v.setSpacing(1)
+        self._last_sig = None   # last rendered (label, state) tuple — dedup guard
         self.hide()
 
     def _render(self, st) -> str:
@@ -58,6 +59,15 @@ class FrameworkBanner(QWidget):
         return st.message
 
     def set_statuses(self, statuses) -> None:
+        # No-op when nothing changed: deploy/restore fires ~3 banner refreshes
+        # in quick succession (post-op refresh + conflict-ready + plugins-loaded)
+        # and each one used to tear down the row QLabels (deleteLater) and
+        # rebuild them — a visible repaint gap that read as the banner "briefly
+        # disappearing". Rebuild only when the rendered rows actually differ.
+        sig = tuple((s.label, s.state) for s in (statuses or []))
+        if sig == getattr(self, "_last_sig", None):
+            return
+        self._last_sig = sig
         # Clear existing rows.
         while self._v.count():
             it = self._v.takeAt(0)

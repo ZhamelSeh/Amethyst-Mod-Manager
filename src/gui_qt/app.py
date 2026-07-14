@@ -10394,7 +10394,9 @@ class MainWindow(QMainWindow):
             # have flipped (e.g. a framework mod toggled, deployed, or removed).
             # Precomputed on the conflict worker (detect_frameworks re-reads
             # filemap.txt — too slow here); bump the gen so an in-flight async
-            # detect can't overwrite this fresher result.
+            # detect can't overwrite this fresher result. set_statuses is a
+            # no-op when the rows are unchanged, so the repeated refreshes a
+            # deploy/restore fires don't rebuild (and flicker) the banner.
             if hasattr(self, "_framework_banner"):
                 self._framework_gen += 1
                 self._framework_banner.set_statuses(data.framework_statuses)

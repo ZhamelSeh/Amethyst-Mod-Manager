@@ -6237,26 +6237,39 @@ class MainWindow(QMainWindow):
             if b is not None:
                 b.setEnabled(enabled)
 
-    def _on_deploy(self, silent: bool = False):
-        """Deploy the current game/profile. *silent* (used by auto-deploy)
-        suppresses the progress popup + interim toast so rapid mod toggles
-        don't flash the UI; log lines + the final success/warning toasts still
-        surface (Tk parity: top_bar._run_deploy silent=)."""
-        game = self._gs.game
-        if game is None or not game.is_configured():
-            self._auto_deploy_in_progress = False
-            self._notify(self.tr("No configured game selected."), "warning")
-            return
-        if not hasattr(game, "deploy"):
-            self._auto_deploy_in_progress = False
-            self._notify(self.tr("'{0}' does not support deployment.").format(game.name), "warning")
-            return
-        # Serialize: coalesce a request that arrives mid-deploy into one re-run.
+    def _prompt_mewgenics_deploy(self, game):
+        """Ask whether to generate a Steam launch command or repack the gpak,
+        then act on the choice (Tk parity: gui/mewgenics_dialogs.py)."""
+        from gui_qt.mewgenics_deploy_overlay import (
+            MewgenicsDeployChoiceOverlay, MewgenicsLaunchCommandOverlay,
+        )
+        profile = self._gs.profile
+
+        def _on_choice(result):
+            if result is None:
+                return
+            if result == "steam":
+                try:
+                    launch_string, modpaths_file = \
+                        game.get_modpaths_launch_string(profile)
+                except Exception as exc:
+                    self._notify(
+                        self.tr("Could not build launch command: {0}")
+                        .format(exc), "warning")
+                    return
+                MewgenicsLaunchCommandOverlay(
+                    self.window(), launch_string, modpaths_file)
+                return
+            # result == "repack" -> run the normal deploy pipeline
+            self._start_deploy(game, profile)
+
+        MewgenicsDeployChoiceOverlay(self.window(), _on_choice)
+
+    def _start_deploy(self, game, profile, silent: bool = False):
+        """Run the deploy worker for *game* / *profile* without re-prompting
+        (used by the Mewgenics 'repack' choice, which has already decided)."""
         if self._deploy_running:
             self._deploy_rerun_pending = True
-            # This request is coalesced rather than deployed, so the rebuild the
-            # auto-deploy caller is waiting on to clear its guard won't happen —
-            # clear it now (Tk parity: top_bar._run_deploy coalesce branch).
             self._auto_deploy_in_progress = False
             return
         self._deploy_running = True
@@ -6267,8 +6280,7 @@ class MainWindow(QMainWindow):
         if not silent:
             self._ensure_feedback()
             self._notify(self.tr("Deploying {0}…").format(game.name), "info")
-        profile = self._gs.profile
-        rf_enabled = True   # Root_Folder toggle lives in the modlist; default on
+        rf_enabled = True
 
         import threading
 
@@ -6295,6 +6307,32 @@ class MainWindow(QMainWindow):
                 self._op_done.emit("deploy", bool(ok), warns)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_deploy(self, silent: bool = False):
+        """Deploy the current game/profile. *silent* (used by auto-deploy)
+        suppresses the progress popup + interim toast so rapid mod toggles
+        don't flash the UI; log lines + the final success/warning toasts still
+        surface (Tk parity: top_bar._run_deploy silent=)."""
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            self._auto_deploy_in_progress = False
+            self._notify(self.tr("No configured game selected."), "warning")
+            return
+        if not hasattr(game, "deploy"):
+            self._auto_deploy_in_progress = False
+            self._notify(self.tr("'{0}' does not support deployment.").format(game.name), "warning")
+            return
+
+        # Mewgenics: offer the Steam launch command as an alternative to
+        # repacking resources.gpak (Tk parity: top_bar._on_deploy). Only prompt
+        # for an explicit user deploy — auto-deploy (silent) falls straight
+        # through to the repack path.
+        if (not silent and getattr(game, "name", "") == "Mewgenics"
+                and hasattr(game, "get_modpaths_launch_string")):
+            self._prompt_mewgenics_deploy(game)
+            return
+
+        self._start_deploy(game, self._gs.profile, silent=silent)
 
     def _save_window_state(self):
         """Persist the window geometry (pos/size/maximized) and the modlist ║
@@ -6511,7 +6549,12 @@ class MainWindow(QMainWindow):
         # Coalesced re-deploy if mod state changed mid-deploy.
         if kind == "deploy" and self._deploy_rerun_pending:
             self._deploy_rerun_pending = False
-            QTimer.singleShot(0, self._on_deploy)
+            # A coalesced re-deploy already reflects a decided deploy — run it
+            # directly (no fresh prompt/toast; matters for the Mewgenics choice).
+            game = self._gs.game
+            if game is not None and game.is_configured():
+                QTimer.singleShot(
+                    0, lambda g=game, p=self._gs.profile: self._start_deploy(g, p))
         elif kind == "deploy":
             # Play-button deploy-before-launch: fire the pending launch only
             # after the FINAL (non-coalesced) deploy, and only on success.

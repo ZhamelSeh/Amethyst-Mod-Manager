@@ -6072,6 +6072,45 @@ class MainWindow(QMainWindow):
             self._play_exe_selector.set_current(path.name)
             self._on_play_exe_selected(path.name)
 
+    def _on_add_exe_from_staging(self):
+        game = self._gs.game
+        if game is None or not hasattr(game, "get_mod_staging_path"):
+            self._notify(self.tr("No game selected."), "warning")
+            return
+        from Utils.exe_launch import scan_staging_exes
+        exes = scan_staging_exes(game)
+        if not exes:
+            self._notify(self.tr("No executables found in staging."), "info")
+            return
+        # Label each exe with a dim relative-path hint so duplicate basenames
+        # from different mods are distinguishable in the picker.
+        root = game.get_mod_staging_path().parent
+        items = []
+        for p in exes:
+            try:
+                hint = str(p.parent.relative_to(root))
+            except ValueError:
+                hint = str(p.parent)
+            items.append((f"{p.name}  —  {hint}", p))
+        from gui_qt.staging_exe_picker_overlay import StagingExePickerOverlay
+        StagingExePickerOverlay.show_over(
+            self.centralWidget() or self, items,
+            on_done=self._on_staging_exes_picked)
+
+    def _on_staging_exes_picked(self, paths):
+        game = self._gs.game
+        if not paths or game is None:
+            return
+        from Utils.exe_launch import add_custom_exe
+        for path in paths:
+            add_custom_exe(game, path)
+        self._refresh_play_selector()
+        # Select the single added exe (mirror the custom-exe picker); leave the
+        # current selection alone when several were added at once.
+        if len(paths) == 1 and paths[0].name in self._play_exe_paths:
+            self._play_exe_selector.set_current(paths[0].name)
+            self._on_play_exe_selected(paths[0].name)
+
     def _on_play(self):
         game = self._gs.game
         if game is None or not game.is_configured():
@@ -6082,6 +6121,18 @@ class MainWindow(QMainWindow):
         label = self._play_exe_selector.current()
         exe_path = self._play_exe_paths.get(label)
         if exe_path is not None:
+            # If this exe belongs to a wizard tool (xEdit, BodySlide, Script
+            # Merger, …), open the wizard instead of a bare Proton launch — the
+            # wizard handles the install/deploy/prefix setup a raw launch skips.
+            # Only divert when a Qt view exists for the wizard; otherwise fall
+            # through and launch the exe normally.
+            from Utils.plugin_loader import wizard_tool_for_exe
+            tool = wizard_tool_for_exe(game, exe_path.name)
+            if tool is not None:
+                from wizards_qt import get_spec
+                if get_spec(tool.dialog_class_path) is not None:
+                    self._open_wizard_tool(tool)
+                    return
             # Custom exe → Proton in the game prefix (or per-exe override).
             is_auto = label in self._play_auto_exe_names
             can_deploy = hasattr(game, "deploy")
@@ -10482,15 +10533,18 @@ class MainWindow(QMainWindow):
         # splitter separator, so dragging the split resizes the dropdown while
         # Play + gear stay fixed at the right edge. Items = the game +
         # auto-detected framework launchers (installed script extenders) +
-        # manually added custom exes (no staging scan — wizard tools cover
-        # those).
+        # manually added custom exes, plus a staging scan for exes already
+        # installed under the profile (mod tools + wizard tools).
         self._play_exe_selector = SelectorButton(
             items=["—"],
             current="—",
             min_width=0,
             icon_px=28,   # bigger game/exe icon on the play-bar face + menu
             on_select=self._on_play_exe_selected,
-            actions=[(self.tr("+ Add custom EXE…"), self._on_add_custom_exe)],
+            actions=[
+                (self.tr("+ Add custom EXE…"), self._on_add_custom_exe),
+                (self.tr("+ Add exe from staging…"), self._on_add_exe_from_staging),
+            ],
         )
         self._play_exe_selector.setFixedHeight(self._BTN_H)
         self._play_exe_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)

@@ -299,6 +299,8 @@ class MainWindow(QMainWindow):
     _handlers_synced = Signal()
     # Language (.qm) background sync worker → UI thread (translations updated).
     _languages_synced = Signal()
+    # Flatpak 32-bit extension repair worker → UI thread (install succeeded?).
+    _i386_repair_done = Signal(bool)
     # NXM link received from a second instance via the IPC socket (fires on a
     # worker thread → marshal to the UI thread). Also used for --nxm at startup.
     _nxm_received = Signal(str)
@@ -578,6 +580,14 @@ class MainWindow(QMainWindow):
         # ~/.config and Profiles/. Deferred so the log panel is live first.
         QTimer.singleShot(0, self._warn_handler_load_failures)
 
+        # Flatpak self-heal: bundle installs (release zip / Warehouse) don't
+        # pull the Compat.i386 extension the manifest declares, leaving
+        # /lib/ld-linux.so.2 dangling — every Proton/wine run in the sandbox
+        # then fails with "could not open". Install the refs in the background.
+        self._i386_repair_done.connect(self._on_i386_repair_done)
+        self._i386_toast = None
+        QTimer.singleShot(1000, self._check_flatpak_i386)
+
         # Splash watchdog: the splash is normally dismissed by the first
         # _on_conflicts_ready, but a game with no profile / empty modlist may
         # never trigger a conflict rebuild. Close it unconditionally after a
@@ -627,6 +637,56 @@ class MainWindow(QMainWindow):
             state="warning",
             sticky=True,
         )
+
+    def _check_flatpak_i386(self):
+        """Flatpak startup self-heal: install the 32-bit compat extensions when
+        the sandbox lacks them (bundle installs skip the manifest's related
+        refs). Without them every in-sandbox Proton/wine run — dtkit-patch,
+        vcredist, wizard exes — dies with "/lib/ld-linux.so.2: could not open".
+        """
+        from Utils.flatpak_i386 import i386_support_missing
+        if not i386_support_missing():
+            return
+        self._append_log("[flatpak] 32-bit support missing (Compat.i386 "
+                         "extension not installed) — installing from Flathub …")
+        self._i386_toast = self._notify(
+            self.tr("Installing 32-bit support (needed to run Windows tools) …"),
+            sticky=True,
+        )
+
+        def _run():
+            from gui_qt.safe_emit import safe_emit
+            from Utils.flatpak_i386 import install_i386_extensions
+            from Utils.app_log import app_log
+            ok = install_i386_extensions(log_fn=lambda m: app_log(f"[flatpak] {m}"))
+            safe_emit(self._i386_repair_done, ok)
+
+        import threading
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_i386_repair_done(self, ok: bool):
+        """UI thread: 32-bit extension install finished — swap the toast."""
+        toast, self._i386_toast = self._i386_toast, None
+        if toast is not None:
+            try:
+                toast.dismiss()
+            except Exception:
+                pass
+        if ok:
+            # Extensions mount when the sandbox is (re)created, not live.
+            self._notify(
+                self.tr("32-bit support installed — restart the app before "
+                        "running Windows tools."),
+                state="success", sticky=True,
+            )
+        else:
+            from Utils.flatpak_i386 import MANUAL_INSTALL_CMD
+            self._append_log(f"[flatpak] install manually: {MANUAL_INSTALL_CMD}")
+            self._notify(
+                self.tr("Could not install 32-bit support automatically — "
+                        "see the log for the manual command."),
+                state="warning", sticky=True,
+            )
 
     def _populate_selectors(self):
         """Fill the game/profile selectors from the current GameState."""

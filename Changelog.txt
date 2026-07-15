@@ -31,6 +31,7 @@
 - Fixed an issue where script extender's scripts folder was sent to the root folder when installed via the wizard
 - Fixed starfield's archive invalidation being applied to the wrong ini file
 - Fixed manually installed plugins not appearing in the plugins panel
+- Fixed bg3mm importer disabling mods not listed in loadorder.json
 
 ---
 

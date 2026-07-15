@@ -74,6 +74,24 @@ _FLAG_TIPS = {
     FLAG_ROOT_RULE: QT_TRANSLATE_NOOP("ModRowDelegate", "This mod contains files that route to the game root"),
 }
 
+
+def _note_to_tooltip_html(note: str) -> str:
+    """Render a Markdown note as HTML for a rich-text tooltip.
+
+    Qt's QToolTip auto-detects rich text, so returning HTML makes headings,
+    bold/italic, lists and links render. QTextDocument.setMarkdown does the
+    conversion with no external dependency (GitHub dialect → tables, strikethrough,
+    task lists). Falls back to the plain (HTML-escaped) text if anything goes
+    wrong."""
+    try:
+        from PySide6.QtGui import QTextDocument
+        doc = QTextDocument()
+        doc.setMarkdown(note, QTextDocument.MarkdownDialectGitHub)
+        return doc.toHtml()
+    except Exception:
+        import html
+        return f'<div style="white-space:pre-wrap;">{html.escape(note)}</div>'
+
 # Conflict code → icon (lightning), painted in the Conflicts column (Tk parity).
 _CONFLICT_ICONS = {
     1: "conflict-winner.png",
@@ -525,14 +543,17 @@ class ModRowDelegate(QStyledItemDelegate):
 
     def _flag_tip(self, hit, index):
         """Tooltip for the hovered flag *hit*. The Note flag shows the actual
-        note text (Tk parity); everything else uses the static _FLAG_TIPS."""
+        note text rendered from Markdown (Tk parity + rich text); everything
+        else uses the static _FLAG_TIPS."""
         if hit == FLAG_NOTE:
             try:
                 model = index.model()
                 name = index.data(EntryRole).name
                 note = model.note_for(name) if hasattr(model, "note_for") else ""
                 if note:
-                    return note if len(note) <= 500 else note[:500] + "…"
+                    if len(note) > 500:
+                        note = note[:500].rstrip() + "…"
+                    return _note_to_tooltip_html(note)
             except Exception:
                 pass
         tip = _FLAG_TIPS.get(hit)

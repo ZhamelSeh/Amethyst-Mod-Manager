@@ -1260,9 +1260,9 @@ class MainWindow(QMainWindow):
         self._plugin_footer_btns: list = []
         for label, disp, key in [
             ("Sort Plugins", self.tr("Sort Plugins"), "BTN_SUCCESS"),
+            ("Refresh Plugins", self.tr("Refresh Plugins"), "BTN_INFO"),
             ("Groups", self.tr("Groups"), "BTN_INFO"),
             ("Plugin Rules", self.tr("Plugin Rules"), "BTN_INFO"),
-            ("Filters", self.tr("Filters"), "BTN_INFO"),
         ]:
             b = self._color_button(disp, _c(self._pal, key), compact=True)
             b.setFixedHeight(self._FOOT_BTN_H)
@@ -1271,10 +1271,15 @@ class MainWindow(QMainWindow):
             self._plugin_footer_btns.append(b)
         v.addLayout(btns)
         self._plugin_sort_btn = _made["Sort Plugins"]
+        self._plugin_refresh_btn = _made["Refresh Plugins"]
         self._plugin_groups_btn = _made["Groups"]
         self._plugin_rules_btn = _made["Plugin Rules"]
-        self._plugin_filters_btn = _made["Filters"]
+        self._plugin_filters_btn = self._color_button(
+            self.tr("Filters"), _c(self._pal, "BTN_INFO"), compact=True)
+        self._plugin_filters_btn.setFixedHeight(self._FOOT_BTN_H)
+        self._plugin_footer_btns.append(self._plugin_filters_btn)
         self._plugin_sort_btn.clicked.connect(self._on_sort_plugins)
+        self._plugin_refresh_btn.clicked.connect(self._on_refresh_plugins)
         self._plugin_groups_btn.clicked.connect(self._open_plugin_groups_tab)
         self._plugin_rules_btn.clicked.connect(self._open_plugin_rules_tab)
         self._plugin_filters_btn.clicked.connect(self._toggle_plugin_filters)
@@ -1295,6 +1300,7 @@ class MainWindow(QMainWindow):
             " border-radius: 4px; padding: 2px 8px; }")
         self._plugin_count = count
         search_row.addWidget(count)
+        search_row.addWidget(self._plugin_filters_btn)
 
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Search plugins…"))
@@ -1332,18 +1338,23 @@ class MainWindow(QMainWindow):
         self._mf_expand_btn = self._text_button(self.tr("⊞ Expand all"), compact=True)
         self._mf_expand_btn.setFixedHeight(self._FOOT_BTN_H)
         self._mf_expand_btn.clicked.connect(self._on_mf_expand_clicked)
+        self._equalize_button_widths(self._mf_pack_btn, self._mf_unpack_btn)
+        btns.addWidget(self._mf_expand_btn)
         btns.addWidget(self._mf_pack_btn)
         btns.addWidget(self._mf_unpack_btn)
-        btns.addWidget(self._mf_filters_btn)
-        btns.addWidget(self._mf_expand_btn)
         v.addLayout(btns)
 
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        search_row.setSpacing(6)
+        search_row.addWidget(self._mf_filters_btn)
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(
             lambda t: self._mod_files_view._on_search(t))
-        v.addWidget(search)
+        search_row.addWidget(search, 1)
+        v.addLayout(search_row)
         self._mod_files_search = search
         return bar
 
@@ -1364,15 +1375,19 @@ class MainWindow(QMainWindow):
         self._data_expand_btn = self._text_button(self.tr("⊞ Expand all"), compact=True)
         self._data_expand_btn.setFixedHeight(self._FOOT_BTN_H)
         self._data_expand_btn.clicked.connect(self._on_data_expand_clicked)
-        btns.addWidget(self._data_filters_btn)
         btns.addWidget(self._data_expand_btn)
         v.addLayout(btns)
 
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        search_row.setSpacing(6)
+        search_row.addWidget(self._data_filters_btn)
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(lambda t: self._data_view._on_search(t))
-        v.addWidget(search)
+        search_row.addWidget(search, 1)
+        v.addLayout(search_row)
         self._data_search = search
         return bar
 
@@ -1415,18 +1430,24 @@ class MainWindow(QMainWindow):
             self.tr("Filters"), _c(self._pal, "BTN_INFO"), compact=True)
         self._dl_filters_btn.setFixedHeight(self._FOOT_BTN_H)
         self._dl_filters_btn.clicked.connect(self._toggle_downloads_filters)
+        self._equalize_button_widths(
+            self._dl_install_btn, self._dl_move_btn, self._dl_remove_btn)
         btns.addWidget(self._dl_install_btn)
         btns.addWidget(self._dl_move_btn)
         btns.addWidget(self._dl_remove_btn)
         btns.addWidget(self._dl_locations_btn)
-        btns.addWidget(self._dl_filters_btn)
         v.addLayout(btns)
 
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        search_row.setSpacing(6)
+        search_row.addWidget(self._dl_filters_btn)
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Search downloads…"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(lambda t: self._downloads_view._on_search(t))
-        v.addWidget(search)
+        search_row.addWidget(search, 1)
+        v.addLayout(search_row)
         self._dl_search = search
         return bar
 
@@ -1584,9 +1605,8 @@ class MainWindow(QMainWindow):
             self.tr("⊞ Expand all"), compact=True)
         self._tf_expand_btn.setFixedHeight(self._FOOT_BTN_H)
         self._tf_expand_btn.clicked.connect(self._on_tf_expand_clicked)
-        btns.addWidget(self._tf_content_btn)
-        btns.addWidget(self._tf_filters_btn)
         btns.addWidget(self._tf_expand_btn)
+        btns.addWidget(self._tf_content_btn)
         # A dim status label showing the active content-search keyword.
         self._tf_content_status = QLabel("")
         self._tf_content_status.setStyleSheet(
@@ -1596,11 +1616,16 @@ class MainWindow(QMainWindow):
         self._text_files_view.content_status_changed.connect(
             self._on_tf_content_status)
 
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        search_row.setSpacing(6)
+        search_row.addWidget(self._tf_filters_btn)
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Search files… (try !.dds)"))
         search.setClearButtonEnabled(True)
         search.textChanged.connect(lambda t: self._text_files_view._on_search(t))
-        v.addWidget(search)
+        search_row.addWidget(search, 1)
+        v.addLayout(search_row)
         self._tf_search = search
         return bar
 
@@ -7706,6 +7731,7 @@ class MainWindow(QMainWindow):
             profile_name=self._gs.profile or "default",
             run_deploy=self._wizard_run_deploy,
             refresh_modlist=self._on_refresh_modlist,
+            refresh_plugins=self._wizard_refresh_plugins,
         )
         try:
             view = spec.view_factory(
@@ -7728,6 +7754,20 @@ class MainWindow(QMainWindow):
         self._deploy_done_hooks.append(on_done)
         self._on_deploy()
         return True
+
+    def _wizard_refresh_plugins(self):
+        """Wizard hook: re-run LOOT to refresh plugin metadata without touching
+        the load order (the xEdit wizards call this after a clean/edit session
+        so dirty/message flags update). Deferred a beat so it runs after the
+        refresh_modlist() reload the wizard also fires — the LOOT refresh reads
+        the plugin model's rows, which that reload rebuilds."""
+        game = self._gs.game
+        if game is None or not game.is_configured():
+            return
+        if not getattr(game, "loot_sort_enabled", False):
+            return
+        # QTimer so it lands after the modlist refresh + plugin reload settle.
+        QTimer.singleShot(0, self._on_refresh_plugins)
 
     def _close_wizard_tab(self, key: str):
         if self._tabs.has_key(key):
@@ -10423,9 +10463,19 @@ class MainWindow(QMainWindow):
         self._refresh_userlist_flags()
 
     # ---- Sort Plugins (LOOT) ----------------------------------------------
-    def _on_sort_plugins(self):
+    def _on_refresh_plugins(self):
+        """Run LOOT to refresh plugin metadata (messages/dirty/tags/requirements)
+        WITHOUT reordering the load order — the ready handler skips the reorder
+        step when the context is flagged as a refresh."""
+        self._on_sort_plugins(refresh=True)
+
+    def _on_sort_plugins(self, _checked=False, *, refresh=False):
         """LOOT-sort the load order on a worker thread (reuses the Tk backend
-        LOOT/loot_sorter.sort_plugins). Result applied on the UI thread."""
+        LOOT/loot_sorter.sort_plugins). Result applied on the UI thread.
+
+        When *refresh* is True, LOOT still evaluates the plugins (yielding the
+        same metadata) but the resulting order is discarded — only the metadata
+        is written and the panel reloaded."""
         from LOOT.loot_sorter import is_available, unavailable_reason
         if not is_available():
             self._notify(self.tr("LOOT library not available — cannot sort."), "warning")
@@ -10477,6 +10527,7 @@ class MainWindow(QMainWindow):
             "plugin_names": plugin_names, "include_vanilla": include_vanilla,
             "profile_dir": pdir, "game_id": game.game_id,
             "game": game, "profile": self._gs.profile,
+            "refresh": refresh,
         }
 
         kw = dict(
@@ -10495,7 +10546,16 @@ class MainWindow(QMainWindow):
 
         self._sort_running = True
         self._plugin_sort_btn.setEnabled(False)
-        self._notify(self.tr("Running LOOT on {0} plugins…").format(len(plugin_names)), "info")
+        if hasattr(self, "_plugin_refresh_btn"):
+            self._plugin_refresh_btn.setEnabled(False)
+        if refresh:
+            self._notify(
+                self.tr("Refreshing LOOT metadata for {0} plugins…").format(
+                    len(plugin_names)), "info")
+        else:
+            self._notify(
+                self.tr("Running LOOT on {0} plugins…").format(
+                    len(plugin_names)), "info")
 
         from gui_qt.worker import run_in_worker
 
@@ -10515,10 +10575,15 @@ class MainWindow(QMainWindow):
         self._sort_running = False
         if hasattr(self, "_plugin_sort_btn"):
             self._plugin_sort_btn.setEnabled(True)
+        if hasattr(self, "_plugin_refresh_btn"):
+            self._plugin_refresh_btn.setEnabled(True)
         ctx = getattr(self, "_sort_ctx", None) or {}
         self._sort_ctx = None
+        is_refresh = bool(ctx.get("refresh"))
         if result is None:
-            self._notify(self.tr("LOOT sort failed — see log."), "error")
+            self._notify(
+                (self.tr("LOOT refresh failed — see log.") if is_refresh
+                 else self.tr("LOOT sort failed — see log.")), "error")
             return
         for w in getattr(result, "warnings", []) or []:
             self._append_log(f"[loot] warning: {w}")
@@ -10530,6 +10595,13 @@ class MainWindow(QMainWindow):
                             result.general_messages, game_id=ctx.get("game_id", ""))
         except Exception as exc:
             self._append_log(f"[loot] could not write loot.json: {exc}")
+
+        # Refresh mode: metadata is written, load order untouched. Just reload
+        # the panel so the new flags light up, then stop.
+        if is_refresh:
+            self._reload_plugins()
+            self._notify(self.tr("Plugin metadata refreshed."), "success")
+            return
 
         from gui_qt.plugin_state import apply_loot_sort, save_plugins
         new_rows, moved = apply_loot_sort(
@@ -11454,6 +11526,13 @@ class MainWindow(QMainWindow):
             f" font-weight:600;}}"
             f"QPushButton:hover{{background:{color};}}")
         return b
+
+    def _equalize_button_widths(self, *buttons) -> None:
+        """Give every button the width of the widest one so a row of related
+        buttons (e.g. Pack/Unpack BSA) lines up regardless of label length."""
+        w = max((b.sizeHint().width() for b in buttons), default=0)
+        for b in buttons:
+            b.setMinimumWidth(w)
 
     def _icon_button(self, icon_name: str, tip: str = "") -> QToolButton:
         b = QToolButton()

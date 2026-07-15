@@ -402,14 +402,23 @@ def _has_update_flag(view, name: str) -> bool:
 def _has_missing_reqs(view, name: str) -> bool:
     """True if *name* carries the missing-requirements flag (FLAG_MISSING_REQS).
     Read off the model's flag bitmask (same source the row paints), so the menu
-    matches Tk's `mod_name in self._missing_reqs`."""
+    matches Tk's `mod_name in self._missing_reqs`.
+
+    Fallback: a mod whose every missing requirement is individually ignored
+    (meta.ini ignoredRequirements) has no ⚠ flag, but the panel must stay
+    reachable so the ignores can be unticked — keep the menu item when the meta
+    carries per-requirement ignores."""
     try:
         model = view.model()
     except Exception:
         return False
     from gui_qt.modlist_data import FLAG_MISSING_REQS
     bits = model._flags.get(name, 0) if hasattr(model, "_flags") else 0
-    return bool(bits & FLAG_MISSING_REQS)
+    if bits & FLAG_MISSING_REQS:
+        return True
+    meta = _read_mod_meta(view, name)
+    return bool(meta is not None
+                and getattr(meta, "ignored_requirements", ""))
 
 
 def _quick_update(view, names):

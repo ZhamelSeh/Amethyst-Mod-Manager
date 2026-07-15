@@ -968,9 +968,11 @@ class PreparedInstall:
         self.bundle_root = None
         self.multi_mods = None
         # Set by finish_install when the user chose to Replace an existing mod:
-        # keep its modlist position + carry its endorsed flag onto the new install.
+        # keep its modlist position + carry its endorsed flag and per-requirement
+        # ignore list onto the new install.
         self._preserve_position = False
         self._preserved_endorsed = False
+        self._preserved_ignored_reqs = ""
         # Bytes claimed from the shared /tmp reservation pool while extract_dir
         # lives there (0 when extracted to disk) — released by cleanup().
         self._tmp_reserved = 0
@@ -1267,13 +1269,15 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
     if dest_root.exists():
         if on_exists is None:
             # Silent replace is still a replace: keep the mod's modlist slot and
-            # carry its endorsed flag, exactly like the interactive Replace path
-            # (Tk parity: overwrote_existing → was_existing_mod →
-            # ensure_mod_preserving_position).
+            # carry its endorsed flag + per-requirement ignore list, exactly like
+            # the interactive Replace path (Tk parity: overwrote_existing →
+            # was_existing_mod → ensure_mod_preserving_position).
             try:
                 from Nexus.nexus_meta import read_meta
-                p._preserved_endorsed = bool(
-                    read_meta(dest_root / "meta.ini").endorsed)
+                _old = read_meta(dest_root / "meta.ini")
+                p._preserved_endorsed = bool(_old.endorsed)
+                p._preserved_ignored_reqs = \
+                    getattr(_old, "ignored_requirements", "") or ""
             except Exception:
                 p._preserved_endorsed = False
             if p.is_bundle():
@@ -1290,11 +1294,14 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
                     p.cleanup()
                     return None
                 if action == "replace":
-                    # Carry the old install's endorsed flag onto the new one.
+                    # Carry the old install's endorsed flag + per-requirement
+                    # ignore list onto the new one.
                     try:
                         from Nexus.nexus_meta import read_meta
-                        p._preserved_endorsed = bool(
-                            read_meta(dest_root / "meta.ini").endorsed)
+                        _old = read_meta(dest_root / "meta.ini")
+                        p._preserved_endorsed = bool(_old.endorsed)
+                        p._preserved_ignored_reqs = \
+                            getattr(_old, "ignored_requirements", "") or ""
                     except Exception:
                         p._preserved_endorsed = False
                     if p.is_bundle():
@@ -1422,6 +1429,7 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
     _write_install_meta(dest_root, p.archive, p.game, log_fn,
                         prebuilt_meta=getattr(p, "prebuilt_meta", None),
                         endorsed=getattr(p, "_preserved_endorsed", False),
+                        ignored_reqs=getattr(p, "_preserved_ignored_reqs", ""),
                         is_bain=bain_selected is not None)
     # Persist the BAIN sub-package selection (global + profile) so a re-install
     # restores the user's choices (Tk parity).
@@ -2290,6 +2298,7 @@ def _build_nexus_api():
 
 def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
                         prebuilt_meta=None, endorsed: bool = False,
+                        ignored_reqs: str = "",
                         is_bain: bool = False) -> None:
     try:
         from Nexus.nexus_meta import (
@@ -2326,6 +2335,10 @@ def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
         # Carry the endorsed flag from a replaced install (Tk parity).
         if endorsed:
             meta.endorsed = True
+        # Carry the per-requirement ignore list from a replaced install so
+        # ignored requirements survive a reinstall/update.
+        if ignored_reqs and not getattr(meta, "ignored_requirements", ""):
+            meta.ignored_requirements = ignored_reqs
         # Stamp the BAIN install-method flag so the modlist BAIN filter / is_bain
         # set picks it up (Tk parity).
         if is_bain:

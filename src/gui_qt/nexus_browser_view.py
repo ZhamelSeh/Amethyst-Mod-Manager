@@ -1074,21 +1074,12 @@ class NexusBrowserView(QWidget):
             self._open_manual_file(entry, picks[0])
 
     def _open_manual_file(self, entry, file):
-        """Open the chosen file's own download page (file_id deep-link) and
-        arm the folder watcher for that file."""
+        """Install the chosen file via the shared start_manual_install flow:
+        skip the browser when the archive is already downloaded, else open the
+        file's download page (file_id deep-link) + watch the download folders."""
+        from Nexus.manual_download_watch import start_manual_install
         from Utils.xdg import open_url
         self._installing = False
-        fid = int(getattr(file, "file_id", 0) or 0)
-        open_url(f"{self._mod_url(entry)}?tab=files&file_id={fid}",
-                 log_fn=self._log)
-        self._log("Nexus: premium required for direct download — opened the "
-                  f"download page for '{file.file_name}'. It will install "
-                  "automatically once the browser download finishes.")
-        self._start_manual_watch(entry, [file])
-
-    def _start_manual_watch(self, entry, files):
-        from Nexus.manual_download_watch import ManualDownloadWatcher
-        from Nexus.nexus_meta import build_meta_from_download
         domain = getattr(entry, "domain_name", "") or self._domain
         mod_id = entry.mod_id
         name = entry.name or f"Mod {mod_id}"
@@ -1100,17 +1091,9 @@ class NexusBrowserView(QWidget):
         self._progress_fn(dl_key, name, 0, 0)
         watchers = self._manual_watchers
 
-        # All three callbacks run on the WATCHER thread.
-        def on_found(path, file):
+        # All three callbacks run on the WATCHER thread — marshal via Signals.
+        def on_archive(path, meta, _file):
             watchers.pop(mod_id, None)
-            try:
-                meta = build_meta_from_download(
-                    game_domain=domain, mod_id=mod_id,
-                    file_id=int(getattr(file, "file_id", 0) or 0),
-                    archive_name=path.name, mod_info=entry, file_info=file)
-            except Exception:
-                meta = None
-            self._log(f"Nexus: found downloaded archive → {path}")
             safe_emit(self._download_done, str(path), meta, dl_key)
             safe_emit(self._manual_watch_ended, mod_id)
 
@@ -1125,11 +1108,14 @@ class NexusBrowserView(QWidget):
             safe_emit(self._download_done, None, None, dl_key)
             safe_emit(self._manual_watch_ended, mod_id)
 
-        watcher = ManualDownloadWatcher(
-            mod_id=mod_id, files=files, on_found=on_found,
-            on_progress=on_progress, on_timeout=on_timeout)
+        watcher, _already = start_manual_install(
+            api=self._api, game_domain=domain, mod_id=mod_id, files=[file],
+            open_url_fn=lambda u: open_url(u, log_fn=self._log),
+            log_fn=self._log, log_label=file.file_name,
+            mod_info=entry,          # card entry IS the NexusModInfo — no fetch
+            on_archive=on_archive, on_progress=on_progress,
+            on_timeout=on_timeout)
         watchers[mod_id] = (watcher, dl_key)
-        watcher.start()
         self._set_card_watching(mod_id, True)
 
     def cancel_manual_watch(self, mod_id: int):

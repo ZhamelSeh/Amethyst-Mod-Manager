@@ -66,6 +66,7 @@ class NexusModMeta:
     ignored_version: str = ""          # latest_version at the time ignore was set
     missing_requirements: str = ""     # semicolon-separated "modId:name" pairs
     nexus_requirements: str = ""       # FULL requirements list, "modId:name" pairs (externals as 0:name)
+    ignored_requirements: str = ""     # user-ignored requirement ids, "modId:name" pairs (suppress the ⚠ flag; still listed in the panel)
     is_fomod: bool = False             # True if installed via FOMOD installer
     is_bain: bool = False              # True if installed via BAIN sub-package installer
     root_folder: bool = False          # True if files should deploy to game root
@@ -149,6 +150,7 @@ _KEY_MAP: dict[str, str] = {
     "ignoredVersion":    "ignored_version",
     "missingRequirements": "missing_requirements",
     "nexusRequirements": "nexus_requirements",
+    "ignoredRequirements": "ignored_requirements",
     "FOMOD":             "is_fomod",
     "BAIN":              "is_bain",
     "rootFolder":        "root_folder",

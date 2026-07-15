@@ -17,7 +17,7 @@
 - Added a view requirements right click option that opens a menu and lists a mods requirements and required by breakdown
 ### Changes
 - A mods missing requirements/optional requirements are now flagged as soon as they are installed
-- The Nexus browser and change version menu are now improved for free users, Pressing install will open the mod page as well as detect when the download is complete and install the archive automatically
+- The Nexus browser, change version menu and missing requirements menu are now improved for free users, Pressing install will open the mod page as well as detect when the download is complete and install the archive automatically
 - When a tab is closed it will now go to the last used tab instead of the last tab opened
 - Updated the missing requirements check to use the Nexus v3 api to use the newer mod file requirements system
 ### Bug Fixes

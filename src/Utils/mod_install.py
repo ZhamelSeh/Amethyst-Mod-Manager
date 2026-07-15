@@ -2274,8 +2274,7 @@ def _install_multi_mod(p: "PreparedInstall", log_fn: LogFn, _pp) -> str | None:
     if not installed:
         log_fn(f"Install failed: nothing was staged for '{p.mod_name}'.")
         return None
-    for m_name in installed:
-        _check_nexus_flags_after_install(p.game, m_name, log_fn)
+    _check_nexus_flags_after_install(p.game, installed, log_fn)
     log_fn(f"Installed {len(installed)} mod(s) from archive.")
     return installed[0]
 
@@ -2348,21 +2347,28 @@ def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
         log_fn(f"meta.ini write skipped ({exc}).")
 
 
-def _check_nexus_flags_after_install(game, mod_name: str, log_fn: LogFn) -> None:
-    """Stamp the freshly installed mod's missing requirements + endorsed flag.
+def _check_nexus_flags_after_install(game, mod_names, log_fn: LogFn) -> None:
+    """Stamp the freshly installed mod(s)' missing requirements + endorsed flag.
 
     Both come from a SINGLE Nexus GraphQL v2 request (``modRequirements`` +
     ``viewerEndorsed``) via ``graphql_mod_update_info_batch``, which does NOT
     consume the REST hourly rate limit — so this runs on every install at zero
-    rate-limit cost. Results are written to the mod's ``missingRequirements`` and
-    ``endorsed`` meta.ini fields, the same fields the "Check updates" flow
+    rate-limit cost. Results are written to each mod's ``missingRequirements``
+    and ``endorsed`` meta.ini fields, the same fields the "Check updates" flow
     populates and the modlist UI already reads, so the warning/★ flags appear
     immediately without the user pressing Check updates.
+
+    *mod_names* is a single folder name or an iterable of them — multi-mod
+    archives pass every installed name at once so the staging scan and the
+    GraphQL request happen once per archive, not once per mod.
 
     Best-effort: offline / not-logged-in / any failure is swallowed — this must
     never break or delay a successful install.
     """
     try:
+        names = {mod_names} if isinstance(mod_names, str) else set(mod_names)
+        if not names:
+            return
         api = _build_nexus_api()
         if api is None:
             return
@@ -2377,16 +2383,16 @@ def _check_nexus_flags_after_install(game, mod_name: str, log_fn: LogFn) -> None
         from Nexus.nexus_requirements import check_requirements_from_gql
 
         all_installed = scan_installed_mods(staging_root)
-        # The mod we just installed must have a Nexus mod_id to have flags.
-        this_mod = next(
-            (m for m in all_installed
-             if m.mod_name == mod_name and m.mod_id > 0), None)
-        if this_mod is None:
+        # The mods we just installed must have a Nexus mod_id to have flags.
+        these_mods = [m for m in all_installed
+                      if m.mod_name in names and m.mod_id > 0]
+        if not these_mods:
             return
 
-        # One GraphQL request for just this mod — fetches modRequirements AND
+        # One GraphQL request for just these mods — fetches modRequirements AND
         # viewerEndorsed (rate-limit-free). The batch helper parses both.
-        gql_info = api.graphql_mod_update_info_batch([(domain, this_mod.mod_id)])
+        gql_info = api.graphql_mod_update_info_batch(
+            [(domain, m.mod_id) for m in these_mods])
         if not gql_info:
             return
 
@@ -2401,16 +2407,18 @@ def _check_nexus_flags_after_install(game, mod_name: str, log_fn: LogFn) -> None
             staging_root=staging_root,
             progress_cb=log_fn,
             save_results=True,
-            enabled_only={mod_name},
+            enabled_only=names,
             api=api,
         )
 
         # Endorsement: viewerEndorsed is None when unauthenticated/unknown — only
         # touch the flag when the API returned a definite True/False.
-        info = gql_info.get(this_mod.mod_id)
-        ven = getattr(info, "viewer_endorsed", None) if info is not None else None
-        if ven is not None:
-            meta_path = staging_root / mod_name / "meta.ini"
+        for m in these_mods:
+            info = gql_info.get(m.mod_id)
+            ven = getattr(info, "viewer_endorsed", None) if info is not None else None
+            if ven is None:
+                continue
+            meta_path = staging_root / m.mod_name / "meta.ini"
             if meta_path.is_file():
                 meta = read_meta(meta_path)
                 if meta.endorsed != bool(ven):

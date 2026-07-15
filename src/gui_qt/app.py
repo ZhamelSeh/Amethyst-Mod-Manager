@@ -4504,7 +4504,8 @@ class MainWindow(QMainWindow):
             # Helper callbacks run on the WATCHER thread — marshal via Signals.
             # (_op_log / _append_log are thread-safe.)
             def on_archive(path, meta, _file, _nm=nm, _mid=mod_id, _key=dl_key):
-                self._app_manual_watchers.pop(int(_mid or 0), None)
+                if not self._claim_app_manual_watch(_mid, _key):
+                    return
                 safe_emit(self._reinstall_manual_found,
                           _nm, str(path), meta, _key)
 
@@ -4512,7 +4513,8 @@ class MainWindow(QMainWindow):
                 safe_emit(self._req_install_prog, _key, _nm, int(done), int(total))
 
             def on_timeout(_nm=nm, _mid=mod_id, _key=dl_key):
-                self._app_manual_watchers.pop(int(_mid or 0), None)
+                if not self._claim_app_manual_watch(_mid, _key):
+                    return
                 self._op_log.emit(
                     f"[reinstall] {_nm} — stopped waiting for a browser "
                     "download (nothing arrived; reinstall from Downloads once "
@@ -4549,6 +4551,20 @@ class MainWindow(QMainWindow):
             watcher, dl_key = t
             watcher.stop()
             self._nexus_download_progress(dl_key, "", 0, -1)
+
+    def _claim_app_manual_watch(self, mod_id, dl_key) -> bool:
+        """Claim completion of an app-level manual watch (watcher thread).
+        False when the watch was already cancelled or replaced by a newer one
+        for the same mod — the stale watcher must not emit its completion
+        signals (double install / clobbering the new watch's progress card)."""
+        mid = int(mod_id or 0)
+        t = self._app_manual_watchers.pop(mid, None)
+        if t is None:
+            return False
+        if t[1] != dl_key:
+            self._app_manual_watchers[mid] = t   # a newer watch owns the slot
+            return False
+        return True
 
     def _on_reinstall_manual_found(self, nm, archive, meta, dl_key):
         """UI thread: a non-premium reinstall's browser download landed (or an
@@ -5891,14 +5907,16 @@ class MainWindow(QMainWindow):
 
         # Helper callbacks run on the WATCHER thread — marshal via Signals.
         def on_archive(path, meta, _file):
-            self._app_manual_watchers.pop(int(mod_id or 0), None)
+            if not self._claim_app_manual_watch(mod_id, dl_key):
+                return
             safe_emit(self._req_install_dl, str(path), meta, dl_key)
 
         def on_progress(done, total):
             safe_emit(self._req_install_prog, dl_key, dl_label, int(done), int(total))
 
         def on_timeout():
-            self._app_manual_watchers.pop(int(mod_id or 0), None)
+            if not self._claim_app_manual_watch(mod_id, dl_key):
+                return
             self._op_log.emit(f"[nexus] stopped waiting for a browser download "
                               f"of '{dl_label}' (nothing arrived).")
             safe_emit(self._req_install_dl, None, None, dl_key)
@@ -6878,12 +6896,11 @@ class MainWindow(QMainWindow):
             self._notify(self.tr("'{0}' does not support deployment.").format(game.name), "warning")
             return
 
-        # Mewgenics: offer the Steam launch command as an alternative to
-        # repacking resources.gpak (Tk parity: top_bar._on_deploy). Only prompt
-        # for an explicit user deploy — auto-deploy (silent) falls straight
-        # through to the repack path.
-        if (not silent and getattr(game, "name", "") == "Mewgenics"
-                and hasattr(game, "get_modpaths_launch_string")):
+        # A game exposing get_modpaths_launch_string (Mewgenics) offers a Steam
+        # launch command as an alternative to repacking its archive (Tk parity:
+        # top_bar._on_deploy). Only prompt for an explicit user deploy —
+        # auto-deploy (silent) falls straight through to the repack path.
+        if not silent and hasattr(game, "get_modpaths_launch_string"):
             self._prompt_mewgenics_deploy(game)
             return
 

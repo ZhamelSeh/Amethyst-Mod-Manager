@@ -115,8 +115,10 @@ class NexusBrowserView(QWidget):
         self._premium_checked.connect(self._on_premium_checked)
         self._files_ready.connect(self._on_files_ready)
         self._manual_files_ready.connect(self._on_manual_files_ready)
-        self._manual_watch_ended.connect(
-            lambda mod_id: self._set_card_watching(mod_id, False))
+        # Bound method (NOT a lambda): slot connections to a QObject method are
+        # dropped by Qt when the receiver is destroyed, so a watcher thread
+        # finishing mid-teardown can't fire into a dead wrapper.
+        self._manual_watch_ended.connect(self._on_manual_watch_ended)
         self._download_done.connect(self._on_download_done)
         self._download_progress.connect(self._on_download_progress)
         self._installing = False        # serialise the prep phase (premium
@@ -1092,8 +1094,21 @@ class NexusBrowserView(QWidget):
         watchers = self._manual_watchers
 
         # All three callbacks run on the WATCHER thread — marshal via Signals.
+        def _claim() -> bool:
+            # Only the watch that still owns the slot may emit completion —
+            # a watch cancelled or replaced by a re-click must stay silent
+            # (double install / clobbering the new watch's progress card).
+            t = watchers.pop(mod_id, None)
+            if t is None:
+                return False
+            if t[1] != dl_key:
+                watchers[mod_id] = t   # a newer watch owns the slot
+                return False
+            return True
+
         def on_archive(path, meta, _file):
-            watchers.pop(mod_id, None)
+            if not _claim():
+                return
             safe_emit(self._download_done, str(path), meta, dl_key)
             safe_emit(self._manual_watch_ended, mod_id)
 
@@ -1101,7 +1116,8 @@ class NexusBrowserView(QWidget):
             safe_emit(self._download_progress, dl_key, name, int(done), int(total))
 
         def on_timeout():
-            watchers.pop(mod_id, None)
+            if not _claim():
+                return
             self._log(f"Nexus: stopped waiting for a browser download of "
                       f"{name} (nothing arrived — install it from the "
                       f"Downloads tab once downloaded).")
@@ -1132,6 +1148,9 @@ class NexusBrowserView(QWidget):
     def _cancel_manual_watches(self):
         for mod_id in list(self._manual_watchers):
             self.cancel_manual_watch(mod_id)
+
+    def _on_manual_watch_ended(self, mod_id: int):
+        self._set_card_watching(mod_id, False)
 
     def _set_card_watching(self, mod_id: int, watching: bool):
         for card in self._cards:

@@ -823,6 +823,17 @@ class MainWindow(QMainWindow):
         try:
             mv, pv = self._modlist_view, self._plugin_view
             names = mv.selected_mod_names()
+            if self._req_tab_active():
+                # View Requirements mode: conflict highlights are disabled —
+                # the panel retargets to the selection (multiple mods pool
+                # their requirements together; a selected separator contributes
+                # its whole block, matching selected_mod_names) and its
+                # on_data_changed callback applies the purple/blue tints once
+                # the deferred rebuild ends.
+                self._view_requirements_view.show_mods(names)
+                pv.clearSelection()
+                self._update_mod_files_selection(names)
+                return
             # Modlist rows: green/red tint on ALL conflict partners (loose+BSA).
             higher, lower = mv.conflict_partners(names)
             # Tk quirk: the [Overwrite] band lights GREEN when it wins over the
@@ -1064,7 +1075,10 @@ class MainWindow(QMainWindow):
                      if self._conflict_data else {})
             mods = pv.selected_owner_mods(owner)
             # Plugin selected → orange its owning mod, clear mod conflict tint.
-            mv.set_highlighted_mods(mods)
+            # Suppressed in View Requirements mode (purple/blue tints own the
+            # modlist while that tab is open).
+            if not self._req_tab_active():
+                mv.set_highlighted_mods(mods)
             mv.clearSelection()
             # Green-tick the selected plugin's masters in the plugin marker
             # strip (Tk parity).
@@ -1788,6 +1802,10 @@ class MainWindow(QMainWindow):
         if self._tabs.has_key("dll_overrides"):
             self._tabs.close_tab("dll_overrides")
             self._dll_overrides_view = None
+        # The View Requirements tab reads the previous game's staging — close
+        # it (its destroyed hook restores the conflict highlights).
+        if self._tabs.has_key("view_requirements"):
+            self._tabs.close_tab("view_requirements")
         # Wizard tool tabs are game-scoped — close them all.
         self._close_wizard_tabs()
         # The exe-settings tab is bound to the previous game's exe.
@@ -5065,6 +5083,114 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             self._refresh_modlist_flags()
+
+    # ---- View Requirements (plugins-panel-scoped tab) -----------------------
+    def _req_tab_active(self) -> bool:
+        """True only while the View Requirements tab is OPEN AND on screen.
+
+        A scoped tab that's been switched away from (another tab in the same
+        panel is showing) is hidden by the tab widget — so requirement
+        highlights should give way to the normal conflict highlights until the
+        user switches back. Visibility is the exact signal for that."""
+        view = getattr(self, "_view_requirements_view", None)
+        return (view is not None
+                and self._tabs.has_key("view_requirements")
+                and view.isVisible())
+
+    def _open_view_requirements_tab(self, name):
+        """Open the View Requirements panel over the plugins panel (right-click
+        item). Offline — it reads the full requirements list the update checker
+        stores in meta.ini. While open it follows the modlist selection and the
+        modlist tints the related mods purple (requires) / blue (required by)
+        instead of the green/red conflict highlights.
+
+        Seeds from the current selection so several right-clicked mods pool
+        their requirements from the start; falls back to the clicked mod when
+        it isn't part of the selection."""
+        staging = self._gs.staging_dir()
+        if staging is None:
+            self._notify(self.tr("No mod staging folder for this profile."),
+                         "warning")
+            return
+        seed = self._modlist_view.selected_mod_names()
+        seed = sorted(seed) if name in seed else [name]
+        if self._tabs.has_key("view_requirements"):
+            self._tabs.focus_key("view_requirements")
+            view = getattr(self, "_view_requirements_view", None)
+            if view is not None:
+                view.show_mods(seed)
+            return
+        from gui_qt.requirements_view import RequirementsView
+        view = RequirementsView(
+            staging_fn=self._gs.staging_dir,
+            on_close=self._close_view_requirements_tab,
+            on_data_changed=self._apply_requirement_highlights,
+            on_focus_changed=self._on_view_requirements_focus_changed,
+            on_view_missing=self._view_requirements_open_missing)
+        self._view_requirements_view = view
+        # destroyed fires on EVERY teardown path (✕ button, tab-bar close,
+        # game change) — restore normal highlights from the one place.
+        view.destroyed.connect(lambda *_: self._on_view_requirements_gone())
+        self._tabs.open_scoped_tab(
+            view, self.tr("View Requirements"), self._plugins_panel_stack,
+            key="view_requirements")
+        # The showEvent from open_scoped_tab flips on the requirement highlights
+        # via _on_view_requirements_focus_changed(True).
+        view.show_mods(seed)
+
+    def _view_requirements_open_missing(self, names):
+        """View Missing Requirements button → open the Missing Requirements
+        panel for the current selection. _open_missing_reqs_tab filters to mods
+        that actually have missing requirements and toasts if none do (it also
+        replaces the View Requirements tab, since both scope the plugins
+        panel)."""
+        if names:
+            self._open_missing_reqs_tab(set(names))
+
+    def _close_view_requirements_tab(self):
+        if self._tabs.has_key("view_requirements"):
+            self._tabs.close_tab("view_requirements")
+
+    def _on_view_requirements_focus_changed(self, visible: bool):
+        """The tab was shown or hidden (tab switch within the plugins panel).
+        Shown → suppress the per-rebuild conflict reapply and paint requirement
+        tints. Hidden → un-suppress and restore conflict highlights for the
+        current selection."""
+        self._modlist_view.suppress_conflict_highlights = bool(visible)
+        if visible:
+            self._apply_requirement_highlights()
+        else:
+            try:
+                self._on_mod_selection_changed()
+            except Exception:
+                pass
+
+    def _on_view_requirements_gone(self):
+        """Post-teardown: drop the ref and restore the conflict highlights for
+        the current selection (a plain _on_mod_selection_changed pass replaces
+        the requirement sets — set_highlights swaps all five sets at once).
+
+        The view's hideEvent normally restores highlights first, but teardown
+        paths that delete the widget without a hide (or where the ref is already
+        gone) still need this backstop."""
+        self._view_requirements_view = None
+        self._modlist_view.suppress_conflict_highlights = False
+        try:
+            self._on_mod_selection_changed()
+        except Exception:
+            pass
+
+    def _apply_requirement_highlights(self):
+        """Push the View Requirements tab's related-mod sets into the modlist
+        as the purple/blue row tints (replaces any conflict tint). No-op when
+        the tab isn't on screen — a background repopulate must not steal the
+        modlist tints from the conflict highlights."""
+        if not self._req_tab_active():
+            return
+        view = self._view_requirements_view
+        self._modlist_model.set_highlights(
+            requires=view.installed_requires,
+            required_by=view.installed_required_by)
 
     # ---- Show Conflicts (full detachable tab) ------------------------------
     def _open_show_conflicts_tab(self, mod_name: str):
@@ -9060,6 +9186,8 @@ class MainWindow(QMainWindow):
         self._modlist_view.on_flag_clicked = self._on_modlist_flag_clicked
         # Missing Requirements: right-click item + clicking the ⚠ flag icon.
         self._modlist_view.on_missing_reqs = self._open_missing_reqs_tab
+        # View Requirements: right-click item (offline, reads meta.ini data).
+        self._modlist_view.on_view_requirements = self._open_view_requirements_tab
         # Quick Update: right-click on update-flagged mods (premium direct DL).
         self._modlist_view.on_quick_update = self._quick_update_mods
         # Reinstall: right-click item(s) whose install archive is still on disk.

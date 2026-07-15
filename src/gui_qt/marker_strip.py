@@ -8,8 +8,10 @@ owning the scrollbar's paintEvent the ticks are guaranteed to render, in the rea
 scrollbar track, behind the handle (exactly MO2/Tk behaviour).
 
 Ticks: orange = anchor (the mod/plugin selected in the other panel), green = rows
-the selection beats, red = rows that beat the selection. Positions are
-proportional to row index so they line up with the visible scroll position.
+the selection beats, red = rows that beat the selection, purple/blue = the
+requirement highlights while the View Requirements tab is open (mods the
+selection requires / mods that require it). Positions are proportional to row
+index so they line up with the visible scroll position.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ class MarkerScrollBar(QScrollBar):
     _C_ANCHOR = QColor("#e08a2a")   # anchor (orange)
     _C_HIGHER = QColor("#3ad13a")   # selection beats this row (green)
     _C_LOWER = QColor("#e05050")    # this row beats selection (red)
+    _C_REQUIRES = QColor("#a86ae0")     # selection requires this row (purple)
+    _C_REQUIRED_BY = QColor("#4a90e0")  # this row requires selection (blue)
     _C_MISSING = QColor("#e05050")  # plugin has missing masters (red)
     _C_MASTER = QColor("#3ad13a")   # master of the selected plugin (green)
     _C_CYCLE = QColor("#e05050")    # plugin's userlist rules form a cycle (red)
@@ -111,10 +115,13 @@ class MarkerScrollBar(QScrollBar):
             #   < highlighted/anchor(orange) < missing(red).
             for r in self._master_rows:
                 tick(r, self._C_MASTER)
-            # lower → higher → anchor so the anchor wins on coincidence.
-            for wanted in (-1, 1, 2):
-                col = (self._C_ANCHOR if wanted == 2 else
-                       self._C_HIGHER if wanted == 1 else self._C_LOWER)
+            # lower → higher → required-by → requires → anchor so the anchor
+            # wins on coincidence (the requirement codes never coexist with the
+            # conflict ones — set_highlights swaps all sets at once).
+            code_cols = {-1: self._C_LOWER, 1: self._C_HIGHER,
+                         -3: self._C_REQUIRED_BY, 3: self._C_REQUIRES,
+                         2: self._C_ANCHOR}
+            for wanted, col in code_cols.items():
                 for r, code in marks:
                     if code == wanted:
                         tick(r, col)

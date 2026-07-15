@@ -155,6 +155,8 @@ class ModRowDelegate(QStyledItemDelegate):
         self.c_hl_higher = qc(p, "CONFLICT_HL_WIN")    # selection beats this mod (green)
         self.c_hl_lower = qc(p, "CONFLICT_HL_LOSE")    # this mod beats selection (red)
         self.c_hl_anchor = qc(p, "CONFLICT_HL_ANCHOR") # plugin-selected mod (orange)
+        self.c_hl_requires = qc(p, "REQ_HL_REQUIRES")        # selection requires this mod (purple)
+        self.c_hl_required_by = qc(p, "REQ_HL_REQUIRED_BY")  # this mod requires selection (blue)
         self.c_root_text = qc(p, "ROOT_SEP_FG")
         self.c_overwrite_text = qc(p, "OVERWRITE_SEP_FG")
         # Shared row/label fonts — paint() runs per visible cell, so build
@@ -206,6 +208,10 @@ class ModRowDelegate(QStyledItemDelegate):
                 p.fillRect(r, self.c_sel)
             elif sep_hl == 2:
                 p.fillRect(r, self.c_hl_anchor)
+            elif sep_hl == 3:
+                p.fillRect(r, self.c_hl_requires)
+            elif sep_hl == -3:
+                p.fillRect(r, self.c_hl_required_by)
             elif sep_hl == 1:
                 p.fillRect(r, self.c_hl_higher)
             elif sep_hl == -1:
@@ -233,6 +239,10 @@ class ModRowDelegate(QStyledItemDelegate):
             p.fillRect(r, self.c_sel)
         elif hl == 2:
             p.fillRect(r, self.c_hl_anchor); highlighted = True
+        elif hl == 3:
+            p.fillRect(r, self.c_hl_requires); highlighted = True
+        elif hl == -3:
+            p.fillRect(r, self.c_hl_required_by); highlighted = True
         elif hl == 1:
             p.fillRect(r, self.c_hl_higher); highlighted = True
         elif hl == -1:

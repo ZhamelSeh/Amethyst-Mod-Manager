@@ -321,6 +321,8 @@ def _build_mod_menu(view, model, row, entry, sel_mods, multi, act, stub, divider
         lambda: _open_note_editor(view, [name]))
     if _has_conflict(model, row):
         act(_mt("Show Conflicts"), lambda: _show_conflicts(view, name))
+    if _has_id:
+        act(_mt("View Requirements"), lambda: _view_requirements(view, name))
     divider()
     # Group 6: remove
     act(_mt("Remove mod"), lambda: _remove(view, model, row), enabled=not locked)
@@ -435,6 +437,14 @@ def _missing_reqs(view, names):
     cb = getattr(view, "on_missing_reqs", None)
     if cb is not None and names:
         cb(names[0] if len(names) == 1 else set(names))
+
+
+def _view_requirements(view, name):
+    """Open the View Requirements tab for *name* (the window installs the
+    callback in _reload_modlist). No-op if it isn't wired (e.g. headless)."""
+    cb = getattr(view, "on_view_requirements", None)
+    if cb is not None and name:
+        cb(name)
 
 
 def _has_conflict(model, row) -> bool:
@@ -1237,6 +1247,7 @@ _TR_MARKERS = (
     QT_TRANSLATE_NOOP("ModListMenu", "Log"),
     QT_TRANSLATE_NOOP("ModListMenu", "Missing Requirements"),
     QT_TRANSLATE_NOOP("ModListMenu", "Missing Requirements ({0})"),
+    QT_TRANSLATE_NOOP("ModListMenu", "View Requirements"),
     QT_TRANSLATE_NOOP("ModListMenu", "Mod name:"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to profile"),
     QT_TRANSLATE_NOOP("ModListMenu", "Move to profile ({0})"),

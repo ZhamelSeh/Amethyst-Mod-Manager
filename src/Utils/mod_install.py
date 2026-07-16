@@ -1432,12 +1432,32 @@ def finish_install(prepared: "PreparedInstall", fomod_selections, *,
             pass
         return None
 
+    # For FOMOD installs, record the fileDependency plugins on options the user
+    # did NOT select — the modlist flags a rerun if any of them appears in the
+    # load order later. Computed against {} for headless-defaults installs
+    # (fomod_selections is None), where no options are explicitly selected.
+    fomod_pending_deps = ""
+    fomod_active_deps = ""
+    if p.is_fomod() and p.fomod_config is not None:
+        try:
+            from Utils.fomod_installer import (
+                collect_unselected_dep_plugins, collect_selected_dep_plugins)
+            sel = fomod_selections or {}
+            fomod_pending_deps = ";".join(
+                collect_unselected_dep_plugins(p.fomod_config, sel))
+            fomod_active_deps = ";".join(
+                collect_selected_dep_plugins(p.fomod_config, sel))
+        except Exception as exc:
+            log_fn(f"FOMOD dep scan skipped ({exc}).")
+
     _write_install_meta(dest_root, p.archive, p.game, log_fn,
                         prebuilt_meta=getattr(p, "prebuilt_meta", None),
                         endorsed=getattr(p, "_preserved_endorsed", False),
                         ignored_reqs=getattr(p, "_preserved_ignored_reqs", ""),
                         is_fomod=p.is_fomod(),
-                        is_bain=bain_selected is not None)
+                        is_bain=bain_selected is not None,
+                        fomod_pending_deps=fomod_pending_deps,
+                        fomod_active_deps=fomod_active_deps)
     # Persist the BAIN sub-package selection (global + profile) so a re-install
     # restores the user's choices (Tk parity).
     if bain_selected is not None:
@@ -1483,7 +1503,14 @@ def _collection_plugin_context(game, profile_dir: "Path | None"
     if profile_dir is not None:
         try:
             from Utils.plugins import read_plugins, read_loadorder
-            for entry in read_plugins(profile_dir / "plugins.txt"):
+            # Respect the game's plugins.txt convention: star-prefix games mark
+            # enabled plugins with a leading "*" (bare = disabled); no-star games
+            # list only enabled plugins (all listed = active). Using the default
+            # star_prefix=True on a no-star game would mark EVERY plugin disabled,
+            # leaving active_files empty so FOMOD `state="Active"` deps never match
+            # → conditional patch options never auto-select.
+            star = bool(getattr(game, "plugins_use_star_prefix", True))
+            for entry in read_plugins(profile_dir / "plugins.txt", star_prefix=star):
                 installed_files.add(entry.name.lower())
                 if entry.enabled:
                     active_files.add(entry.name.lower())
@@ -1638,6 +1665,8 @@ def install_collection_archive(
         return name
 
     is_fomod_install = False
+    fomod_pending_deps = ""   # unselected-option fileDependency plugins (FOMOD)
+    fomod_active_deps = ""    # selected-option fileDependency plugins (FOMOD)
     file_list: "list[tuple[str, str, bool]] | None" = None
     stage_src_root = str(prepared.extract_dir)   # copier's src root
     cancelled = False
@@ -1724,6 +1753,17 @@ def install_collection_archive(
                             active_files, loose_files)
                     is_fomod_install = True
                     log_fn(f"FOMOD complete — {len(file_list or [])} file(s) to install.")
+                    try:
+                        from Utils.fomod_installer import (
+                            collect_unselected_dep_plugins,
+                            collect_selected_dep_plugins)
+                        _sel = final_selections or {}
+                        fomod_pending_deps = ";".join(
+                            collect_unselected_dep_plugins(config, _sel))
+                        fomod_active_deps = ";".join(
+                            collect_selected_dep_plugins(config, _sel))
+                    except Exception as exc:
+                        log_fn(f"FOMOD dep scan skipped ({exc}).")
                 except Exception as exc:
                     log_fn(f"FOMOD resolve failed ({exc}) — installing verbatim.")
                     file_list = None
@@ -1876,7 +1916,9 @@ def install_collection_archive(
 
     _write_install_meta(dest_root, archive, game, log_fn,
                         prebuilt_meta=prebuilt_meta, endorsed=_preserved_endorsed,
-                        is_fomod=is_fomod_install)
+                        is_fomod=is_fomod_install,
+                        fomod_pending_deps=fomod_pending_deps,
+                        fomod_active_deps=fomod_active_deps)
     with _commit_lock:
         if not skip_index_update:
             _pp(0, 0, "Indexing")
@@ -2306,11 +2348,31 @@ def _build_nexus_api():
         return None
 
 
+def _clear_meta_key(meta_path: Path, ini_key: str) -> None:
+    """Remove a single key from a meta.ini's [General] section, if present.
+    Used to clear FOMOD pending-deps on a rerun that leaves nothing pending
+    (write_meta deliberately never writes empty values for that key)."""
+    try:
+        import configparser
+        if not meta_path.is_file():
+            return
+        cp = configparser.ConfigParser()
+        cp.read(str(meta_path), encoding="utf-8")
+        if cp.has_option("General", ini_key):
+            cp.remove_option("General", ini_key)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                cp.write(f)
+    except Exception:
+        pass
+
+
 def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
                         prebuilt_meta=None, endorsed: bool = False,
                         ignored_reqs: str = "",
                         is_fomod: bool = False,
-                        is_bain: bool = False) -> None:
+                        is_bain: bool = False,
+                        fomod_pending_deps: str = "",
+                        fomod_active_deps: str = "") -> None:
     try:
         from Nexus.nexus_meta import (
             write_meta, resolve_nexus_meta_for_archive, NexusModMeta)
@@ -2354,9 +2416,23 @@ def _write_install_meta(dest_root: Path, archive: Path, game, log_fn: LogFn,
         # filters (and is_fomod / is_bain sets) pick them up (Tk parity).
         if is_fomod:
             meta.is_fomod = True
+            # Record fileDependency plugins from UNSELECTED FOMOD options so the
+            # modlist can flag a rerun if one appears in the load order later
+            # (pending), and from SELECTED options so it can flag when one is
+            # REMOVED (active). An empty value on a FOMOD (re)install means
+            # "nothing" — but write_meta skips empty values to protect the keys
+            # from unrelated callers, so empty results are cleared explicitly.
+            if fomod_pending_deps:
+                meta.fomod_pending_deps = fomod_pending_deps
+            if fomod_active_deps:
+                meta.fomod_active_deps = fomod_active_deps
         if is_bain:
             meta.is_bain = True
         write_meta(meta_path, meta)
+        if is_fomod and not fomod_pending_deps:
+            _clear_meta_key(meta_path, "fomodPendingDeps")
+        if is_fomod and not fomod_active_deps:
+            _clear_meta_key(meta_path, "fomodActiveDeps")
     except Exception as exc:
         log_fn(f"meta.ini write skipped ({exc}).")
 

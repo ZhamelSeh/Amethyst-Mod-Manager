@@ -3591,13 +3591,27 @@ class MainWindow(QMainWindow):
         if _game_name:
             from Utils.config_paths import get_fomod_selections_path
             _sel_path = get_fomod_selections_path(_game_name, payload["name"])
+        # Merge the live plugin-panel state (see the manual-install path below):
+        # plugins.txt can lag the model, so a FOMOD `state="Active"` dep wouldn't
+        # match until a save/sort. Union the panel's enabled/all sets.
+        _c_inst = set(payload.get("installed") or set())
+        _c_act = set(payload.get("active") or set())
+        try:
+            pm = getattr(self, "_plugin_model", None)
+            if pm is not None:
+                live_all = pm.all_lower()
+                live_active = pm.enabled_lower()
+                _c_inst |= live_all
+                _c_act = (_c_act | live_active) - (live_all - live_active)
+        except Exception:
+            pass
         view = FomodWizardView(payload["config"], payload["base"], payload["name"],
                                on_finish=lambda sel: _finish_ev(sel),
                                on_cancel=lambda: _finish_ev(None),
                                saved_selections=payload.get("saved"),
                                selections_path=_sel_path,
-                               installed_files=payload.get("installed"),
-                               active_files=payload.get("active"),
+                               installed_files=_c_inst,
+                               active_files=_c_act,
                                loose_files=payload.get("loose"))
         # Closing the tab (or a stop request) counts as cancel so we never hang.
         view.destroyed.connect(lambda *_: _finish_ev(None))
@@ -5979,12 +5993,17 @@ class MainWindow(QMainWindow):
         note→note editor, bundle→Bundle Options."""
         from gui_qt.modlist_data import (
             FLAG_UPDATE, FLAG_MISSING_REQS, FLAG_NOTE, FLAG_MODIO_UPDATE,
-            FLAG_BUNDLE)
+            FLAG_BUNDLE, FLAG_RERUN_FOMOD)
         e = self._modlist_model.entry(row)
         if e is None or e.is_separator:
             return
         if flag == FLAG_UPDATE:
             self._open_change_version_tab(e.name)
+        elif flag == FLAG_RERUN_FOMOD:
+            # Re-run the FOMOD installer for this mod (its archive is re-extracted
+            # and the wizard reopens). Reinstall rewrites fomodPendingDeps, so the
+            # flag self-corrects once the now-relevant option is selected.
+            self._reinstall_mods([e.name])
         elif flag == FLAG_MODIO_UPDATE:
             from gui_qt.modlist_menu import _open_on_modio
             _open_on_modio(self._modlist_view, e.name)
@@ -8216,6 +8235,28 @@ class MainWindow(QMainWindow):
                 _sel_path = get_fomod_selections_path(_game_name,
                                                       prepared.mod_name)
             _inst, _act, _loose = prepared.fomod_context
+            # prepared.fomod_context was read from plugins.txt/loadorder.txt on the
+            # worker thread. Those files can lag the LIVE plugin panel: a mod
+            # enabled in the model isn't persisted to plugins.txt until the next
+            # save (e.g. Sort Plugins), so a FOMOD `state="Active"` dep wouldn't
+            # match and its conditional option wouldn't auto-select until the user
+            # sorted. Merge the panel's live enabled/all sets so the wizard sees
+            # the true current state without needing a sort first.
+            try:
+                pm = getattr(self, "_plugin_model", None)
+                if pm is not None:
+                    live_all = pm.all_lower()
+                    live_active = pm.enabled_lower()
+                    _inst = set(_inst) | live_all
+                    # A plugin present in the panel but not enabled is genuinely
+                    # inactive — only add the live-enabled ones to active, and drop
+                    # any stale disk-active entry the panel now shows as disabled.
+                    _act = (set(_act) | live_active) - (live_all - live_active)
+            except Exception:
+                pass
+            self._append_log(
+                f"[fomod] {prepared.mod_name}: {len(_inst)} installed / "
+                f"{len(_act)} active plugin(s) for condition eval")
             view = FomodWizardView(prepared.fomod_config, prepared.fomod_base,
                                    prepared.mod_name, on_finish=_finish,
                                    on_cancel=_cancel,
@@ -9509,6 +9550,65 @@ class MainWindow(QMainWindow):
             pass
         return out
 
+    def _build_rerun_fomod_mods(self) -> set:
+        """Mods that should show the rerun-FOMOD flag. Two conditions, both read
+        from meta.ini for FOMOD mods only (read_meta is mtime-cached, so cheap)
+        and evaluated against the currently-enabled plugins:
+
+          • `fomodPendingDeps` (UNSELECTED options' deps): flag when an AND-clause
+            becomes FULLY present — a patch you skipped is now relevant.
+          • `fomodActiveDeps` (SELECTED options' deps): flag when an AND-clause is
+            NO LONGER fully present — a patch you installed is now orphaned (its
+            required mod was removed/disabled).
+
+        See FLAG_RERUN_FOMOD."""
+        if not hasattr(self, "_modlist_model") or not hasattr(self, "_plugin_model"):
+            return set()
+        staging = self._gs.staging_dir()
+        if staging is None:
+            return set()
+        try:
+            enabled = self._plugin_model.enabled_lower()
+        except Exception:
+            return set()
+        # Narrow to FOMOD-installed mods when we know them (avoids reading meta for
+        # every mod); fall back to all mods if the set isn't populated yet.
+        candidates = getattr(self, "_mod_fomod", None) or self._modlist_model.mod_names()
+        out: set[str] = set()
+        try:
+            from Nexus.nexus_meta import read_meta
+        except Exception:
+            return set()
+
+        def _clauses(raw: str):
+            for clause in (raw or "").split(";"):
+                members = [m.strip().lower() for m in clause.split("+") if m.strip()]
+                if members:
+                    yield members
+
+        for name in candidates:
+            try:
+                meta = read_meta(staging / name / "meta.ini")
+            except Exception:
+                continue
+            # Pending: an UNSELECTED option's deps are now all present → rerun to
+            # pick up the newly-relevant patch.
+            if any(all(m in enabled for m in members)
+                   for members in _clauses(getattr(meta, "fomod_pending_deps", ""))):
+                out.add(name)
+                continue
+            # Active: a SELECTED option's deps are no longer all present → rerun to
+            # drop the now-orphaned patch.
+            if any(not all(m in enabled for m in members)
+                   for members in _clauses(getattr(meta, "fomod_active_deps", ""))):
+                out.add(name)
+        return out
+
+    def _refresh_rerun_fomod_flags(self) -> None:
+        """Recompute + push the rerun-FOMOD overlay onto the modlist model."""
+        if hasattr(self, "_modlist_model"):
+            self._modlist_model.set_rerun_fomod_mods(self._build_rerun_fomod_mods())
+
     def _build_disabled_plugins_mods(self) -> set:
         """Mods that own at least one disabled plugin — union of plugins disabled
         in plugins.txt and plugins disabled via the Mod Files tab (Tk-parity
@@ -9850,6 +9950,10 @@ class MainWindow(QMainWindow):
             self._modlist_model.set_meta(versions, installed, categories,
                                          descriptions, authors)
             self._modlist_model.set_flags(flags)
+        # Now that _mod_fomod + meta are current, refresh the rerun-FOMOD overlay
+        # (picks up a just-installed/updated mod's pending deps without waiting for
+        # the next plugin reload).
+        self._refresh_rerun_fomod_flags()
         # Prune any installed requirements from an open Missing Requirements panel
         # (this is the path the panel's own Install button lands on).
         view = getattr(self, "_missing_reqs_view", None)
@@ -10153,6 +10257,9 @@ class MainWindow(QMainWindow):
         self._refresh_plugin_stats()
         self._refresh_framework_banner()
         self._apply_plugins_supported()
+        # Rerun-FOMOD flag: an option's fileDependency plugin may have just become
+        # enabled/disabled — recompute the overlay against the fresh load order.
+        self._refresh_rerun_fomod_flags()
         # Userlist state → PF_USERLIST/PF_UL_CYCLE bits were already applied by
         # load_plugins; push the membership sets (context-menu predicates), the
         # group map (flags tooltip), and the userlist action callbacks.

@@ -483,16 +483,26 @@ def _pattern_dep_groups(dep: "Dependency") -> list[list[str]]:
 
 def _collect_dep_plugin_clauses(config: ModuleConfig, all_selections: dict,
                                 want_selected: bool) -> list[str]:
-    """Shared walk for the two dep collectors. Returns AND-clauses (``+``-joined
-    plugin names) from the ``fileDependency`` patterns of options that were
-    SELECTED (``want_selected=True``) or NOT selected (``False``).
+    """Shared walk for the two dep collectors. Returns one string PER OPTION-CONDITION
+    from the ``fileDependency`` type patterns of options that were SELECTED
+    (``want_selected=True``) or NOT selected (``False``).
+
+    Each string is an OR-of-ANDs (the original pattern shape, preserved so OR
+    conditions evaluate correctly):
+      * ``+`` joins an AND-clause (all plugins must hold),
+      * ``|`` joins the OR alternatives of ONE option (any clause satisfies it),
+      * a ``!``-prefixed name means the plugin must be ABSENT (state="Missing").
+    e.g. ``UntarnishedUI_Subtitle.esp|UntarnishedUI_Blur.esp`` (OR),
+         ``Thaumaturgy.esp+!gaunt.esl`` (AND with a Missing gate).
+    The caller ``;``-joins these per-option strings.
 
     Mirrors :func:`resolve_files`: invisible steps (unsatisfied visibility
     conditions) are skipped, SelectAll groups count every plugin as selected.
-    Deduped case-insensitively, first-seen casing preserved.
+    Deduped case-insensitively.
     """
     all_selections = all_selections or {}
-    groups: list[list[str]] = []
+    option_conditions: list[str] = []
+    seen: set[str] = set()
     # Replay flag state so step-visibility gates match what the user actually saw.
     flag_state: dict[str, str] = {}
     for i, step in enumerate(config.steps):
@@ -509,32 +519,31 @@ def _collect_dep_plugin_clauses(config: ModuleConfig, all_selections: dict,
                                or plugin.name in selected_names)
                 if is_selected:
                     flag_state.update(plugin.condition_flags)
-                if is_selected == want_selected:
-                    for pattern_dep, _t in plugin.type_descriptor.patterns:
-                        groups.extend(_pattern_dep_groups(pattern_dep))
-
-    # Dedupe whole clauses case-insensitively (order within a clause preserved).
-    seen: set[str] = set()
-    result: list[str] = []
-    for g in groups:
-        if not g:
-            continue
-        key = "+".join(n.lower() for n in g)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append("+".join(g))
-    return result
+                if is_selected != want_selected:
+                    continue
+                # Collect the OR-of-AND clauses across ALL of this plugin's type
+                # patterns (each pattern's groups are alternatives).
+                clauses: list[list[str]] = []
+                for pattern_dep, _t in plugin.type_descriptor.patterns:
+                    clauses.extend(_pattern_dep_groups(pattern_dep))
+                clauses = [c for c in clauses if c]
+                if not clauses:
+                    continue
+                cond = "|".join("+".join(c) for c in clauses)
+                key = cond.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                option_conditions.append(cond)
+    return option_conditions
 
 
 def collect_unselected_dep_plugins(config: ModuleConfig,
                                    all_selections: dict) -> list[str]:
-    """AND-groups of plugin names from the ``fileDependency`` patterns of options
-    the user did NOT select. Each returned string is one AND-clause: ``+``-joined
-    plugin names that must ALL be present for the pattern (and thus a rerun hint)
-    to apply. A single-plugin clause is just the bare name (backward compatible
-    with the earlier flat format). The caller stores these ``;``-joined; the flag
-    fires when EVERY plugin in ANY one clause is present in the load order.
+    """One OR-of-ANDs condition string per UNSELECTED option (see
+    :func:`_collect_dep_plugin_clauses` for the ``+``/``|``/``!`` format). The
+    caller ``;``-joins these; the pending flag fires when ANY option's condition
+    becomes fully satisfiable — a patch you skipped is now relevant.
 
     These are patches the FOMOD would offer (or make required/recommended) *if*
     the named plugin(s) were present — so if they appear later the FOMOD is worth
@@ -546,11 +555,11 @@ def collect_unselected_dep_plugins(config: ModuleConfig,
 
 def collect_selected_dep_plugins(config: ModuleConfig,
                                  all_selections: dict) -> list[str]:
-    """AND-groups of plugin names from the ``fileDependency`` patterns of options
-    the user DID select — the plugins those installed patches depend on. Same
-    ``+``/``;`` clause format as :func:`collect_unselected_dep_plugins`. The flag
-    fires when ANY one of these clauses is NO LONGER fully present (its required
-    mod was removed) — the installed patch is now orphaned, so rerun to drop it.
+    """One OR-of-ANDs condition string per SELECTED option — the plugins those
+    installed patches depend on. Same ``+``/``|``/``!`` format as
+    :func:`collect_unselected_dep_plugins`. The active flag fires when ANY option's
+    condition is NO LONGER satisfied (none of its OR alternatives hold) — the
+    installed patch is now orphaned/invalid, so rerun to drop it.
     """
     return _collect_dep_plugin_clauses(config, all_selections,
                                        want_selected=True)

@@ -8635,7 +8635,11 @@ class MainWindow(QMainWindow):
 
         def _after_named(final):
             self._reload_modlist()
-            self._reload_plugins()
+            # Plugins reload comes from _on_conflicts_ready after the rebuild —
+            # an immediate reload prunes the fresh plugins.txt entry against the
+            # stale filemap (see _on_install_done).
+            if not getattr(self, "_reload_had_entries", False):
+                self._reload_plugins()
             self._notify(self.tr("Installed {0}").format(final), "success")
             # Change Version landed a different-named version → offer to remove
             # the previous version (Tk parity with _finish_one_install).
@@ -8647,7 +8651,9 @@ class MainWindow(QMainWindow):
             self._maybe_prompt_rename(name, _after_named)
         else:
             self._reload_modlist()
-            self._reload_plugins()
+            # See _after_named — only load directly when no rebuild is coming.
+            if not getattr(self, "_reload_had_entries", False):
+                self._reload_plugins()
             # Failed/cancelled staging (finish_install returned None): keep the
             # queue moving.
             _drain_next()
@@ -8893,7 +8899,16 @@ class MainWindow(QMainWindow):
         if self._progress_popup is not None:
             self._schedule_op_clear(1200)
         self._reload_modlist()
-        self._reload_plugins()
+        # NOTE: the plugin panel is reloaded from _on_conflicts_ready, after the
+        # conflict/filemap rebuild queued by _reload_modlist — NOT here. An
+        # immediate reload reads the STALE filemap (the just-installed mod's
+        # plugin isn't in it yet), so load_plugins' phantom prune deleted the
+        # plugins.txt entry _add_plugins had just appended; the plugin then
+        # appeared in the panel only via filemap recovery, never persisted
+        # (observed: SkyUI_SE.esp pruned within the same second as its install).
+        # Only load directly when the modlist is empty and no rebuild is coming.
+        if not getattr(self, "_reload_had_entries", False):
+            self._reload_plugins()
         # Re-flag Reinstall in the Downloads tab now that meta.ini changed.
         if hasattr(self, "_downloads_view"):
             self._downloads_view.mark_dirty()

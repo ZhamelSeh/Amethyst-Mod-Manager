@@ -687,6 +687,11 @@ class MainWindow(QMainWindow):
         from Utils.flatpak_i386 import i386_support_missing
         if not i386_support_missing():
             return
+        from Utils.ui_config import load_suppress_i386_warning
+        if load_suppress_i386_warning():
+            self._append_log("[flatpak] 32-bit support missing but the warning "
+                             "is suppressed — skipping self-heal.")
+            return
         self._append_log("[flatpak] 32-bit support missing (Compat.i386 "
                          "extension not installed) — installing from Flathub …")
         self._i386_toast = self._notify(
@@ -722,10 +727,28 @@ class MainWindow(QMainWindow):
         else:
             from Utils.flatpak_i386 import MANUAL_INSTALL_CMD
             self._append_log(f"[flatpak] install manually: {MANUAL_INSTALL_CMD}")
-            self._notify(
-                self.tr("Could not install 32-bit support automatically — "
-                        "see the log for the manual command."),
-                state="warning", sticky=True,
+            from gui_qt.confirm_overlay import ConfirmOverlay
+
+            def _done(dont_show_again: bool):
+                if dont_show_again:
+                    from Utils.ui_config import save_suppress_i386_warning
+                    save_suppress_i386_warning(True)
+                    self._append_log("[flatpak] 32-bit support warning suppressed "
+                                     "at the user's request.")
+
+            ConfirmOverlay.show_over(
+                self,
+                self.tr("32-bit support could not be installed"),
+                self.tr(
+                    "Amethyst could not install 32-bit support automatically. "
+                    "Windows tools (and some games) may fail to run until it is "
+                    "installed. Run this on a terminal, then restart the app:\n\n"
+                    "{0}"
+                ).format(MANUAL_INSTALL_CMD),
+                _done,
+                confirm_label=self.tr("Don't show again"),
+                cancel_label=self.tr("OK"),
+                danger=False,
             )
 
     def _populate_selectors(self):

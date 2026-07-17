@@ -1173,6 +1173,44 @@ def load_force_manual_install() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Flatpak 32-bit self-heal warning suppression
+# ---------------------------------------------------------------------------
+_FLATPAK_SECTION = "flatpak"
+
+
+def load_suppress_i386_warning() -> bool:
+    """Return True if the user has dismissed the missing-32-bit-support warning.
+
+    Set when the user chose "Don't show again" on the failed-auto-install
+    notice — they've opted to handle it themselves (or don't run Windows tools),
+    so the startup self-heal stays silent.
+    """
+    path = get_ui_config_path()
+    if not path.is_file():
+        return False
+    try:
+        parser = _new_parser()
+        parser.read(path)
+        return parser.getboolean(_FLATPAK_SECTION, "suppress_i386_warning", fallback=False)
+    except Exception:
+        return False
+
+
+def save_suppress_i386_warning(value: bool) -> None:
+    """Persist the suppress_i386_warning setting to amethyst.ini."""
+    path = get_ui_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parser = _new_parser()
+    if path.is_file():
+        parser.read(path)
+    if _FLATPAK_SECTION not in parser:
+        parser[_FLATPAK_SECTION] = {}
+    parser[_FLATPAK_SECTION]["suppress_i386_warning"] = "true" if value else "false"
+    with path.open("w", encoding="utf-8") as f:
+        parser.write(f)
+
+
+# ---------------------------------------------------------------------------
 # Folder case normalisation setting
 # ---------------------------------------------------------------------------
 _FILEMAP_SECTION = "filemap"

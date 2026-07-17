@@ -354,26 +354,67 @@ def _host_flatpak(*args: str, timeout: int = 60):
         return None
 
 
-def flatpak_installed_from_remote() -> bool:
-    """True if our flatpak install tracks the `amethyst` remote (not a bundle).
+def _remote_name_for_our_url() -> str | None:
+    """Name of the configured remote pointing at our hosted repo, or None.
 
-    `flatpak info --show-origin <app>` prints the origin remote name for a
-    remote-tracked install, or reports no origin / errors for a bundle install.
+    Matched by URL, NOT by name: a bundle installed with --repo-url gets an
+    auto-created origin named "<app>-origin" (e.g. modmanager-origin), while a
+    manual/one-liner install uses "amethyst". Both point at the same Pages repo,
+    so URL is the reliable identity. Trailing slashes are normalised.
+
+    Queries BOTH scopes and includes --show-disabled: bundle-created origins
+    are flagged `no-enumerate` (and can be disabled by a duplicate-URL clash),
+    so a plain `flatpak remotes` hides them. Scope also matters — a user bundle
+    install lands in the --user list, which the default (system) query omits.
+    """
+    want = _FLATPAK_REMOTE_REPO_URL.rstrip("/")
+    for scope in ("--user", "--system"):
+        cp = _host_flatpak("remotes", scope, "--show-disabled",
+                           "--columns=name,url")
+        if cp is None or cp.returncode != 0:
+            continue
+        for line in cp.stdout.splitlines():
+            parts = line.split("\t") if "\t" in line else line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            name, url = parts[0].strip(), parts[1].strip().rstrip("/")
+            if url == want:
+                return name
+    return None
+
+
+def flatpak_installed_from_remote() -> bool:
+    """True if our install's origin is a remote pointing at our hosted repo.
+
+    Matched by the origin remote's URL (not its name), so it recognises both
+    the "amethyst" remote (manual/one-liner install) AND the auto-created
+    "<app>-origin" a --repo-url bundle install creates. Bundle installs WITHOUT
+    --repo-url (or any non-remote install) have no matching origin → False.
     Conservatively returns False when the host can't be queried.
     """
     cp = _host_flatpak("info", "--show-origin", _APP_ID)
     if cp is None or cp.returncode != 0:
         return False
-    return cp.stdout.strip() == _FLATPAK_REMOTE_NAME
+    origin = cp.stdout.strip()
+    if not origin:
+        return False
+    our_remote = _remote_name_for_our_url()
+    return our_remote is not None and origin == our_remote
 
 
 def flatpak_remote_present() -> bool:
-    """True if the `amethyst` remote is already configured on the host."""
-    cp = _host_flatpak("remotes", "--columns=name")
-    if cp is None or cp.returncode != 0:
-        return False
-    return any(line.strip() == _FLATPAK_REMOTE_NAME
-               for line in cp.stdout.splitlines())
+    """True if a remote pointing at our hosted repo is configured (any name)."""
+    return _remote_name_for_our_url() is not None
+
+
+def _effective_remote_name() -> str:
+    """The remote name to target for install/update queries.
+
+    Prefers the actually-configured remote for our URL (which may be the
+    auto-created "<app>-origin" on a --repo-url bundle install), falling back
+    to the canonical "amethyst" when none is configured yet.
+    """
+    return _remote_name_for_our_url() or _FLATPAK_REMOTE_NAME
 
 
 def flatpak_remote_branch_available(branch: str) -> bool:
@@ -384,7 +425,7 @@ def flatpak_remote_branch_available(branch: str) -> bool:
     branch would fail silently in the detached child. Callers use this to
     surface "channel not published yet" instead.
     """
-    cp = _host_flatpak("remote-info", "--user", _FLATPAK_REMOTE_NAME,
+    cp = _host_flatpak("remote-info", "--user", _effective_remote_name(),
                        f"{_APP_ID}//{branch}")
     return cp is not None and cp.returncode == 0
 
@@ -417,7 +458,7 @@ def flatpak_remote_update_ready(branch: str) -> bool | None:
     """
     if not flatpak_remote_branch_available(branch):
         return False  # nothing installable on that channel
-    cp = _host_flatpak("remote-info", "--user", _FLATPAK_REMOTE_NAME,
+    cp = _host_flatpak("remote-info", "--user", _effective_remote_name(),
                        f"{_APP_ID}//{branch}")
     if cp is None or cp.returncode != 0:
         return None
@@ -452,13 +493,16 @@ def _launch_remote_reinstall(branch: str) -> str:
 
     host = "flatpak-spawn --host"
     ref = f"{_APP_ID}/x86_64/{branch}"
-    # Reinstall pins the branch (handles both same-branch update and channel
-    # switch — `flatpak update` won't cross branches); --reinstall forces a
-    # re-pull even if the ref looks present.
+    # Target the actual configured remote for our URL — a --repo-url bundle
+    # install named it "<app>-origin", not "amethyst". After enroll's own
+    # remote-add this resolves to "amethyst"; for an update it's whatever the
+    # user has. Reinstall pins the branch (handles same-branch update AND
+    # channel switch — `flatpak update` won't cross branches).
+    remote = _effective_remote_name()
     cmd = (
         f"sleep 2 && "
         f"{host} flatpak install --user --reinstall --noninteractive -y "
-        f"{_FLATPAK_REMOTE_NAME} {ref} && "
+        f"{remote} {ref} && "
         f"{host} flatpak run {_APP_ID} &>/dev/null &"
     )
     try:

@@ -2312,10 +2312,20 @@ class MainWindow(QMainWindow):
             self._update_overlay = None
 
         def _on_update():
-            from Utils.version_check import run_installer
-            run_installer(allow_prerelease=is_prerelease)
+            if mode == "flatpak":
+                from Utils.version_check import run_flatpak_installer
+                if not run_flatpak_installer(latest):
+                    # Host flatpak unreachable — fall back to the releases page
+                    # rather than silently closing with nothing happening.
+                    from Utils.xdg import open_url
+                    from Utils.version_check import _APP_UPDATE_RELEASES_URL
+                    open_url(_APP_UPDATE_RELEASES_URL)
+                    return
+            else:
+                from Utils.version_check import run_installer
+                run_installer(allow_prerelease=is_prerelease)
             # closeEvent handles the rest of the shutdown (NxmIPC etc.); the
-            # installer waits 2s before replacing the running AppImage.
+            # installer waits 2s before replacing the running app.
             self.close()
 
         def _cleared(overlay):

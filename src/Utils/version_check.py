@@ -13,6 +13,11 @@ _APP_UPDATE_RELEASES_API_URL = "https://api.github.com/repos/ChrisDKN/Amethyst-M
 _APP_UPDATE_RELEASES_LIST_API_URL = "https://api.github.com/repos/ChrisDKN/Amethyst-Mod-Manager/releases?per_page=20"
 _APP_UPDATE_RELEASES_URL = "https://github.com/ChrisDKN/Amethyst-Mod-Manager/releases"
 _APP_UPDATE_INSTALLER_URL = "https://raw.githubusercontent.com/ChrisDKN/Amethyst-Mod-Manager/main/src/appimage/Amethyst-MM-installer.sh"
+_APP_UPDATE_FLATPAK_BUNDLE_URL = (
+    "https://github.com/ChrisDKN/Amethyst-Mod-Manager/releases/download/"
+    "v{tag}/AmethystModManager.flatpak"
+)
+_APP_ID = "io.github.Amethyst.ModManager"
 _AUR_API_URL = "https://aur.archlinux.org/rpc/v5/info/amethyst-mod-manager"
 _AUR_PACKAGE_URL = "https://aur.archlinux.org/packages/amethyst-mod-manager"
 
@@ -241,3 +246,71 @@ def run_installer(allow_prerelease: bool = False):
         )
     except Exception:
         pass
+
+
+def run_flatpak_installer(latest_tag: str) -> bool:
+    """Download the latest .flatpak bundle and reinstall it on the host.
+
+    The AppImage path replaces the running binary in-place; a Flatpak can't do
+    that from inside its own sandbox, so we forward the install to the host's
+    ``flatpak`` CLI via ``flatpak-spawn --host`` (our manifest grants
+    ``--talk-name=org.freedesktop.Flatpak``, which is what makes this reachable).
+
+    Flow, run detached so it survives our own shutdown:
+      1. curl the release's ``AmethystModManager.flatpak`` bundle to a temp file.
+      2. ``flatpak install --user --bundle --reinstall -y`` it on the host.
+      3. relaunch ``flatpak run <app-id>`` and clean up the temp bundle.
+
+    Output is logged to $XDG_CONFIG_HOME/amethyst-update.log (same as AppImage;
+    under flatpak XDG_CONFIG_HOME is redirected into ~/.var/app/<id>/config).
+    A ``sleep 2`` lets us exit first. Returns True if the child launched.
+
+    NB: the bundle is stamped without a tag, so the download URL carries the
+    version. ``latest_tag`` is the release tag (with or without a leading 'v').
+    """
+    import shutil
+
+    if not shutil.which("flatpak-spawn"):
+        return False
+
+    config_dir = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+        "AmethystModManager",
+    )
+    os.makedirs(config_dir, exist_ok=True)
+    log_path = os.path.join(config_dir, "amethyst-update.log")
+
+    tag = latest_tag.lstrip("v")
+    bundle_url = _APP_UPDATE_FLATPAK_BUNDLE_URL.format(tag=tag)
+
+    # The temp bundle must live somewhere the HOST flatpak can read. ~/Downloads
+    # is inside our --filesystem=home grant AND visible to the host, so it works
+    # from both sides; /tmp is sandbox-private and unreadable to the host.
+    dl_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+    try:
+        os.makedirs(dl_dir, exist_ok=True)
+    except Exception:
+        dl_dir = os.path.expanduser("~")
+    bundle_path = os.path.join(dl_dir, "AmethystModManager.update.flatpak")
+
+    # curl runs in-sandbox (network is granted); install/run go to the host.
+    host = "flatpak-spawn --host"
+    cmd = (
+        f"sleep 2 && "
+        f"curl -fsSL {bundle_url} -o {bundle_path!r} && "
+        f"{host} flatpak install --user --bundle --reinstall --noninteractive -y "
+        f"{bundle_path!r} && "
+        f"rm -f {bundle_path!r} && "
+        f"{host} flatpak run {_APP_ID} &>/dev/null &"
+    )
+
+    try:
+        subprocess.Popen(
+            ["bash", "-c", cmd],
+            stdout=open(log_path, "w", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        return True
+    except Exception:
+        return False

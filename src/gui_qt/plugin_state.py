@@ -346,24 +346,6 @@ def load_plugins(game, profile: str,
     if orphans:
         _diag(f"load_plugins: {len(orphans)} manual orphan plugin(s) found in "
               f"{data_dir}: {[o.name for o in orphans][:10]}")
-    # Always-on catch: the filemap deploys plugins but NONE are listed or
-    # recoverable → the panel will render empty despite enabled mods. This is
-    # the "copied mod's plugins don't show up" signature. filemap present but
-    # deploys nothing is logged too (an enabled mod contributed no plugins).
-    if not entries and not vanilla:
-        fm_exists = False
-        try:
-            staging = (game.get_effective_mod_staging_path()
-                       if hasattr(game, "get_effective_mod_staging_path") else None)
-            fm_exists = (staging is not None
-                         and (staging.parent / "filemap.txt").is_file())
-        except Exception:
-            pass
-        app_log(f"WARN plugins: 0 plugins for profile {profile!r} — "
-                f"plugins.txt empty, filemap deploys {len(deployed)} plugin(s), "
-                f"filemap.txt exists={fm_exists}. If mods are enabled this points "
-                f"to a stale/mislocated filemap or wrong staging path.")
-
     mod_map = {e.name.lower(): e for e in entries}
 
     ordered: list[PluginEntry] = []

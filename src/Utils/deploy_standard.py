@@ -27,6 +27,7 @@ from Utils.deploy_shared import (
     _do_link_ex,
     _get_staging_source_path,
     _append_overwrite_log,
+    _log_case_collisions,
     _map_batched,
     _mkdir_leaves,
     _move_crash_safe,
@@ -885,6 +886,8 @@ def deploy_filemap(
                 f"{_free // (1024 * 1024)} MB is free. Free up space, then "
                 f"deploy again (or run Restore).",
             )
+
+    _log_case_collisions(_dir_listing_cache, _log)
 
     # Pre-create all destination directories up front (single-threaded) to
     # avoid mkdir races inside the thread pool.

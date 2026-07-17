@@ -19,6 +19,7 @@ from Utils.deploy_shared import (
     _OVERWRITE_NAME,
     _deploy_workers,
     _do_link,
+    _log_case_collisions,
     _mkdir_leaves,
     _move_crash_safe,
     _move_runtime_files,
@@ -208,6 +209,8 @@ def deploy_filemap_to_root(
 
         if progress_fn is not None and line_idx % 500 == 0:
             progress_fn(line_idx, total_lines)
+
+    _log_case_collisions(_dir_listing_cache, _log)
 
     total = len(tasks)
     if total == 0:

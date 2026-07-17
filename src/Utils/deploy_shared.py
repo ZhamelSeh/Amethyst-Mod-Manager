@@ -1371,8 +1371,89 @@ def _prebuild_mod_indexes(
             mod_index_cache[mr] = built_idx
 
 
+def _pick_case_variant(variants: "list[str]", requested: str, parent_str: str,
+                       next_lower: "str | None", listing_fn) -> str:
+    """Choose among same-named-but-differently-cased sibling directories.
+
+    Only reached when the destination tree already holds case-variant
+    duplicates (e.g. a stray ``archive/PC`` next to the game's vanilla
+    ``archive/pc``).  Preference order:
+
+    1. Exact match with the *requested* (filemap) casing.  Games that pin
+       their engine skeleton via ``filemap_casing_pins`` (e.g. Cyberpunk's
+       lowercase ``archive/pc/mod``) get a deterministic vanilla pick here
+       regardless of what else is on disk.
+    2. The variant that already contains the next path segment — merge into
+       the chain that exists.
+    3. The most-lowercase name (vanilla game trees on Linux ship lowercase),
+       then lexicographic.
+
+    scandir order must never decide: it differs between filesystems, and once
+    a wrong-case dir existed it could capture every future deploy.
+    """
+    if requested in variants:
+        return requested
+    if next_lower is not None:
+        with_next = [v for v in variants
+                     if next_lower in listing_fn(parent_str + "/" + v)]
+        if with_next:
+            variants = with_next
+    return min(variants, key=lambda v: (sum(c.isupper() for c in v), v))
+
+
+def _dir_case_listing(dir_str: str,
+                      cache: "dict[str, dict[str, str | list[str]]]",
+                      ) -> "dict[str, str | list[str]]":
+    """Map lower_name → actual dir name(s) for *dir_str*, cached.
+
+    Values are a plain str normally; a list when case-variant duplicate dirs
+    exist (resolved via _pick_case_variant at lookup time).  Symlinked dirs
+    are included — a game folder reached through a symlink must still
+    case-match, else deploy creates a parallel wrong-case tree beside it.
+    """
+    listing = cache.get(dir_str)
+    if listing is None:
+        listing = {}
+        if os.path.isdir(dir_str):
+            try:
+                with os.scandir(dir_str) as it:
+                    for e in it:
+                        if e.is_dir():
+                            nl = e.name.lower()
+                            prev = listing.get(nl)
+                            if prev is None:
+                                listing[nl] = e.name
+                            elif type(prev) is str:
+                                if prev != e.name:
+                                    listing[nl] = [prev, e.name]
+                            elif e.name not in prev:
+                                prev.append(e.name)
+            except OSError:
+                pass
+        cache[dir_str] = listing
+    return listing
+
+
+def _log_case_collisions(dir_listing_cache: dict, log_fn) -> None:
+    """Warn about case-variant duplicate directories seen during destination
+    resolution (e.g. a stray ``archive/PC`` beside the game's ``archive/pc``,
+    typically left by a manual mod install).  Deploy picks one chain
+    deterministically, but files someone placed in the losing variant are
+    invisible to the game — worth surfacing so users can merge/remove them.
+    """
+    for parent, listing in dir_listing_cache.items():
+        for variants in listing.values():
+            if type(variants) is not str:
+                log_fn(
+                    f"  WARN: duplicate folders differing only by case in "
+                    f"{parent}: " + ", ".join(sorted(variants)) +
+                    " — deploying into one of them; files in the other are "
+                    "ignored by the game and may need manual clean-up."
+                )
+
+
 def _resolve_root_path(base: Path, rel: Path,
-                       dir_cache: "dict[Path, dict[str, str]] | None" = None,
+                       dir_cache: "dict | None" = None,
                        core_base: "Path | None" = None) -> Path:
     """Resolve *rel* under *base*, matching existing directory names
     case-insensitively so that mod folders (e.g. ``R6/``) merge into whatever
@@ -1380,72 +1461,21 @@ def _resolve_root_path(base: Path, rel: Path,
     yet exist use the casing from the filemap.
 
     Only directory segments are normalised; the final filename is kept as-is.
-    dir_cache maps parent Path → {lower_name: actual_name} to avoid repeated
-    iterdir() calls across many files with the same directory structure.
+    dir_cache maps parent path str → {lower_name: actual_name(s)} to avoid
+    repeated scandir calls across many files with the same directory
+    structure (shared shape with _resolve_root_path_str).
 
     core_base — optional sibling backup dir (e.g. Data_Core/) consulted when
     a segment isn't found in *base*.  This preserves vanilla folder casing
     (e.g. ``Scripts/``) even when *base* is empty at deploy time.
     """
-    current = base
-    core_current = core_base
-    parts = rel.parts
-    for part in parts[:-1]:   # directory segments only
-        part_lower = part.lower()
-        # Check if a directory with this name (any case) already exists.
-        matched: str | None = None
-        if dir_cache is not None:
-            if current not in dir_cache:
-                try:
-                    if current.is_dir():
-                        dir_cache[current] = {
-                            e.name.lower(): e.name
-                            for e in current.iterdir()
-                            if e.is_dir()
-                        }
-                    else:
-                        dir_cache[current] = {}
-                except OSError:
-                    dir_cache[current] = {}
-            matched = dir_cache[current].get(part_lower)
-        else:
-            if current.is_dir():
-                try:
-                    for entry in current.iterdir():
-                        if entry.is_dir() and entry.name.lower() == part_lower:
-                            matched = entry.name
-                            break
-                except OSError:
-                    pass
-        # Fall back to core_base to preserve vanilla folder casing
-        # (e.g. Data_Core/Scripts → use "Scripts" not "scripts").
-        if matched is None and core_current is not None:
-            if dir_cache is not None:
-                if core_current not in dir_cache:
-                    try:
-                        if core_current.is_dir():
-                            dir_cache[core_current] = {
-                                e.name.lower(): e.name
-                                for e in core_current.iterdir()
-                                if e.is_dir()
-                            }
-                        else:
-                            dir_cache[core_current] = {}
-                    except OSError:
-                        dir_cache[core_current] = {}
-                matched = dir_cache[core_current].get(part_lower)
-            else:
-                try:
-                    for entry in core_current.iterdir():
-                        if entry.is_dir() and entry.name.lower() == part_lower:
-                            matched = entry.name
-                            break
-                except OSError:
-                    pass
-        chosen = matched if matched is not None else part
-        current = current / chosen
-        core_current = (core_current / chosen) if core_current is not None else None
-    return current / parts[-1]
+    if dir_cache is None:
+        dir_cache = {}
+    resolved = _resolve_root_path_str(
+        str(base), "/".join(rel.parts), dir_cache,
+        core_base_str=str(core_base) if core_base is not None else None,
+    )
+    return Path(resolved)
 
 
 def _resolve_root_path_str(base_str: str, rel_str: str,
@@ -1458,7 +1488,8 @@ def _resolve_root_path_str(base_str: str, rel_str: str,
     and caches the fully-resolved directory path so files sharing the same
     parent directory skip all resolution after the first.
 
-    dir_listing_cache — maps dir_path_str → {lower_name: actual_name}
+    dir_listing_cache — maps dir_path_str → {lower_name: actual_name(s)}
+    (see _dir_case_listing; a list value marks case-variant duplicate dirs)
     resolved_dir_cache — maps (base_str + "\\0" + dir_parts_lower) → resolved_dir_str.
     The base is part of the key so one cache can safely serve resolutions
     under several roots (deploy dir, per-separator custom dirs, game root).
@@ -1485,41 +1516,23 @@ def _resolve_root_path_str(base_str: str, rel_str: str,
     parts = dir_part.split("/")
     current = base_str
     core_current = core_base_str
-    _isdir = os.path.isdir
-    _scandir = os.scandir
 
-    for part in parts:
+    for i, part in enumerate(parts):
         part_lower = part.lower()
-        matched: str | None = None
 
-        listing = dir_listing_cache.get(current)
-        if listing is None:
-            listing = {}
-            if _isdir(current):
-                try:
-                    with _scandir(current) as it:
-                        for e in it:
-                            if e.is_dir(follow_symlinks=False):
-                                listing[e.name.lower()] = e.name
-                except OSError:
-                    pass
-            dir_listing_cache[current] = listing
-        matched = listing.get(part_lower)
-
+        matched_parent = current
+        matched = _dir_case_listing(current, dir_listing_cache).get(part_lower)
         if matched is None and core_current is not None:
-            core_listing = dir_listing_cache.get(core_current)
-            if core_listing is None:
-                core_listing = {}
-                if _isdir(core_current):
-                    try:
-                        with _scandir(core_current) as it:
-                            for e in it:
-                                if e.is_dir(follow_symlinks=False):
-                                    core_listing[e.name.lower()] = e.name
-                    except OSError:
-                        pass
-                dir_listing_cache[core_current] = core_listing
-            matched = core_listing.get(part_lower)
+            matched = _dir_case_listing(
+                core_current, dir_listing_cache).get(part_lower)
+            matched_parent = core_current
+        if matched is not None and type(matched) is not str:
+            # Case-variant duplicate dirs on disk — deterministic pick,
+            # preferring the chain the next segment already lives in.
+            nxt = parts[i + 1].lower() if i + 1 < len(parts) else None
+            matched = _pick_case_variant(
+                matched, part, matched_parent, nxt,
+                lambda d: _dir_case_listing(d, dir_listing_cache))
 
         chosen = matched if matched is not None else part
         current = current + "/" + chosen
@@ -1971,6 +1984,7 @@ __all__ = [
     "_prebuild_mod_indexes",
     "_resolve_root_path",
     "_resolve_root_path_str",
+    "_log_case_collisions",
     "_FILEMAP_SNAPSHOT_NAME",
     "_write_deploy_snapshot",
     "_load_deploy_snapshot",

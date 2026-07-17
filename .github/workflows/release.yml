@@ -283,20 +283,28 @@ jobs:
           echo "OSTree repo OK — ref $REF present and fsck clean."
 
       - name: Push Pages branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           GIT_BRANCH='${{ steps.mode.outputs.git_branch }}'
           cd site
+          # `site/` may already be a git repo (actions/checkout initialised it,
+          # even when it fell back on a non-existent branch) or may be a bare
+          # skeleton (first-ever run). `git init` is idempotent; use set-url
+          # (add-if-missing) for origin so we never hit "remote already exists".
           git init -q
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url origin "$REMOTE_URL" 2>/dev/null \
+            || git remote add origin "$REMOTE_URL"
           git add -A
           git commit -q -m "Publish ${{ github.ref_name }} (${{ steps.mode.outputs.ostree }})"
-          git branch -M "$GIT_BRANCH"
-          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
           # Force-push a single-commit history: the repo can get large, and we
           # don't need Pages-branch history (the OSTree repo carries its own).
-          git push -f origin "$GIT_BRANCH"
+          # HEAD:branch avoids `git branch -M` renaming a checked-out ref.
+          git push -f origin "HEAD:refs/heads/${GIT_BRANCH}"
 
       - name: Summary
         run: |

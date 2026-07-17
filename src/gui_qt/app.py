@@ -2284,6 +2284,21 @@ class MainWindow(QMainWindow):
                 latest, is_pre = result
                 newer = _is_newer_version(__version__, latest)
                 if newer or (force_downgrade_prompt and latest != __version__):
+                    # GitHub Releases decides the *version strings*, but for a
+                    # remote-tracked flatpak the *install* comes from our OSTree
+                    # remote — which can lag Pages publishing or lack the beta
+                    # branch entirely. Only show the banner when the remote can
+                    # actually deliver; None (host unreachable) falls back to
+                    # the GitHub-only decision.
+                    if mode == "flatpak":
+                        from Utils.version_check import (
+                            flatpak_installed_from_remote,
+                            flatpak_remote_update_ready,
+                        )
+                        if flatpak_installed_from_remote():
+                            branch = "beta" if allow_pre else "stable"
+                            if flatpak_remote_update_ready(branch) is False:
+                                return
                     safe_emit(self._app_update_found,
                               (__version__, latest, mode, is_pre, not newer))
             else:
@@ -2322,10 +2337,22 @@ class MainWindow(QMainWindow):
                 # Preferred path: installed from our hosted remote → native
                 # delta update. Fallback: bundle-installed → download the .flatpak.
                 if flatpak_installed_from_remote():
-                    ok = update_flatpak_from_remote(allow_prerelease=allow_pre)
+                    status = update_flatpak_from_remote(
+                        allow_prerelease=allow_pre)
                 else:
-                    ok = run_flatpak_installer(latest)
-                if not ok:
+                    status = ("launched" if run_flatpak_installer(latest)
+                              else "unavailable")
+                if status == "no-branch":
+                    # The requested channel isn't on the remote yet (e.g. beta
+                    # before the first beta release is published). The detached
+                    # install would fail silently — tell the user instead.
+                    channel = self.tr("beta") if allow_pre else self.tr("stable")
+                    self._notify(self.tr(
+                        "The {0} channel isn't published on the update remote "
+                        "yet — try again after the next {0} release.").format(
+                            channel), state="warning")
+                    return
+                if status != "launched":
                     # Host flatpak unreachable — fall back to the releases page
                     # rather than silently closing with nothing happening.
                     from Utils.xdg import open_url

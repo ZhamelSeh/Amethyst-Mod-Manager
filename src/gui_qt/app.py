@@ -7942,6 +7942,9 @@ class MainWindow(QMainWindow):
             run_deploy=self._wizard_run_deploy,
             refresh_modlist=self._on_refresh_modlist,
             refresh_plugins=self._wizard_refresh_plugins,
+            import_manifest=lambda manifest, stem, bundle_zip:
+                self._open_manifest_import(manifest, stem, bundle_zip=bundle_zip),
+            current_profile=lambda: self._gs.profile or "default",
         )
         try:
             view = spec.view_factory(

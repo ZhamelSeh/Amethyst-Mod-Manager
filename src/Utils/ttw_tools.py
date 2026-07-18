@@ -57,6 +57,63 @@ def find_ttw_installer(game: "BaseGame") -> Path | None:
     return p if p.is_file() else None
 
 
+def download_installer(game: "BaseGame",
+                       status_fn: Callable[[str], None] = _noop,
+                       log_fn: Callable[[str], None] = _noop) -> Path:
+    """Download the latest MPI-installer release from GitHub into
+    Applications/TTW and return the executable path. Raises on failure.
+    Shared by the TTW and BSA-Decompressor wizards (same binary)."""
+    import json
+    import os
+    import shutil
+    import tempfile
+    import urllib.request
+    from Utils.ca_bundle import download_file, get_ssl_context
+    from Utils.wizard_archives import extract_archive
+
+    req = urllib.request.Request(
+        GITHUB_API_URL,
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": "ModManager/1.0"})
+    with urllib.request.urlopen(req, timeout=15,
+                                context=get_ssl_context()) as resp:
+        data = json.loads(resp.read().decode())
+    tag = data.get("tag_name", "unknown")
+    url = None
+    for asset in data.get("assets", []):
+        name = asset.get("name", "").lower()
+        if "linux" in name and name.endswith((".zip", ".tar.gz")):
+            url = asset["browser_download_url"]
+            break
+    if not url:
+        raise RuntimeError(
+            f"No Linux installer asset found in the latest TTW release ({tag}).")
+
+    log_fn(f"downloading TTW installer {tag} from {url}")
+    status_fn(f"Downloading TTW installer {tag}…")
+    tmp_dir = Path(tempfile.mkdtemp())
+    archive = tmp_dir / Path(url).name
+    try:
+        download_file(url, archive)
+        dest = applications_dir(game)
+        dest.mkdir(parents=True, exist_ok=True)
+        status_fn("Extracting installer…")
+        log_fn(f"extracting {archive.name} → {dest}")
+        paths = extract_archive(archive, dest)
+        log_fn(f"extracted {len([p for p in paths if p.is_file()])} file(s).")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    exe = dest / EXE_NAME
+    if not exe.is_file():
+        raise RuntimeError(f"{EXE_NAME} not found after extraction at {dest}.")
+    try:
+        os.chmod(exe, 0o755)
+    except OSError:
+        pass
+    return exe
+
+
 def find_fo3_install() -> Path | None:
     """Locate the Fallout 3 install folder via Steam libraries, or None."""
     try:

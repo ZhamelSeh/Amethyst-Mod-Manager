@@ -191,6 +191,9 @@ REGISTRY: dict[str, QtWizardSpec] = {
         QtWizardSpec(_param("wizards_qt.texture_tool_view", "TextureToolView", tool="parallaxr")),
     "wizards.ttw.TTWInstallerWizard":
         QtWizardSpec(_simple("wizards_qt.ttw_view", "TTWView")),
+    "wizards.bsa_decompressor.BSADecompressorWizard":
+        QtWizardSpec(_simple("wizards_qt.bsa_decompressor_view",
+                             "BSADecompressorView")),
     "wizards.dtkit_patch.DtkitPatchWizard":
         QtWizardSpec(_simple("wizards_qt.dtkit_patch_view", "DtkitPatchView")),
     "Games.Morrowind.mgexe_wizard.MGEXEWizard":

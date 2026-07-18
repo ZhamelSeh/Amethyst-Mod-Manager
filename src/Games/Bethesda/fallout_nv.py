@@ -52,6 +52,13 @@ class Fallout_NV(Fallout_3):
                 category="Setup and Installers",
             ),
             WizardTool(
+                id="fnv_bsa_decompressor",
+                label="BSA Decompressor",
+                description="Decompress the vanilla BSA archives for faster loading (native Linux MPI installer) and add the result as a mod. Needs the FNV BSA Decompressor download from Nexus.",
+                dialog_class_path="wizards.bsa_decompressor.BSADecompressorWizard",
+                category="Setup and Installers",
+            ),
+            WizardTool(
                 id="run_bethini_fonv",
                 label="Run BethINI Pie",
                 description="Install BethINI Pie and configure Fallout New Vegas INI settings.",

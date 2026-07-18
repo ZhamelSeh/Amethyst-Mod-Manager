@@ -9978,25 +9978,32 @@ class MainWindow(QMainWindow):
         except Exception:
             return set()
 
+        # Clause delimiters — imported so the encode (fomod_installer) and decode
+        # (here) can never drift. They're all filename-illegal chars, so plugin
+        # names containing "+", "!", "&" etc. don't collide.
+        from Utils.fomod_installer import (
+            FLAG_OPT_SEP, FLAG_OR_SEP, FLAG_AND_SEP, FLAG_ABSENT)
+
         def _member_holds(m: str) -> bool:
-            # "!name" = the plugin must be ABSENT (a state="Missing" gate);
+            # ">name" = the plugin must be ABSENT (a state="Missing" gate);
             # "name" = the plugin must be present + enabled.
-            if m.startswith("!"):
-                return m[1:] not in enabled
+            if m.startswith(FLAG_ABSENT):
+                return m[len(FLAG_ABSENT):] not in enabled
             return m in enabled
 
         def _and_clause(clause: str):
-            # A "+"-joined AND-clause → its lowercase members.
-            return [m.strip().lower() for m in clause.split("+") if m.strip()]
+            # An AND-clause → its lowercase members.
+            return [m.strip().lower() for m in clause.split(FLAG_AND_SEP)
+                    if m.strip()]
 
         def _clause_holds(members) -> bool:
             return bool(members) and all(_member_holds(m) for m in members)
 
         def _option_conditions(raw: str):
-            # Each ";"-group is ONE option's condition, an OR-of-ANDs: "|"-joined
-            # AND-clauses. Yield the list of member-lists (the OR alternatives).
-            for cond in (raw or "").split(";"):
-                alts = [_and_clause(c) for c in cond.split("|")]
+            # Each option-group is ONE option's condition, an OR-of-ANDs. Yield the
+            # list of member-lists (the OR alternatives).
+            for cond in (raw or "").split(FLAG_OPT_SEP):
+                alts = [_and_clause(c) for c in cond.split(FLAG_OR_SEP)]
                 alts = [a for a in alts if a]
                 if alts:
                     yield alts
@@ -10006,7 +10013,7 @@ class MainWindow(QMainWindow):
             return any(_clause_holds(a) for a in alts)
 
         def _has_present_member(alts) -> bool:
-            return any(not m.startswith("!") for a in alts for m in a)
+            return any(not m.startswith(FLAG_ABSENT) for a in alts for m in a)
 
         for name in candidates:
             try:

@@ -59,6 +59,13 @@ class Fallout_NV(Fallout_3):
                 category="Setup and Installers",
             ),
             WizardTool(
+                id="fnv_esm_fixes",
+                label="Install Ultimate Edition ESM Fixes",
+                description="Patch the vanilla .esm masters with community bugfixes (native Linux MPI installer) and add the result as a mod. Needs the Ultimate Edition ESM Fixes Remastered download from Nexus.",
+                dialog_class_path="wizards.esm_fixes.ESMFixesWizard",
+                category="Setup and Installers",
+            ),
+            WizardTool(
                 id="run_bethini_fonv",
                 label="Run BethINI Pie",
                 description="Install BethINI Pie and configure Fallout New Vegas INI settings.",

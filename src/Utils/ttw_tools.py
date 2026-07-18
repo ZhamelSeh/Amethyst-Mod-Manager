@@ -128,6 +128,76 @@ def find_fo3_install() -> Path | None:
     return None
 
 
+def packages_dir(game: "BaseGame") -> Path:
+    """Where extracted .mpi packages are kept (next to the installer)."""
+    return applications_dir(game) / "packages"
+
+
+def find_mpi_archive(keywords: "list[str]") -> "Path | None":
+    """Newest archive matching all *keywords* across the configured download
+    locations, or None."""
+    from Utils.download_locations import get_effective_download_locations
+    from Utils.wizard_archives import find_archive
+
+    best: "Path | None" = None
+    best_mtime = -1.0
+    for directory in get_effective_download_locations():
+        hit = find_archive(directory, keywords)
+        if hit is None:
+            continue
+        try:
+            mtime = hit.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > best_mtime:
+            best, best_mtime = hit, mtime
+    return best
+
+
+def extract_mpi_from_archive(archive: Path, dest_dir: Path,
+                             log_fn: Callable[[str], None] = _noop) -> Path:
+    """Extract *archive* to a temp dir, move the .mpi inside it into
+    *dest_dir* and return its path. An already-extracted .mpi of the same
+    name is reused. Raises when the archive holds no .mpi."""
+    import shutil
+    import tempfile
+    from Utils.wizard_archives import extract_to_dir
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        log_fn(f"extracting {archive.name}…")
+        extract_to_dir(archive, tmp)
+        mpis = sorted(tmp.rglob("*.mpi"))
+        if not mpis:
+            raise RuntimeError(f"No .mpi package found inside {archive.name}.")
+        src = mpis[0]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        if dest.is_file() and dest.stat().st_size == src.stat().st_size:
+            log_fn(f"reusing already-extracted {dest.name}")
+            return dest
+        shutil.move(str(src), str(dest))
+        log_fn(f"extracted {dest.name} → {dest_dir}")
+        return dest
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def find_extracted_mpi(game: "BaseGame",
+                       keywords: "list[str]") -> "Path | None":
+    """A previously-extracted .mpi matching all *keywords* in the packages
+    dir, or None."""
+    try:
+        hits = sorted(packages_dir(game).glob("*.mpi"))
+    except OSError:
+        return None
+    for p in hits:
+        low = p.name.lower()
+        if all(kw in low for kw in keywords):
+            return p
+    return None
+
+
 def missing_vanilla_esms(game_root: Path, esms: "list[str]") -> list[str]:
     """Return the *esms* not present in ``<game_root>/Data`` (case-insensitive)."""
     data = game_root / "Data"

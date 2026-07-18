@@ -417,6 +417,33 @@ def _effective_remote_name() -> str:
     return _remote_name_for_our_url() or _FLATPAK_REMOTE_NAME
 
 
+def polish_flatpak_origin() -> None:
+    """Make a bundle-created origin remote presentable (idempotent, quiet).
+
+    A --repo-url bundle install auto-creates its origin remote flagged
+    no-enumerate with the bundle filename as its title. Software centers skip
+    appstream downloads for no-enumerate remotes, so Discover shows updates as
+    "<version> → <branch>" (it falls back to the branch name when the target
+    has no appstream version). Flip the flag and set a proper title so update
+    entries read "2.0.4-beta.4 → 2.0.4-beta.5" instead. No-op when the remote
+    is absent, already enumerable, or the host can't be reached.
+    """
+    name = _remote_name_for_our_url()
+    if not name:
+        return
+    cp = _host_flatpak("remotes", "--user", "--show-disabled",
+                       "--columns=name,options")
+    if cp is None or cp.returncode != 0:
+        return
+    for line in cp.stdout.splitlines():
+        parts = line.split("\t")
+        if parts and parts[0].strip() == name:
+            if "no-enumerate" in (parts[1] if len(parts) > 1 else ""):
+                _host_flatpak("remote-modify", "--user", name, "--enumerate",
+                              "--title=Amethyst Mod Manager")
+            break
+
+
 def flatpak_remote_branch_available(branch: str) -> bool:
     """True if the hosted remote actually carries our app on *branch*.
 

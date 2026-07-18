@@ -14,6 +14,13 @@ on:
         description: Build the Flatpak bundle
         type: boolean
         default: true
+      flatpak_channel:
+        description: >-
+          Explicit OSTree branch (stable/beta) for the flatpak. Empty = derive
+          from the tag name (v*-* ⇒ beta, else stable) — right for tag pushes,
+          wrong for dispatch runs whose ref is a branch name.
+        type: string
+        default: ""
 
 jobs:
   # ────────────────────────────────────────────────────────────────────
@@ -324,6 +331,11 @@ jobs:
         id: branch
         shell: bash
         run: |
+          explicit='${{ inputs.flatpak_channel }}'
+          if [ -n "$explicit" ]; then
+            echo "name=$explicit" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           ref='${{ github.ref_name }}'
           if [[ "$ref" == v*-* ]]; then
             echo "name=beta" >> "$GITHUB_OUTPUT"

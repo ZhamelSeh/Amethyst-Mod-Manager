@@ -2277,6 +2277,12 @@ class MainWindow(QMainWindow):
             allow_pre = load_allow_prerelease()
             if is_appimage() or is_flatpak():
                 mode = "appimage" if is_appimage() else "flatpak"
+                if mode == "flatpak":
+                    # Idempotent tidy-up of a bundle-created origin remote
+                    # (enumerate + proper title) so Discover shows real target
+                    # versions instead of the branch name. Cheap; daemon thread.
+                    from Utils.version_check import polish_flatpak_origin
+                    polish_flatpak_origin()
                 result = _fetch_latest_version(
                     allow_prerelease=allow_pre, force=force_fresh)
                 if result is None:

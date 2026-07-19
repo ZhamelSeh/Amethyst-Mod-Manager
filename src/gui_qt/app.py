@@ -5286,8 +5286,10 @@ class MainWindow(QMainWindow):
         """Persist a separator's colour + deploy override, repaint the modlist,
         and rebuild the filemap (a deploy-path change reroutes its mods)."""
         profile_dir = self._gs.profile_dir()
-        # Colour — model drives the repaint; profile_state persists it.
+        # Colour + deploy override — model drives the repaint (the deploy badge
+        # painted on the separator row); profile_state persists them.
         self._modlist_model.set_sep_color(sep_name, color)
+        self._modlist_model.set_sep_deploy_info(sep_name, deploy)
         if profile_dir is not None:
             try:
                 from Utils.profile_state import (
@@ -5321,11 +5323,15 @@ class MainWindow(QMainWindow):
         """Migrate a renamed separator's stored colour + deploy override from the
         old internal name to the new one, then persist + repaint."""
         profile_dir = self._gs.profile_dir()
-        # Model colour dict (keyed by internal name) follows the rename.
+        # Model colour/deploy dicts (keyed by internal name) follow the rename.
         c = self._modlist_model.sep_color(old_name)
         if c is not None:
             self._modlist_model.set_sep_color(old_name, None)
             self._modlist_model.set_sep_color(new_name, c)
+        d = self._modlist_model.sep_deploy_info(old_name)
+        if d:
+            self._modlist_model.set_sep_deploy_info(old_name, None)
+            self._modlist_model.set_sep_deploy_info(new_name, d)
         if profile_dir is not None:
             try:
                 from Utils.profile_state import (
@@ -5349,6 +5355,7 @@ class MainWindow(QMainWindow):
         profile_dir = self._gs.profile_dir()
         for nm in names:
             self._modlist_model.set_sep_color(nm, None)
+            self._modlist_model.set_sep_deploy_info(nm, None)
         if profile_dir is not None:
             try:
                 from Utils.profile_state import (

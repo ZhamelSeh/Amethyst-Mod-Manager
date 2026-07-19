@@ -162,6 +162,9 @@ class ModListModel(QAbstractTableModel):
         # Custom separator background colours, keyed by the internal
         # `..._separator` name (matches the Tk / profile_state storage key).
         self._sep_colors: dict[str, str] = {}
+        # Custom deployment overrides ({"path","raw","mode","merge"}), keyed by
+        # the internal name — drives the path badge painted on the separator.
+        self._sep_deploy: dict[str, dict] = {}
         # Per-row memo for _separator_highlight (block walk is O(block size)
         # and data() asks per paint). Cleared on highlight/collapse/entry edits.
         self._sep_hl_cache: dict[int, int] = {}
@@ -724,11 +727,14 @@ class ModListModel(QAbstractTableModel):
 
     # ---- separators -------------------------------------------------------
     def set_separator_state(self, collapsed: set[str], locks: dict[str, bool],
-                            colors: dict[str, str] | None = None):
+                            colors: dict[str, str] | None = None,
+                            deploy_paths: dict[str, dict] | None = None):
         self._collapsed = set(collapsed or set())
         self._sep_locks = dict(locks or {})
         if colors is not None:
             self._sep_colors = dict(colors)
+        if deploy_paths is not None:
+            self._sep_deploy = dict(deploy_paths)
         self._sep_hl_cache.clear()
 
     def is_collapsed(self, sep_name: str) -> bool:
@@ -748,6 +754,18 @@ class ModListModel(QAbstractTableModel):
             self._sep_colors[sep_name] = color
         else:
             self._sep_colors.pop(sep_name, None)
+
+    def sep_deploy_info(self, sep_name: str) -> dict:
+        """Deployment override ({"path","raw","mode","merge"}) for a separator,
+        keyed by its internal `..._separator` name, or {} if none."""
+        return self._sep_deploy.get(sep_name) or {}
+
+    def set_sep_deploy_info(self, sep_name: str, info: dict | None) -> None:
+        """Set/clear a separator's deployment override (None/empty clears it)."""
+        if info:
+            self._sep_deploy[sep_name] = dict(info)
+        else:
+            self._sep_deploy.pop(sep_name, None)
 
     def toggle_collapse(self, row: int) -> set[str]:
         e = self._entries[row]

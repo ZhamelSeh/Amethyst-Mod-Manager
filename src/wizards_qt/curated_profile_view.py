@@ -6,14 +6,16 @@ Flow: intro (with an optional "also install Ultimate Edition ESM Fixes"
 checkbox) → download the .amethyst into the curated-profiles cache and open
 the Import tab via ctx.import_manifest → wait for the user to finish the
 import there (the app switches to the new profile when it completes) →
-optionally run the embedded ESM Fixes wizard into that new profile →
-optionally auto-apply the FNV 4GB patch → done.
+optionally run the embedded ESM Fixes and BSA Decompressor wizards into that
+new profile → optionally auto-apply the FNV 4GB patch → done.
 
-The ESM Fixes step must come AFTER the import: the curated profiles use
-profile-specific mods, so the ESM Fixes output (registered into the ACTIVE
-profile's effective mods dir) is only visible once the imported profile is
-active. The step is parameterized (``esm_fixes_step`` in WizardTool.extra)
-because its ~200 MB output cannot be bundled into the .amethyst.
+The ESM Fixes / BSA Decompressor steps must come AFTER the import: the
+curated profiles use profile-specific mods, so their outputs (registered into
+the ACTIVE profile's effective mods dir) are only visible once the imported
+profile is active. Both steps are parameterized (``esm_fixes_step`` /
+``bsa_decompressor_step`` in WizardTool.extra) because their large outputs
+cannot be bundled into the .amethyst, and each has an opt-out checkbox on
+the intro page (the standalone wizards remain available for later).
 
 The 4GB patch step (``fnv_4gb_step``) runs LAST: the ESM Fixes installer
 checksum-checks FalloutNV.exe and may refuse a patched exe, so the exe is
@@ -39,7 +41,7 @@ from wizards_qt._view_base import GREEN, RED, WizardViewBase
 if TYPE_CHECKING:
     from Games.base_game import BaseGame
 
-_PG_INTRO, _PG_FETCH, _PG_WAIT, _PG_ESM, _PG_4GB, _PG_DONE = range(6)
+_PG_INTRO, _PG_FETCH, _PG_WAIT, _PG_ESM, _PG_BSA, _PG_4GB, _PG_DONE = range(7)
 
 
 class CuratedProfileView(WizardViewBase):
@@ -53,7 +55,9 @@ class CuratedProfileView(WizardViewBase):
 
     def __init__(self, game: "BaseGame", log_fn=None, on_close=None, ctx=None,
                  *, profile_repo_path: str, display_name: str,
-                 esm_fixes_step: bool = False, fnv_4gb_step: bool = False,
+                 esm_fixes_step: bool = False,
+                 bsa_decompressor_step: bool = False,
+                 fnv_4gb_step: bool = False,
                  info_url: str = "", **_extra):
         super().__init__(game, log_fn, on_close, ctx,
                          title=self.tr("Install {0} — {1}").format(
@@ -61,10 +65,12 @@ class CuratedProfileView(WizardViewBase):
         self._repo_path = profile_repo_path
         self._display_name = display_name
         self._esm_fixes_step = esm_fixes_step
+        self._bsa_decompressor_step = bsa_decompressor_step
         self._fnv_4gb_step = fnv_4gb_step
         self._info_url = info_url
         self._gb_started = False
         self._esm_prep_started = False
+        self._bsa_view = None
         self._bundle_path: "Path | None" = None
         self._manifest: dict | None = None
         # Profile at open — the import completing switches the active profile,
@@ -86,8 +92,9 @@ class CuratedProfileView(WizardViewBase):
         self._stack.addWidget(self._build_fetch_page())   # 1
         self._stack.addWidget(self._build_wait_page())    # 2
         self._stack.addWidget(QWidget())                  # 3 (ESM, built lazily)
-        self._stack.addWidget(self._build_4gb_page())     # 4
-        self._stack.addWidget(self._build_done_page())    # 5
+        self._stack.addWidget(QWidget())                  # 4 (BSA, built lazily)
+        self._stack.addWidget(self._build_4gb_page())     # 5
+        self._stack.addWidget(self._build_done_page())    # 6
         self._stack.setCurrentIndex(_PG_INTRO)
 
     # ---- page 0: intro + options --------------------------------------------------
@@ -119,6 +126,20 @@ class CuratedProfileView(WizardViewBase):
                         "large to bundle, so it runs as an extra step — needs "
                         "the 'Ultimate Edition ESM Fixes Remastered' download "
                         "from Nexus.")))
+        self._bsa_chk = None
+        if self._bsa_decompressor_step:
+            lay.addSpacing(8)
+            self._bsa_chk = QCheckBox(
+                self.tr("Also run the FNV BSA Decompressor (recommended)"))
+            self._bsa_chk.setChecked(True)
+            self._bsa_chk.setCursor(Qt.PointingHandCursor)
+            lay.addWidget(self._bsa_chk, 0, Qt.AlignHCenter)
+            self._make_note(lay, (
+                self.tr("Rebuilds the vanilla BSA archives without compression "
+                        "for faster loading, added as a mod after the modlist "
+                        "is installed — needs the 'FNV BSA Decompressor' "
+                        "download from Nexus. Can also be run later via its "
+                        "own wizard.")))
         if self._fnv_4gb_step:
             lay.addSpacing(4)
             self._make_note(lay, (
@@ -281,37 +302,62 @@ class CuratedProfileView(WizardViewBase):
         threading.Thread(target=worker, daemon=True,
                          name="curated-profile-esm-prep").start()
 
+    # ---- embedded sub-wizard pages (ESM Fixes / BSA Decompressor) --------------------
+    def _live_ctx(self):
+        """Ctx for an embedded view, rebased onto the LIVE active profile
+        (ctx.profile_name is frozen at open, before the import switched)."""
+        if self._ctx is None:
+            return None
+        import dataclasses
+        return dataclasses.replace(self._ctx,
+                                   profile_name=self._current_profile())
+
+    def _embed_step(self, idx: int, view) -> None:
+        old = self._stack.widget(idx)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._stack.insertWidget(idx, view)
+
     # ---- page 3: embedded ESM Fixes wizard ------------------------------------------
     def _enter_esm_step(self):
         # Built lazily so the embedded view captures the NEW profile (its ctor
         # syncs the game's active-profile context to ctx.profile_name).
         if self._esm_view is None:
-            import dataclasses
             from wizards_qt.esm_fixes_view import ESMFixesView
-            ctx = self._ctx
-            if ctx is not None:
-                ctx = dataclasses.replace(
-                    ctx, profile_name=self._current_profile())
             self._esm_view = ESMFixesView(
                 self._game, log_fn=self._log,
                 on_close=lambda: self._guard(self._on_esm_done)(),
-                ctx=ctx, show_header=False)
-            old = self._stack.widget(_PG_ESM)
-            self._stack.removeWidget(old)
-            old.deleteLater()
-            self._stack.insertWidget(_PG_ESM, self._esm_view)
+                ctx=self._live_ctx(), show_header=False)
+            self._embed_step(_PG_ESM, self._esm_view)
         self._stack.setCurrentIndex(_PG_ESM)
 
     def _on_esm_done(self):
         self._after_esm()
 
     def _after_esm(self):
+        if self._bsa_chk is not None and self._bsa_chk.isChecked():
+            self._enter_bsa_step()
+        else:
+            self._after_bsa()
+
+    # ---- page 4: embedded BSA Decompressor wizard -------------------------------------
+    def _enter_bsa_step(self):
+        if self._bsa_view is None:
+            from wizards_qt.bsa_decompressor_view import BSADecompressorView
+            self._bsa_view = BSADecompressorView(
+                self._game, log_fn=self._log,
+                on_close=lambda: self._guard(self._after_bsa)(),
+                ctx=self._live_ctx(), show_header=False)
+            self._embed_step(_PG_BSA, self._bsa_view)
+        self._stack.setCurrentIndex(_PG_BSA)
+
+    def _after_bsa(self):
         if self._fnv_4gb_step:
             self._enter_4gb_step()
         else:
             self._stack.setCurrentIndex(_PG_DONE)
 
-    # ---- page 4: apply the FNV 4GB patch ----------------------------------------------
+    # ---- page 5: apply the FNV 4GB patch ----------------------------------------------
     def _build_4gb_page(self) -> QWidget:
         page, lay = self._step_page(self.tr("Final step: Apply the 4GB Patch"))
         self._make_note(lay, (
@@ -388,7 +434,7 @@ class CuratedProfileView(WizardViewBase):
         threading.Thread(target=worker, daemon=True,
                          name="curated-profile-4gb").start()
 
-    # ---- page 5: done ----------------------------------------------------------------
+    # ---- page 6: done ----------------------------------------------------------------
     def _build_done_page(self) -> QWidget:
         page, lay = self._step_page(self.tr("All done"))
         self._make_note(lay, (

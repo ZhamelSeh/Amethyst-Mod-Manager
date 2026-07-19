@@ -51,9 +51,10 @@ class BSADecompressorView(WizardViewBase):
     _run_done_sig = Signal()
 
     def __init__(self, game: "BaseGame", log_fn=None, on_close=None, ctx=None,
-                 **_extra):
+                 show_header: bool = True, **_extra):
         super().__init__(game, log_fn, on_close, ctx,
-                         title=self.tr("BSA Decompressor — {0}").format(game.name))
+                         title=self.tr("BSA Decompressor — {0}").format(game.name),
+                         show_header=show_header)
         self._exe = find_ttw_installer(game)
         self._mpi_path: "Path | None" = None
         self._fnv_path: "Path | None" = game.get_game_path()

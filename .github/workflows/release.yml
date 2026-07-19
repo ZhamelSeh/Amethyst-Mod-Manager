@@ -357,7 +357,7 @@ jobs:
           Branch=${BR}
           Title=Amethyst Mod Manager (${BR})
           Url=${PAGES_URL}/repo/
-          SuggestRemoteName=amethyst
+          SuggestRemoteName=modmanager-origin
           Homepage=https://github.com/ChrisDKN/Amethyst-Mod-Manager
           Icon=${PAGES_URL}/icon.png
           IsRuntime=false

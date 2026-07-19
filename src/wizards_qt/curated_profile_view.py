@@ -6,13 +6,22 @@ Flow: intro (with an optional "also install Ultimate Edition ESM Fixes"
 checkbox) → download the .amethyst into the curated-profiles cache and open
 the Import tab via ctx.import_manifest → wait for the user to finish the
 import there (the app switches to the new profile when it completes) →
-optionally run the embedded ESM Fixes wizard into that new profile → done.
+optionally run the embedded ESM Fixes wizard into that new profile →
+optionally auto-apply the FNV 4GB patch → done.
 
 The ESM Fixes step must come AFTER the import: the curated profiles use
 profile-specific mods, so the ESM Fixes output (registered into the ACTIVE
 profile's effective mods dir) is only visible once the imported profile is
 active. The step is parameterized (``esm_fixes_step`` in WizardTool.extra)
 because its ~200 MB output cannot be bundled into the .amethyst.
+
+The 4GB patch step (``fnv_4gb_step``) runs LAST: the ESM Fixes installer
+checksum-checks FalloutNV.exe and may refuse a patched exe, so the exe is
+patched only after the masters are done. For the same reason, entering the
+ESM step first restores FalloutNV_backup.exe if the user had already patched
+the exe before running this wizard (the final step re-patches it). The patch
+applies automatically via Utils.fnv4gb_tools (already-patched / unrecognised
+exes just report and continue — a failure never blocks finishing the wizard).
 """
 
 from __future__ import annotations
@@ -25,12 +34,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QWidget
 
 from gui_qt.safe_emit import safe_emit
-from wizards_qt._view_base import RED, WizardViewBase
+from wizards_qt._view_base import GREEN, RED, WizardViewBase
 
 if TYPE_CHECKING:
     from Games.base_game import BaseGame
 
-_PG_INTRO, _PG_FETCH, _PG_WAIT, _PG_ESM, _PG_DONE = range(5)
+_PG_INTRO, _PG_FETCH, _PG_WAIT, _PG_ESM, _PG_4GB, _PG_DONE = range(6)
 
 
 class CuratedProfileView(WizardViewBase):
@@ -38,17 +47,24 @@ class CuratedProfileView(WizardViewBase):
 
     _fetch_status_sig = Signal(str, str)
     _fetch_done_sig = Signal(object)      # Path | None
+    _gb_status_sig = Signal(str, str)
+    _gb_done_sig = Signal()
+    _esm_prep_done_sig = Signal()
 
     def __init__(self, game: "BaseGame", log_fn=None, on_close=None, ctx=None,
                  *, profile_repo_path: str, display_name: str,
-                 esm_fixes_step: bool = False, info_url: str = "", **_extra):
+                 esm_fixes_step: bool = False, fnv_4gb_step: bool = False,
+                 info_url: str = "", **_extra):
         super().__init__(game, log_fn, on_close, ctx,
                          title=self.tr("Install {0} — {1}").format(
                              display_name, game.name))
         self._repo_path = profile_repo_path
         self._display_name = display_name
         self._esm_fixes_step = esm_fixes_step
+        self._fnv_4gb_step = fnv_4gb_step
         self._info_url = info_url
+        self._gb_started = False
+        self._esm_prep_started = False
         self._bundle_path: "Path | None" = None
         self._manifest: dict | None = None
         # Profile at open — the import completing switches the active profile,
@@ -60,12 +76,18 @@ class CuratedProfileView(WizardViewBase):
         self._fetch_status_sig.connect(self._guard(
             lambda t, c: self._set_status(self._fetch_status, t, c)))
         self._fetch_done_sig.connect(self._guard(self._on_fetch_done))
+        self._gb_status_sig.connect(self._guard(
+            lambda t, c: self._set_status(self._gb_status, t, c)))
+        self._gb_done_sig.connect(self._guard(
+            lambda: self._gb_continue_btn.setEnabled(True)))
+        self._esm_prep_done_sig.connect(self._guard(self._enter_esm_step))
 
         self._stack.addWidget(self._build_intro_page())   # 0
         self._stack.addWidget(self._build_fetch_page())   # 1
         self._stack.addWidget(self._build_wait_page())    # 2
         self._stack.addWidget(QWidget())                  # 3 (ESM, built lazily)
-        self._stack.addWidget(self._build_done_page())    # 4
+        self._stack.addWidget(self._build_4gb_page())     # 4
+        self._stack.addWidget(self._build_done_page())    # 5
         self._stack.setCurrentIndex(_PG_INTRO)
 
     # ---- page 0: intro + options --------------------------------------------------
@@ -97,6 +119,11 @@ class CuratedProfileView(WizardViewBase):
                         "large to bundle, so it runs as an extra step — needs "
                         "the 'Ultimate Edition ESM Fixes Remastered' download "
                         "from Nexus.")))
+        if self._fnv_4gb_step:
+            lay.addSpacing(4)
+            self._make_note(lay, (
+                self.tr("The 4GB patch is applied to FalloutNV.exe as the "
+                        "final step (original exe kept as a backup).")))
         lay.addStretch(1)
         start = self._accent_btn(self.tr("Start"))
         start.clicked.connect(self._start_fetch)
@@ -208,9 +235,51 @@ class CuratedProfileView(WizardViewBase):
                                      "Continue again to proceed anyway."), RED)
             return
         if self._esm_chk is not None and self._esm_chk.isChecked():
-            self._enter_esm_step()
+            self._start_esm_prep()
         else:
-            self._stack.setCurrentIndex(_PG_DONE)
+            self._after_esm()
+
+    # ---- ESM prep: un-4GB-patch the exe if the user patched it beforehand -----------
+    def _start_esm_prep(self):
+        """The ESM Fixes installer checksum-checks FalloutNV.exe and may refuse
+        a 4GB-patched one. If the user already applied the patch before running
+        this wizard, restore the original exe first — the final 4GB step
+        re-patches it (which is why this only runs when that step is enabled)."""
+        if self._esm_prep_started or not self._fnv_4gb_step:
+            self._enter_esm_step()
+            return
+        self._esm_prep_started = True
+        self._set_status(self._wait_status,
+                         self.tr("Checking FalloutNV.exe…"))
+        game_root = self._game.get_game_path()
+        _wlog = lambda m: self._log(f"Curated Profile Wizard: {m}")
+
+        def worker():
+            from Utils.fnv4gb_tools import (
+                BACKUP_NAME, EXE_NAME, inspect_exe, restore_backup,
+            )
+            try:
+                if game_root is not None and game_root.is_dir():
+                    info = inspect_exe(game_root)
+                    if info["state"] == "patched":
+                        if info["backup_exists"]:
+                            restore_backup(game_root)
+                            _wlog(f"{EXE_NAME} was already 4GB patched — "
+                                  f"restored the original from {BACKUP_NAME} "
+                                  "for the ESM Fixes installer (it is "
+                                  "re-patched at the end).")
+                        else:
+                            _wlog(f"{EXE_NAME} is 4GB patched but "
+                                  f"{BACKUP_NAME} is missing — cannot restore; "
+                                  "the ESM Fixes installer may refuse to run. "
+                                  "Verify game files to get a clean exe.")
+            except Exception as exc:
+                _wlog(f"pre-ESM exe check failed: {exc}")
+            finally:
+                safe_emit(self._esm_prep_done_sig)
+
+        threading.Thread(target=worker, daemon=True,
+                         name="curated-profile-esm-prep").start()
 
     # ---- page 3: embedded ESM Fixes wizard ------------------------------------------
     def _enter_esm_step(self):
@@ -234,9 +303,92 @@ class CuratedProfileView(WizardViewBase):
         self._stack.setCurrentIndex(_PG_ESM)
 
     def _on_esm_done(self):
-        self._stack.setCurrentIndex(_PG_DONE)
+        self._after_esm()
 
-    # ---- page 4: done ----------------------------------------------------------------
+    def _after_esm(self):
+        if self._fnv_4gb_step:
+            self._enter_4gb_step()
+        else:
+            self._stack.setCurrentIndex(_PG_DONE)
+
+    # ---- page 4: apply the FNV 4GB patch ----------------------------------------------
+    def _build_4gb_page(self) -> QWidget:
+        page, lay = self._step_page(self.tr("Final step: Apply the 4GB Patch"))
+        self._make_note(lay, (
+            self.tr("FalloutNV.exe is patched so the game can use 4 GB of "
+                    "memory and loads NVSE automatically at startup. The "
+                    "original exe is kept as a backup (restorable via the "
+                    "4GB Patch wizard).")))
+        self._gb_status = self._make_status(lay)
+        lay.addStretch(1)
+        self._gb_continue_btn = self._accent_btn(self.tr("Continue"))
+        self._gb_continue_btn.setEnabled(False)
+        self._gb_continue_btn.clicked.connect(
+            lambda: self._stack.setCurrentIndex(_PG_DONE))
+        lay.addWidget(self._gb_continue_btn, 0, Qt.AlignHCenter)
+        return page
+
+    def _enter_4gb_step(self):
+        self._stack.setCurrentIndex(_PG_4GB)
+        if self._gb_started:
+            return
+        self._gb_started = True
+        game_root = self._game.get_game_path()
+        _wlog = lambda m: self._log(f"Curated Profile Wizard: {m}")
+
+        # Runs LAST on purpose: the ESM Fixes installer checksum-checks an
+        # unpatched FalloutNV.exe. Failure never blocks finishing the wizard.
+        def worker():
+            from Utils.fnv4gb_tools import (
+                BACKUP_NAME, EXE_NAME, apply_4gb_patch, inspect_exe,
+            )
+            try:
+                if game_root is None or not game_root.is_dir():
+                    safe_emit(self._gb_status_sig,
+                              self.tr("Game path is not configured — skipping "
+                                      "the 4GB patch."), RED)
+                    return
+                state = inspect_exe(game_root)["state"]
+                if state == "patched":
+                    safe_emit(self._gb_status_sig,
+                              self.tr("{0} is already 4GB patched.")
+                              .format(EXE_NAME), GREEN)
+                    return
+                if state == "missing":
+                    safe_emit(self._gb_status_sig,
+                              self.tr("{0} not found in the game folder — "
+                                      "skipping the 4GB patch.")
+                              .format(EXE_NAME), RED)
+                    return
+                if state != "patchable":
+                    safe_emit(self._gb_status_sig,
+                              self.tr("Unrecognised {0} version — skipping. "
+                                      "Verify game files in Steam/Heroic, then "
+                                      "run the 4GB Patch wizard manually.")
+                              .format(EXE_NAME), RED)
+                    return
+                safe_emit(self._gb_status_sig,
+                          self.tr("Patching {0}…").format(EXE_NAME), "")
+                variant = apply_4gb_patch(game_root)
+                _wlog(f"patched {EXE_NAME} ({variant} version), original "
+                      f"saved as {BACKUP_NAME}.")
+                safe_emit(self._gb_status_sig,
+                          self.tr("Patched {0} ({1} version) — original kept "
+                                  "as {2}.").format(EXE_NAME, variant,
+                                                    BACKUP_NAME), GREEN)
+            except Exception as exc:
+                _wlog(f"4GB patch failed: {exc}")
+                safe_emit(self._gb_status_sig,
+                          self.tr("Patch failed: {0} — you can run the 4GB "
+                                  "Patch wizard manually later.").format(exc),
+                          RED)
+            finally:
+                safe_emit(self._gb_done_sig)
+
+        threading.Thread(target=worker, daemon=True,
+                         name="curated-profile-4gb").start()
+
+    # ---- page 5: done ----------------------------------------------------------------
     def _build_done_page(self) -> QWidget:
         page, lay = self._step_page(self.tr("All done"))
         self._make_note(lay, (

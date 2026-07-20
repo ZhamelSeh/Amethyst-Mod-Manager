@@ -274,6 +274,9 @@ class MainWindow(QMainWindow):
     _endorse_done = Signal(object)
     # "Endorse AMM" worker → UI thread ({"state": str, "message": str}).
     _amm_endorse_done = Signal(object)
+    # ui_hooks.warn from any backend thread → OK-only popup on the UI thread
+    # ((title, message, card_h|None)).
+    _warn_popup = Signal(str, str, object)
     # Copy/Move-to-profile worker → UI thread (result dict).
     _copy_done = Signal(object)
     # Collection update: staging meta.ini scan (worker) → apply (UI).
@@ -369,6 +372,7 @@ class MainWindow(QMainWindow):
         self._op_progress.connect(self._on_op_progress)
         self._op_log.connect(self._append_log)
         self._op_done.connect(self._on_op_done)
+        self._warn_popup.connect(self._show_warn_popup)
         self._init_log_file()   # one on-disk log file per session
         self._bsa_op_running = False
         self._bsa_op_done.connect(self._on_bsa_op_done)
@@ -504,6 +508,10 @@ class MainWindow(QMainWindow):
 
         wired = glue.register_all(
             app, log=self._append_log, parent_window=self,
+            # Backend warnings (ui_hooks.warn) become an OK-only popup; the
+            # signal hop makes the call safe from any worker thread.
+            warn=lambda title, message, height=None, **kw: self._warn_popup.emit(
+                str(title), str(message), height),
         )
         print("[gui_qt] glue wired:", ", ".join(wired))
 
@@ -7151,6 +7159,13 @@ class MainWindow(QMainWindow):
         the update check) — otherwise it auto-dismisses after a few seconds."""
         self._ensure_feedback()
         return self._notifier.notify(text, state, sticky=sticky)
+
+    def _show_warn_popup(self, title: str, message: str, card_h):
+        """ui_hooks.warn → OK-only message card (arrives via _warn_popup)."""
+        from gui_qt.confirm_overlay import ConfirmOverlay
+        ConfirmOverlay.show_message(
+            self, title, message,
+            card_h=card_h if isinstance(card_h, int) else None)
 
     def _set_deploy_buttons_enabled(self, enabled: bool):
         for b in (getattr(self, "_deploy_btn", None), getattr(self, "_restore_btn", None),

@@ -170,9 +170,15 @@ class CollectionInstallControl:
 # caller's job).
 # ---------------------------------------------------------------------------
 def cleanup_cancelled_install(game, profile_dir: "Path | None", *,
+                              delete_profile: bool = True,
                               clear_cache: bool = False, log_fn=_noop) -> None:
-    """Restore any deployed files, delete the collection profile dir, and
-    optionally clear this game's download cache."""
+    """Restore any deployed files, optionally delete the collection profile
+    dir, and optionally clear this game's download cache.
+
+    ``delete_profile`` must be True ONLY when the cancelled install created
+    the profile itself (a fresh new-profile install). Continue/append/resume/
+    update installs target a pre-existing profile — deleting it would destroy
+    the user's mods and settings (GH#278)."""
     import shutil
     if profile_dir is not None and Path(profile_dir).is_dir() and game is not None \
             and getattr(game, "is_configured", lambda: True)():
@@ -201,11 +207,14 @@ def cleanup_cancelled_install(game, profile_dir: "Path | None", *,
         except Exception:
             pass
     if profile_dir is not None and Path(profile_dir).is_dir():
-        try:
-            shutil.rmtree(str(profile_dir))
-            log_fn(f"Cancel: deleted profile dir {profile_dir}")
-        except Exception as exc:
-            log_fn(f"Cancel: failed to delete profile dir: {exc}")
+        if delete_profile:
+            try:
+                shutil.rmtree(str(profile_dir))
+                log_fn(f"Cancel: deleted profile dir {profile_dir}")
+            except Exception as exc:
+                log_fn(f"Cancel: failed to delete profile dir: {exc}")
+        else:
+            log_fn(f"Cancel: kept pre-existing profile dir {profile_dir}")
     if clear_cache:
         try:
             game_cache = get_download_cache_dir_for_game(getattr(game, "name", "") or "")

@@ -4941,6 +4941,30 @@ Download and install them manually — the links are in the collection page's "O
         <translation>Refresh Plugins</translation>
     </message>
     <message>
+        <source>Force update handler</source>
+        <translation>Force update handler</translation>
+    </message>
+    <message>
+        <source>Updating handler…</source>
+        <translation>Updating handler…</translation>
+    </message>
+    <message>
+        <source>Handler update failed — check your connection.</source>
+        <translation>Handler update failed — check your connection.</translation>
+    </message>
+    <message>
+        <source>Handler not found on the Resources branch.</source>
+        <translation>Handler not found on the Resources branch.</translation>
+    </message>
+    <message>
+        <source>Handler is already up to date.</source>
+        <translation>Handler is already up to date.</translation>
+    </message>
+    <message>
+        <source>Handler updated.</source>
+        <translation>Handler updated.</translation>
+    </message>
+    <message>
         <source>beta</source>
         <translation>beta</translation>
     </message>
